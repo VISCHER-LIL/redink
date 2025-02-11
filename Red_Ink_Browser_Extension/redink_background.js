@@ -7,50 +7,53 @@
  *  Red Ink Service Worker / Background
  ****************************************/
 
+// Set the extension API depending on the type of browser the extension is installed on
+const extensionAPI = typeof browser !== 'undefined' ? browser : chrome;
+
 // Log when the service worker starts
 console.log("Red Ink Browser Extension (Version 14.1.2025) service worker loaded successfully!");
 
 // Create the context menu hierarchy when the extension is installed
-chrome.runtime.onInstalled.addListener(() => {
+extensionAPI.runtime.onInstalled.addListener(() => {
   console.log("Red Ink Browser Extension installed. Creating context menus...");
 
   // Parent menu
-  chrome.contextMenus.create({
+  extensionAPI.contextMenus.create({
     id: "redink_root",
     title: "Red Ink",
     contexts: ["all"], // Show the menu on all contexts
   });
 
   // Submenu items
-  chrome.contextMenus.create({
+  extensionAPI.contextMenus.create({
     id: "redink_translate",
     title: "Translate",
     parentId: "redink_root",
     contexts: ["selection"], // Only valid if there's text selected
   });
 
-  chrome.contextMenus.create({
+  extensionAPI.contextMenus.create({
     id: "redink_correct",
     title: "Correct",
     parentId: "redink_root",
     contexts: ["selection"],
   });
 
-  chrome.contextMenus.create({
+  extensionAPI.contextMenus.create({
     id: "redink_freestyle",
     title: "Freestyle",
     parentId: "redink_root",
     contexts: ["all"], // Always enabled
   });
 
-  chrome.contextMenus.create({
+  extensionAPI.contextMenus.create({
     id: "redink_sendtoword",
     title: "Send to Word",
     parentId: "redink_root",
     contexts: ["selection"],
   });
 
-  chrome.contextMenus.create({
+  extensionAPI.contextMenus.create({
     id: "redink_sendtooutlook",
     title: "Send to Outlook",
     parentId: "redink_root",
@@ -61,7 +64,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 // Listener for menu clicks
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+extensionAPI.contextMenus.onClicked.addListener((info, tab) => {
   const command = info.menuItemId;
   const selectedText = info.selectionText || "";
 
@@ -193,7 +196,7 @@ function sendRequestToLocalHost({ command, instruction, text, tab }) {
         return;
       }
       console.log("Received processed text:", processedText);
-      chrome.scripting.executeScript({
+      extensionAPI.scripting.executeScript({
         target: { tabId: tab.id },
         func: replaceSelectedText,
         args: [processedText]

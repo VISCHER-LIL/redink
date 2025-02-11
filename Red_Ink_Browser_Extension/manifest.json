@@ -9,10 +9,16 @@
     "scripting"
   ],
   "host_permissions": [
-    "*://*/*" 
+    "<all_urls>" 
   ],
   "background": {
-    "service_worker": "redink_background.js"
+    "service_worker": "redink_background.js",
+    "scripts": ["redink_background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "lil@vischer.com"
+    }
   },
   "icons": {
     "16": "redink_icon16.png",
