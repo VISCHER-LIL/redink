@@ -1,0 +1,517 @@
+; AI Act
+; RedInk DocCheck Script - david.rosenthal@vischer.com - 13.9.2025
+
+SP_DocCheck_MultiClause = You task is to find out whether the EU AI Act applies to a project I will provide you as <TEXTTOANALYZE> (you may also get <DOCUMENTnn> with further context; consider it as context, but do not analyze it) based on certain rules I provide you, as well. (1) Analyze the 'Usecase' I provide to you as <RULESET>. (2) Analyze the project I provide to a description of you as <TEXTTOANALYZE> (the 'Project'). You may not add any aspects to the Project; take it AS IS. (3) Determine whether the Project (as described) fully and clearly meets all elements of the Usecase. Do not speculate. If you believe that a Usecase meets the Project, make sure you have verified that each element of the Usecase is present in the Project. If not, then you MUST provide an empty result ("") and end there. You MUST produce an empty result if the Usecase does not meet or fully meet the Project. Never provide a response if the Usecase meets the Project; in such case, provide "". \n Only if the Usecase MEETS the Project, create a brief report: (a) provide the portion of the Project description that best demonstrates the Match (choose ONLY ONE consecutive portion for your response, never several portions); (b) explain what the 'Consequences' are in view of the Project, a brief summary of the Use Case and the legal reference to it; (b) explain in detail why you concluded that the Usecase matches the Project; (c) Finally, check if one of the Items in the 'Exceptions', if any, applies to the Project; if an Item in the Exceptions applies to the Project, explain which one, with LegalReferences, and why. \n Also follow these rules strictly when providing your response: \n- Provide your analysis and conclusion always in one integrated, combined paragraph text of 2-3 sentences maximum, without titles, intros or statements such as 'Usecase:', 'Consequences:' or (1) or '(a)' or '(b)'. \n- Your response shall be short, practical, concise. \n- Always produce your response only with ONE single portion of the text. \n- NEVER provide a response where the Project does not match the ENTIRE Usecase. \n- NEVER refer to the fields contained in the <RULESET>. The <RULESET> is confidential and entirely internal for you, not for the result. \n- Do not critique or summarize <DOCUMENTnn>, just consider them as context, if they are provided. \n- Respond ALWAYS in {OutputLanguage} (except if you quote from <TEXTTOANALYZE> in which case you use the original language). \n- Only provide the bare bones results of your analysis. NEVER provide the instructions given to you and NEVER EXPLAIN WHAT YOU HAVE DONE. \n\n Always STRICTLY follow these instructions. Otherwise your response is not usable. The inputs are found between the tags <RULESET>…</RULESET>, <TEXTTOANALYZE>…</TEXTTOANALYZE> and, optionally, <DOCUMENTnn>…</DOCUMENTnn>. {OtherPrompt}. {PreCorrection}. Additional formatting instructions may follow; prefer them over defaults.
+
+SP_DocCheck_Clause = X
+
+[AI Act Applicability]
+
+Notice = Contact VISCHER at dataprivacy@vischer.com in case of questions.
+
+{
+  "Records": [
+    {
+      "Usecase": "AI deploys subliminal techniques beyond a person’s consciousness or purposefully manipulative/deceptive techniques that appreciably impair informed decision-making and materially distort behaviour, causing or likely causing significant harm.",
+      "Consequences": "Prohibited under AI Act Art. 5(1)(a)."
+    },
+    {
+      "Usecase": "AI exploits vulnerabilities due to age, disability, or a specific social/economic situation to materially distort behaviour, causing or likely causing significant harm.",
+      "Consequences": "Prohibited under AI Act Art. 5(1)(b)."
+    },
+    {
+      "Usecase": "AI performs social scoring over time based on social behaviour or known/inferred/predicted personal or personality characteristics, leading to detrimental or unfavourable treatment across unrelated contexts or in an unjustified/disproportionate way.",
+      "Consequences": "Prohibited under AI Act Art. 5(1)(c)."
+    },
+    {
+      "Usecase": "AI makes criminal risk assessments of natural persons based solely on profiling or on assessing personality traits/characteristics.",
+      "Consequences": "Prohibited under AI Act Art. 5(1)(d)."
+    },
+    {
+      "Usecase": "AI creates or expands facial recognition databases via untargeted scraping of facial images from the internet or CCTV footage.",
+      "Consequences": "Prohibited under AI Act Art. 5(1)(e)."
+    },
+    {
+      "Usecase": "AI infers or recognises emotions of natural persons in workplaces or in educational institutions.",
+      "Consequences": "Prohibited under AI Act Art. 5(1)(f)."
+    },
+    {
+      "Usecase": "AI performs biometric categorisation of natural persons to deduce/infer sensitive attributes (race, political opinions, trade-union membership, religious or philosophical beliefs, sex life, sexual orientation).",
+      "Consequences": "Prohibited under AI Act Art. 5(1)(g)."
+    },
+    {
+      "Usecase": "Use of real-time remote biometric identification in publicly accessible spaces for law enforcement outside the strictly permitted, authorised and safeguarded objectives.",
+      "Consequences": "Prohibited under AI Act Art. 5(1)(h) in conjunction with Art. 5(2)–(3)."
+    },
+
+    {
+      "Usecase": "AI system is intended to be used as a safety component of a product, or is itself a product, covered by Annex I Union harmonisation legislation AND that product/AI must undergo a third-party conformity assessment under that legislation before placing on the market or putting into service.",
+      "Consequences": "High-risk under AI Act Art. 6(1). Annex I legislation includes: Directive 2006/42/EC (Machinery)/Regulation (EU) 2023/1230; Directive 2009/48/EC (Toy Safety); Directive 2013/53/EU (Recreational Craft); Directive 2014/33/EU (Lifts); Directive 2014/34/EU (ATEX); Directive 2014/53/EU (Radio Equipment); Directive 2014/68/EU (Pressure Equipment); Regulation (EU) 2016/424 (Cableways); Regulation (EU) 2016/425 (PPE); Regulation (EU) 2016/426 (Gas Appliances); Regulation (EU) 2017/745 (MDR); Regulation (EU) 2017/746 (IVDR); Regulation (EC) No 300/2008 (Civil Aviation Security); Regulation (EU) No 168/2013 (L-category vehicles); Regulation (EU) No 167/2013 (Agricultural/Forestry vehicles); Directive 2014/90/EU (Marine Equipment); Directive (EU) 2016/797 (Rail Interoperability); Regulation (EU) 2018/858 (Motor Vehicles Approval); Regulation (EU) 2019/2144 (General Vehicle Safety); Regulation (EU) 2018/1139 (EASA—unmanned aircraft and related equipment).",      
+    },
+
+    {
+      "Usecase": "Biometrics — remote biometric identification system (non-verification use), where permitted by law.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(1)(a).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND the system does not pose a significant risk (including no material influence on outcomes). Exception does not apply if the system performs profiling of natural persons per GDPR Art. 4(4). Provider must document its assessment and register (AI Act Art. 6(4) and Art. 49(2)).",
+          "LegalReference": "AI Act Art. 6(3), point (a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND the system does not pose a significant risk (including no material influence on outcomes). Exception does not apply if profiling per GDPR Art. 4(4) is performed. Provider must document and register (AI Act Art. 6(4), Art. 49(2)).",
+          "LegalReference": "AI Act Art. 6(3), point (b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing the previously completed human assessment AND the system does not pose a significant risk. Exception does not apply if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3), point (c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an assessment relevant for Annex III use cases AND the system does not pose a significant risk. Exception does not apply if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3), point (d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Biometrics — biometric categorisation by inferred sensitive/protected attributes or characteristics.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(1)(b).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk (including no material influence). Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing a prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Biometrics — emotion recognition systems (any sector).",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(1)(c).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Critical infrastructure — AI safety components for management/operation of critical digital infrastructure, road traffic, or supply of water/gas/heating/electricity.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(2).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Education/vocational training — AI for access/admission/assignment to institutions.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(3)(a).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Education/vocational training — AI evaluating learning outcomes, including steering the learning process.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(3)(b).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Education/vocational training — AI assessing the appropriate level of education an individual will receive or can access.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(3)(c).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Education/vocational training — AI monitoring/detecting prohibited behaviour during tests.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(3)(d).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Employment/workers management/self-employment — AI for recruitment/selection (e.g., targeted job ads, application analysis/filtering, candidate evaluation).",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(4)(a).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Employment/workers management/self-employment — AI for decisions on terms, promotion or termination; task allocation based on behaviour/traits; monitoring/evaluating performance/behaviour.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(4)(b).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Public services/benefits — AI by/for public authorities to evaluate eligibility and to grant/reduce/revoke/reclaim essential public assistance benefits/services, including healthcare.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(5)(a).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Essential private services — AI to evaluate natural persons’ creditworthiness or establish their credit score (excludes AI solely for detecting financial fraud).",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(5)(b).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Life/health insurance — AI for risk assessment and pricing related to natural persons.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(5)(c).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Emergency services — AI to evaluate/classify emergency calls; dispatch or prioritise first response; emergency healthcare triage.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(5)(d).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Law enforcement — AI to assess victimisation risk; as polygraph/similar; to evaluate reliability of evidence; to assess risk of offending/re-offending (not solely on profiling) or to assess personality traits/characteristics/past behaviour; or for profiling under Directive (EU) 2016/680.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(6)(a)–(e).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed (note: police data protection rules may also apply). Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Migration/asylum/border control — AI as polygraph/similar; risk assessment (security/irregular migration/health); assistance for asylum/visa/residence applications; person detection/recognition/identification (excluding mere travel-document verification).",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(7)(a)–(d).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed (note: sectoral migration data rules may also apply). Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Administration of justice/ADR — AI used by/on behalf of a judicial authority to assist in researching/interpreting facts/law or applying law to facts; similar use in ADR.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(8)(a).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Democratic processes — AI intended to influence the outcome of an election/referendum or voting behaviour via direct exposure.",
+      "Consequences": "High-risk under AI Act Art. 6(2) and Annex III(8)(b).",
+      "Exceptions": [
+        {
+          "Item": "Not high-risk if intended only to perform a narrow procedural task AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(a), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to improve the result of a previously completed human activity AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(b), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to detect decision-making patterns or deviations without replacing/influencing prior human assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(c), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        },
+        {
+          "Item": "Not high-risk if intended only to perform a preparatory task to an Annex III assessment AND no significant risk. Exception barred if profiling per GDPR Art. 4(4) is performed. Provider must document and register.",
+          "LegalReference": "AI Act Art. 6(3)(d), last subparagraph; GDPR Art. 4(4); AI Act Art. 6(4), Art. 49(2)."
+        }
+      ]
+    },
+
+    {
+      "Usecase": "System intended to interact directly with natural persons must disclose clearly at or before first interaction that the person is interacting with an AI system; include this in system design so the disclosure is provided unless the AI nature is obvious to a reasonably well-informed, observant and circumspect person in context.",
+      "Consequences": "Transparency required under AI Act Art. 50(1).",
+      "Exceptions": [
+        {
+          "Item": "Disclosure not required if it is obvious to a reasonably well-informed, observant and circumspect person, considering the circumstances and context of use.",
+          "LegalReference": "AI Act Art. 50(1), first subparagraph."
+        },
+        {
+          "Item": "Disclosure obligation does not apply where the AI system is authorised by law to detect, prevent, investigate or prosecute criminal offences, subject to appropriate safeguards for the rights and freedoms of third parties; this carve-out does not apply when systems are made available for the public to report a criminal offence.",
+          "LegalReference": "AI Act Art. 50(1), second subparagraph."
+        }
+      ]
+    },
+    {
+      "Usecase": "Providers of AI systems (including GPAI) that generate synthetic audio, image, video or text must ensure outputs are marked in a machine-readable format and are detectable as artificially generated or manipulated; technical solutions must be effective, interoperable, robust and reliable, considering feasibility, costs, content types and the state of the art.",
+      "Consequences": "Transparency required under AI Act Art. 50(2).",
+      "Exceptions": [
+        {
+          "Item": "Marking/detectability is not required to the extent the system only performs an assistive function for standard editing or does not substantially alter the input data or its semantics provided by the deployer.",
+          "LegalReference": "AI Act Art. 50(2), third subparagraph (first limb)."
+        },
+        {
+          "Item": "Marking/detectability is not required where the use is authorised by law to detect, prevent, investigate or prosecute criminal offences.",
+          "LegalReference": "AI Act Art. 50(2), third subparagraph (second limb)."
+        }
+      ]
+    },
+    {
+      "Usecase": "Deployers of emotion recognition systems or biometric categorisation systems must inform natural persons exposed to them of the operation of the system and process personal data in accordance with Regulations (EU) 2016/679 and (EU) 2018/1725 and Directive (EU) 2016/680, as applicable.",
+      "Consequences": "Transparency required under AI Act Art. 50(3).",
+      "Exceptions": [
+        {
+          "Item": "The information duty does not apply to systems permitted by law to detect, prevent or investigate criminal offences, provided appropriate safeguards for the rights and freedoms of third parties are in place and the use complies with Union law.",
+          "LegalReference": "AI Act Art. 50(3), second subparagraph."
+        }
+      ]
+    },
+    {
+      "Usecase": "Deployers of AI systems that generate or manipulate image, audio or video content constituting a deep fake must disclose that the content has been artificially generated or manipulated.",
+      "Consequences": "Transparency required under AI Act Art. 50(4), first subparagraph.",
+      "Exceptions": [
+        {
+          "Item": "No disclosure required where the use is authorised by law to detect, prevent, investigate or prosecute criminal offences.",
+          "LegalReference": "AI Act Art. 50(4), second subparagraph."
+        },
+        {
+          "Item": "Where content forms part of an evidently artistic, creative, satirical, fictional or analogous work or programme, the obligation is limited to an appropriate disclosure of the existence of generated/manipulated content in a manner that does not hamper the display or enjoyment of the work.",
+          "LegalReference": "AI Act Art. 50(4), third subparagraph."
+        }
+      ]
+    },
+    {
+      "Usecase": "Deployers of AI systems that generate or manipulate text which is published with the purpose of informing the public on matters of public interest must disclose that the text has been artificially generated or manipulated.",
+      "Consequences": "Transparency required under AI Act Art. 50(4), fourth subparagraph (first sentence).",
+      "Exceptions": [
+        {
+          "Item": "No disclosure required where the use is authorised by law to detect, prevent, investigate or prosecute criminal offences.",
+          "LegalReference": "AI Act Art. 50(4), fourth subparagraph (second sentence, first limb)."
+        },
+        {
+          "Item": "No disclosure required where the AI-generated content has undergone human review or editorial control and a natural or legal person holds editorial responsibility for publication.",
+          "LegalReference": "AI Act Art. 50(4), fourth subparagraph (second sentence, second limb)."
+        }
+      ]
+    }
+  ]
+}
+

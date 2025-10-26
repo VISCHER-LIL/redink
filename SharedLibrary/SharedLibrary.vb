@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 16.10.2025
+' 26.10.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -109,6 +109,7 @@ Namespace SharedLibrary
             Property INI_TokenCount As String
             Property INI_DoubleS As Boolean
             Property INI_Clean As Boolean
+            Property INI_MarkdownBubbles As Boolean
             Property INI_PreCorrection As String
             Property INI_PostCorrection As String
             Property INI_APIEncrypted As Boolean
@@ -216,6 +217,7 @@ Namespace SharedLibrary
             Property SP_Add_KeepHTMLIntact As String
             Property SP_Add_KeepInlineIntact As String
             Property SP_Add_Bubbles As String
+            Property SP_Add_Bubbles_Format As String
             Property SP_Add_Batch As String
             Property SP_Add_Slides As String
             Property SP_BubblesExcel As String
@@ -303,6 +305,7 @@ Namespace SharedLibrary
         Public Property INI_TokenCount As String Implements ISharedContext.INI_TokenCount
         Public Property INI_DoubleS As Boolean Implements ISharedContext.INI_DoubleS
         Public Property INI_Clean As Boolean Implements ISharedContext.INI_Clean
+        Public Property INI_MarkdownBubbles As Boolean Implements ISharedContext.INI_MarkdownBubbles
         Public Property INI_PreCorrection As String Implements ISharedContext.INI_PreCorrection
         Public Property INI_PostCorrection As String Implements ISharedContext.INI_PostCorrection
         Public Property INI_APIEncrypted As Boolean Implements ISharedContext.INI_APIEncrypted
@@ -406,6 +409,7 @@ Namespace SharedLibrary
         Public Property SP_Add_KeepHTMLIntact As String Implements ISharedContext.SP_Add_KeepHTMLIntact
         Public Property SP_Add_KeepInlineIntact As String Implements ISharedContext.SP_Add_KeepInlineIntact
         Public Property SP_Add_Bubbles As String Implements ISharedContext.SP_Add_Bubbles
+        Public Property SP_Add_Bubbles_Format As String Implements ISharedContext.SP_Add_Bubbles_Format
         Public Property SP_Add_Batch As String Implements ISharedContext.SP_Add_Batch
         Public Property SP_Add_Slides As String Implements ISharedContext.SP_Add_Slides
         Public Property SP_BubblesExcel As String Implements ISharedContext.SP_BubblesExcel
@@ -1433,7 +1437,7 @@ Namespace SharedLibrary
             "17. Various Microsoft libraries copyrighted by Microsoft Corporation and available, among others, under the Microsoft EULA and the MIT License; " &
             "Copyright (c) 2016- Microsoft Corp." & vbCrLf & vbCrLf & "Disclaimer:" & vbCrLf & vbCrLf &
             "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 'As Is' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE." & vbCrLf & vbCrLf &
-            "See the Red Ink license file (https://apps.vischer.com/redink/license.txt) for more information."
+            $"See the Red Ink license file ({AppsUrl}/redink/license.txt) for more information."
 
         Public Shared DefaultINIPaths As New Dictionary(Of String, String) From {
             {"Word", "%AppData%\Microsoft\Word\" & AN2 & ".ini"},
@@ -1447,9 +1451,9 @@ Namespace SharedLibrary
         }
 
         Public Shared UpdatePaths As New Dictionary(Of String, String) From {
-            {"Word", "microsoft-edge:https://apps.vischer.com/redink/word/" & AN5& & "%20for%20Word.vsto"},
-            {"Excel", "microsoft-edge:https://apps.vischer.com/redink/excel/" & AN5& & "%20for%20Excel.vsto"},
-            {"Outlook", "microsoft-edge:https://apps.vischer.com/redink/outlook/" & AN5& & "%20for%20Outlook.vsto"}
+            {"Word", $"microsoft-edge:{AppsUrl}/redink/word/" & AN5 & "%20for%20Word.vsto"},
+            {"Excel", $"microsoft-edge:{AppsUrl}/redink/excel/" & AN5 & "%20for%20Excel.vsto"},
+            {"Outlook", $"microsoft-edge:{AppsUrl}/redink/outlook/" & AN5 & "%20for%20Outlook.vsto"}
         }
 
         Public Shared ExcelHelper As String = AN2 & "_helper.xlam"
@@ -1479,7 +1483,8 @@ Namespace SharedLibrary
         Const Default_SP_Add_KeepFormulasIntact As String = "Beware, the text contains an Excel formula. Unless expressly instructed otherwise, make sure that the formula still works as intended."
         Const Default_SP_Add_KeepHTMLIntact As String = "When completing your task, leave any HTML tags within 'TEXTTOPROCESS' fully intact in the output and never include your instructions in the output (just your barebones work result).."
         Const Default_SP_Add_KeepInlineIntact As String = "Do not remove any text that appears between {{ and }}; these placeholders contain content that is part of the text and never include your instructions in the output (just your barebones work result). Also keep markdown formatting intact. "
-        Const Default_SP_Add_Bubbles As String = "Provide your response to the instruction not in a single, combined text, but split up your response according to the part of the TEXTTOPROCESS to which your response relates. For example, if your response relates to three different paragraphs or sentences of the same text, provide your response in three different comments that relate to each relevant paragraph. When doing so, follow strictly these rules: \n1. For each such portion of the TEXTTOPROCESS, provide your response in the the form of a comment to the portion of the text to which it relates. \n3. Provide each portion of your response by first quoting the most meaningful sentence from the relevant portion of the TEXTTOPROCESS verbatim followed by the relevant comment for that portion of the TEXTTOPROCESS. When doing so, follow strictly this syntax: ""text1@@comment1§§§text2@@comment2§§§text3@@comment3"". It is important that you provide your output exactly in this form: First provide the quoted sentence, then the separator @@ and then your comment. After that, add the separator §§§ and continue with the second portion and comment in the same way, and so on. Make sure to use these separators exactly as instructed. If you do not comply, your answer will be invalid. \n3. Make sure you quote the sentence of the TEXTTOPROCESS exactly as it has been provided to you; do not change anything to the quoted sentence of the TEXTTOPROCESS, do not add or remove any characters, do not add quotation marks, do never add line breaks and never remove line breaks, either, if they exist in TEXTTOPROCESS.\n4. Select a sentence that is UNIQUE in the document; if the chosen sentence is not unique, add more sentences from the relevant portion to make it unique. Draft the comment so to make it clear to which portion of the TEXTTOPROCESS it relates, in particular if it goes beyond the sentence. \n5. When quoting a sentence of TEXTTOPROCESS make sure that you NEVER include a title or heading to the text sequence, NEVER start with any paragraph number or bullets, just quote barebones text from the paragraph that you comment.\n6. Make sure that you select the sentence of TEXTTOPROCESS to quote so that that they do not contain characters that are usually not used for text. \n7. NEVER quote a sentence of TEXTTOPROCESS that includes line breaks or carriage returns. \n8. If you quote text that contains hyphenation, include the same hyphenation in your quote. \n9. Limit your output to those sections of the TEXTTOPROCESS where you actually do have something meaningful to say as to what the user is asking you. Unless expressly instructed otherwise, you are not allowed to refer to sections of the TEXTTOPROCESS for which you have no substantive comment, change, critique or remark. For example, 'No comment' or 'No specific comment' is a bad, wrong and invalid response. If there is a paragraph or section for which you have no meaningfull or specific comment, do not include it in your output. \n10. Follow these rules strictly, because your output will otherwise not be valid."
+        Const Default_SP_Add_Bubbles As String = "Provide your response to the instruction not in a single, combined text, but split up your response according to the part of the TEXTTOPROCESS to which your response relates. For example, if your response relates to three different paragraphs or sentences of the same text, provide your response in three different comments that relate to each relevant paragraph. When doing so, follow strictly these rules: \n1. For each such portion of the TEXTTOPROCESS, provide your response in the the form of a comment to the portion of the text to which it relates. \n3. Provide each portion of your response by first quoting the most meaningful sentence from the relevant portion of the TEXTTOPROCESS verbatim followed by the relevant comment for that portion of the TEXTTOPROCESS. When doing so, follow strictly this syntax: ""text1@@comment1§§§text2@@comment2§§§text3@@comment3"". It is important that you provide your output exactly in this form: First provide the quoted sentence, then the separator @@ and then your comment. After that, add the separator §§§ and continue with the second portion and comment in the same way, and so on. Make sure to use these separators exactly as instructed. If you do not comply, your answer will be invalid. \n3. Make sure you quote the sentence of the TEXTTOPROCESS exactly as it has been provided to you; do not change anything to the quoted sentence of the TEXTTOPROCESS, do not add or remove any characters, do not add quotation marks, do never add line breaks and never remove line breaks, either, if they exist in TEXTTOPROCESS.\n4. Select a sentence that is UNIQUE in the document; if the chosen sentence is not unique, add more sentences from the relevant portion to make it unique. Draft the comment so to make it clear to which portion of the TEXTTOPROCESS it relates, in particular if it goes beyond the sentence. \n5. When quoting a sentence of TEXTTOPROCESS make sure that you NEVER include a title or heading to the text sequence, NEVER start with any paragraph number or bullets, just quote barebones text from the paragraph that you comment.\n6. Make sure that you select the sentence of TEXTTOPROCESS to quote so that that they do not contain characters that are usually not used for text. \n7. NEVER quote a sentence of TEXTTOPROCESS that includes line breaks or carriage returns. \n8. If you quote text that contains hyphenation, include the same hyphenation in your quote. \n9. Limit your output to those sections of the TEXTTOPROCESS where you actually do have something meaningful to say as to what the user is asking you. Unless expressly instructed otherwise, you are not allowed to refer to sections of the TEXTTOPROCESS for which you have no substantive comment, change, critique or remark. For example, 'No comment' or 'No specific comment' is a bad, wrong and invalid response. If there is a paragraph or section for which you have no meaningfull or specific comment, do not include it in your output. \n10. {FormatInstruction} \n11. Follow these rules strictly, because your output will otherwise not be valid."
+        Const Default_SP_Add_Bubbles_Format As String = " In your analysis response, use Markdown for bold, italics, underline and bulleted or numbered lists (one level) for better readibility."
         Const Default_SP_Add_Batch As String = "The main content to be processed will be provided between the tags <FILECONTENT> ... </FILECONTENT>. If there is an error, insert the error message instead of the result. Make sure you provide your result/output exclusively for insertion on line {LineNumber} of this worksheet; any other output is void."
         Const Default_SP_Add_Slides As String = "You shall provide your output in the form of slides to an existing slidedeck that is either empty or already has content. You will be provided all necessary information in the form of a json string between the tags <SLIDEDECK> ... </SLIDEDECK>, including information about the existing content of the slidedeck and the existing styles and layouts. This information is crucial. Use it to draft your response in the form of instructions for creating one or several slides of a presentation. Make sure that these new slides fullfill each of the following requirements: (1) They provide all content necessary to fulfill the instructions given to you so far. (2) They from a content point of view fully integrate into the content that may already exists in the slidedeck. In particular, the follow the same style, the same tone. (3) The text must be short and simple. Avoid full sentences, use powerpoint style drafting (good example: 'Our challenges:' or 'We have been lucky'; Bad Example: 'Our challenges are of the following kind:' or 'We have been very lucky in this particular case of a negotiation' [not to the point] ). You must in any event ensure that a title fits on one line and the rest of the text fits on the slide without decreasing the font (consider the slide's size and the font's size; typically, 6-7 lines of bulleted 15 point text fit on a slide). Bulleted text should never have more than two lines. In case of doubt, shorten! Titles must be particularly short, so they never use two lines. (4) Never end lines with a point or semi-colon. (5) Bulleted text should always start at level 0. (6) Make sure that the text on each slide has exactly the same font options (e.g. font, size, color) as the text in the same placeholders of existing slides with the same layout. For example, if the title on an existing slide of the same kind has no font properties, provide no font properties. If no boldface is used on the existing slide, do not use boldface either. Also use bullets in the same manner as they are used on the existing slides of the same layout. Do not use multi-column layouts. Use title page layouts for title pages only, and chapter separator layouts for chapter separation only. Make sure you always refer to an existing slide layout (you are provided with it). Never invent or guess layout identifiers. Only use values that appear in the provided SLIDEDECK layouts metadata. If a value is missing, pick a layout by name or URI that exists in the metadata, or choose the correct layout based on its placeholder signature (see below). \n\n Overall, it is essential that the newly created slide match the other slides. A viewer should not be able to tell which slides have been pre-existing, and which have been generated by you. If you have generated a slide, it is key that you include the instructions for inserting the slide at the right location within the existing slidedeck. You can do so by referring to the existing slides. If you prepare several slides, each one will be inserted in the sequence you provide it, so make sure that this works out. \n\n Only if expressly instructed, use Shapes and Icons to create visually compelling slides, in addition to the titles and text you create or, if instructed or where it makes sense, instead of normal bulleted text. In these cases, only when instructed, think of how to illustrate content and create an engaging presentation but without using too many shapes and icons (it should still look professional). For example, if the content you have selected for the presentation describes a process or timeline, use shape elements (like flowchartProcess and rightArrow) to build a diagram. Use svg_icon elements to visually represent concepts, but not too much; if necessary, create the icons yourselves, but make sure it is clear what they mean. Whenever adding text boxes, shapes, icons, make sure that they are below or right besides the text you insert by way of placeholders (e.g., bulleted text), so that they will in no event cover such text. Also make sure that these textboxes, shapes and icons are at a reasonable distance to the margins of the slides (leave a padding of at least 1/5 of the slide width or height to the left and right, and top and bottom). You will be given information on the width and height of the slide, so consider it carefully to adequately size and position any illustrations. When selecting a layout for a title/cover slide, prefer a layout whose placeholders include Title + SubTitle and no Body placeholder. If none exists, use Title + SubTitle. For normal content slides, prefer layouts with Title + Body. Always match placeholders by their type (Title, CenteredTitle, SubTitle, Body) as provided in the layouts metadata; do not repurpose Body as SubTitle or vice versa. \n In any event, for each slide you add, provide concise notes for the presenter, ready to read, conveying the message and facts of the slide in an engaging, clearly understandeable manner. Prepare the text so that it can be used for an audio recording to present the slide automatically. When drafting the slides for the existing slidedeck/presentation, follow exactly the following format and syntax instructions: You provide the instructions for creating the slides in the form of a JSON string that will specify the specific locations in the presentation, the slide content and style. The Format is as follows: The JSON must contain a top-level field version (string, e.g. ""1.1""), and an array actions containing one or more action objects. Each add_slide action object must have: \n\n op: always ""add_slide"". \n anchor: an object indicating where to insert the slide, with mode (before, after, or at_end) and by (an object with slideKey referencing an existing slide—use the explicit slideKey for the first slide you generate, then use slideKey: ""lastInserted"" to chain subsequent slides). \n layoutRelId: the layout relation ID for the slide (e.g. ""rId2""). You must take this exact value from the provided SLIDEDECK layouts array; never guess it. If a reliable layoutRelId is not available, additionally provide layoutId (the layout URI string from the metadata) or layoutName (the human-readable name from the metadata). You may also include a layoutKey object containing any of these selectors so that the system can resolve the layout robustly: layoutKey: { relId: ""..."", uri: ""..."", name: ""..."" }. At least one of relId, uri, or name must correspond to an existing layout in the provided metadata. \n notes (optional): A string containing the speaker notes for the slide. \n elements: an array of content elements to fill the slide. Each element can be: \n type: ""title"": with text (string) and optional style object. Use the Title or CenteredTitle placeholder only. Keep titles to one line. \n type: ""bullet_text"": with placeholder, an array of bullets (strings or {text: string, level: integer} objects), and optional style. If you include a transform block, the bullets will be placed in an independent textbox at that exact position. If you omit transform, the bullets go into the default body placeholder of the slide. Do not target the SubTitle placeholder with bullet_text. \n type: ""text"": with placeholder, text (string), and optional style. Same rule: supply transform for a free-floating textbox; omit transform to target the body placeholder. If you intend to set a subtitle on a cover slide, use type: ""text"" targeting the SubTitle placeholder, not the Body placeholder. \n type: ""shape"": \n shapeType: (string) A shape name like ""rectangle"", ""oval"", ""rightArrow"", ""line"", ""flowchartProcess"", ""chevron"". \n transform: (object) with x, y, width, height in EMUs (914400 EMUs = 1 inch). Alternatively, when instructed, you may provide transform values as relative percentages (0–1); the system will convert them. \n fill: (optional object) with type: ""solid"" and color (hex string). \n outline: (optional object) with color (hex), width (in points, e.g., 1.5), and dashType (""solid"", ""dashed"", ""dotted""). \n text: (optional string) Text inside the shape. \n style: (optional object) Style for the text inside the shape. \n type: ""svg_icon"": \n transform: (object) with x, y, width, height in EMUs. Relative percentages (0–1) are also allowed when instructed. \n svg: (string) The desired SVG Icon by providing the full, raw XML content to construct the icon. Ensure colors are defined within the SVG code. \n Validation requirements: Before emitting your JSON, cross-check that every layoutRelId, layoutId (URI), or layoutName you reference exists in the provided layouts metadata inside <SLIDEDECK>. Do not reference placeholders that are not present in the chosen layout. Prefer using the exact placeholder types (Title, CenteredTitle, SubTitle, Body) described in the metadata. For a title/cover slide, ensure you choose a layout that best matches Title + SubTitle and avoid Body unless required by the provided layouts. \n Important: Output only a single JSON object, without comments or explanation. Use the correct anchor key and layoutRelId from the presentation metadata. Any deviation from this structure will cause processing to fail."
         Const Default_SP_BubblesExcel As String = "You are an expert in analyzing and explaining Excel worksheets to non-experts, you are very exact when reviewing Excel worksheets and are very good in both handling text and formulas. You precisely comply with your instructions. Perform the instruction '{OtherPrompt}' using the range of cells provided you between the tags <RANGEOFCELLS> ... </RANGEOFCELLS>. When providing your comments for a particular cell, follow this exact format for each comment: \n 1. Use the delimiter ""[Cell: X]"" for each cell reference (e.g., [Cell: A1]). 2. For the text of your comment, use '[Comment: text of comment]' (e.g., [Comment: The value of this cell should be 5.32]). Do not use quotation marks for the text of your text of comment. 3. Each comment should start with the ""[Cell: X]"" marker followed by a [Comment: text of comment] in the next line, containg the content of your comment. 4. Ensure that each comment is on a new line. 5. If there is no or no meaninful comment for a cell, leave that part out and do not provide any response for that cell. I do not want you to say that there is no comment; only provide a response where there is a meaningful comment. {INI_PreCorrection}"
@@ -1510,10 +1515,10 @@ Namespace SharedLibrary
         Const Default_SP_FindClause As String = "Act as a clause finder. You will receive: /n- A JSON library of clauses between <LIBRARY> ... </LIBRARY>./n - Optionally a search query between <SEARCHQUERY> ... </SEARCHQUERY>./n- Optionally a search context between <TEXTFORSEARCH> ... </TEXTFORSEARCH>./nYour tasks: /n1.	Select only the clauses that best match (a) the search query (if provided) and/or (b) the subject matter of the search context (if provided). Use both when both are present. 2. Do not fabricate or modify clause text; use it verbatim as it appears in the library. 3.	Return ONLY a single JSON object with a top-level property ""records"" whose value is an array. Each array element MUST be an object with at least: /n- ""clause"": the original clause text (string, unchanged)./n Optionally you MAY add: /n- ""title"": a concise existing or inferred title (≤120 chars, no line breaks) /n- ""id"": existing identifier if present /n- ""score"": relevance score between 0 and 1 (number) /n- ""reason"": a very short rationale (≤160 chars) If there are no relevant clauses, return: {""records"": []} /n/n Constraints:/n- Output must be valid JSON (UTF-8), no comments, no extra keys outside ""records"". /n- Do not include explanatory prose outside the JSON./n- Keep each ""clause"" exactly as found (preserve punctuation and numbering). /n- Limit to the most relevant clauses (typically 3–10 unless the user query clearly implies more). /n- If both query and context are present and they conflict, favor the explicit search query but still allow context to disambiguate."
         Const Default_SP_FindClause_Clean As String = "You are a careful copy editor. You will receive a clause from a text that is to be inserted in a library for general usage. Your task is to clean and anonymize thise clause, i.e. remove any case specific reference, references to clauses outside the clause, any names and other identifiers; the clause should not change its content, but be ready for general use. You can insert placeholders such as [Name] for a name. Correct obvious typos and errors, but do not otherwise change or try to improve the language."
 
-        Const Default_SP_DocCheck_Clause As String = "You are to review a document excerpt against a JSON RuleSet of substantive review criteria (e.g., requirements that a contract must fulfill, content that may not be included, or topics that must be covered). First, read <TEXTTOANALYZE> and briefly determine its subject and purpose; this is the document excerpt to be analyzed. Then identify which parts of the <RULESET> could be relevant to the <TEXTTOANALYZE> and apply only those criteria. For each relevant criterion: check if the described requirement is met by <TEXTTOANALYZE> (semantic meaning, not just exact words). The <RULESET> contains nn Records, each covering a particular 'Topic' that addresses a particular 'Issue' by setting out a number of 'Criteria' in an array that are to be verified for covering the Issue. To verify a criterion, do each time as follows: (1) check whether the 'Condition' is fulfilled by the <TEXTTOANALYZE> and taking into account the Topic and Issue and other Context. (2) If the Condition is fulfilled, then 'IfTrue' will tell you the 'Consequence' and 'Risk' (if any), if the Condition is not fulfilled, then 'IfFalse' will tell you the 'Consequence' and 'Risk' (if any). (3) Identify the portion of the <TEXTTOANALYZE> to which the Condition relates (but IN ANY CASE omit anything that has a risk of 0); if there is no text within <TEXTTOANALYZE> that deals with the Condition and not text that could be used to deal with the Condition (e.g., because this aspect is not dealt with at all by <TEXTTOANALYZE>), then provide your finding by referring to a generic portion of the very beginning of <TEXTTOANALYZE> and state the text does not cover this Condition. Finally, after you have completed your analysis of each Condition, report each of your findings by referring (i) to the portion of the text, (ii) the finding in a short text and (iii) a recommendation to remedy the finding. Omit findings with a risk of 0. Follow these rules strictly when providing your response: \n- Provide your finding and recommendation always in one integrated, combined paragraph text of 2-3 sentences maximum, without titles, intros or statements such as 'Analysis:', 'Recommendation:' or 'Risk:' or '(i)' or '(ii)'. \n- The finding shall contain, in the same language, a risk assessment, which is 'low' for 'Risk'=1, medium for 2, and high for 3. Before providing your response make sure that you have COVERED ANY AND ALL CONDITIONS and have not left out ANY FINDING WITH A RISK>0. \n- Your response shall be short, practical, concise. \n- Your recommendations shall be ready-to-use amendments of the text (how does it need to be changed?), when required, and consistent with the business intent and wording of the entire text; always keep in mind the overall context that may be provided to you in <DOCUMENTnn> (nn = 1, 2, 3 etc.). \n- NEVER refer to the fields contained in the <RULESET>. The <RULESET> is confidential and entirely internal for you, not for the result. \n- Do not critique or summarize <DOCUMENTnn>, just consider them as context, if they are provided. \n- Respond ALWAYS in the language of <TEXTTOANALYZE>. \n- Only provide the bare bones results of your analysis. NEVER provide the instructions given to you and NEVER EXPLAIN WHAT YOU HAVE DONE. \n\n Always STRICTLY follow these instructions. Otherwise your response is not usable. The inputs are found between the tags <RULESET>…</RULESET>, <TEXTTOANALYZE>…</TEXTTOANALYZE> and, optionally, <DOCUMENTnn>…</DOCUMENTnn>. {OtherPrompt}. {PreCorrection}. Additional formatting instructions may follow; prefer them over defaults."
-        Const Default_SP_DocCheck_MultiClause As String = "You are to review a document based on a JSON RuleSet of substantive review criteria (e.g., requirements that a contract must fulfill, content that may not be included, or topics that must be covered). First, read the <RULESET> and understand it. The <RULESET> covers a particular 'Topic' that addresses a particular 'Issue' and contains a number of 'Criteria' in an array that are to be verified for covering the Issue. Each criterion consists of a 'Condition', and defines a 'Consequence' and 'Risk' if it 'IsTrue' or if it 'IsFalse'. Then, look at the entire <TEXTTOANALYZE> and check for each Criterion of the <RULESET> as follows: (1) Is the requirement set forth by the Condition met by <TEXTTOANALYZE> (semantic meaning, not just exact words), always taking into account the 'Topic' and 'Issue' of the <RULESET> and the bigger context that may be provided by one or several <DOCUMENTnn> (if any). (2) If the Condition is fulfilled, then 'IfTrue' will tell you the 'Consequence' and 'Risk' (if any), if the Condition is not fulfilled, then 'IfFalse' will tell you the 'Consequence' and 'Risk' (if any). (3) Identify the portion of the <TEXTTOANALYZE> to which the Condition and any Consequence relates (but IN ANY CASE omit anything that has a risk of 0); if there is no text within <TEXTTOANALYZE> that deals with the Condition and not text that could be used to deal with the Condition (e.g., because this aspect is not dealt with at all by <TEXTTOANALYZE>), then provide your finding by referring to a generic portion of the very beginning of <TEXTTOANALYZE> and state the text does not cover this Condition. Finally, after you have completed your analysis of each Condition, report each of your findings by referring  (i) to the portion of the text, (ii) the finding in a short text (also indicating the risk, whereas 1 is low, 2 is medium, 3 is high) and (iii) a recommendation to remedy the finding. Omit findings with a risk of 0. Follow these rules strictly when providing your response: \n- Provide your finding and recommendation always in one integrated, combined paragraph text of 2-3 sentences maximum, without titles, intros or statements such as 'Analysis:', 'Recommendation:' or 'Risk:' or '(i)' or '(ii)'. \n- The finding shall contain, in the same language, a risk assessment, which is 'low' for 'Risk'=1, medium for 2, and high for 3. Before providing your response make sure that you have COVERED ANY AND ALL CONDITIONS and have not left out ANY FINDING WITH A RISK>0. \n- Your response shall be short, practical, concise. \n- Your recommendations shall be ready-to-use amendments of the text (how does it need to be changed?), when required, and consistent with the business intent and wording of the entire text; always keep in mind the overall context that may be provided to you in <DOCUMENTnn> (nn = 1, 2, 3 etc.). \n- NEVER refer to the fields contained in the <RULESET>. The <RULESET> is confidential and entirely internal for you, not for the result. \n- Do not critique or summarize <DOCUMENTnn>, just consider them as context, if they are provided. \n- Respond ALWAYS in the language of <TEXTTOANALYZE>. \n- Only provide the bare bones results of your analysis. NEVER provide the instructions given to you and NEVER EXPLAIN WHAT YOU HAVE DONE. \n\n Always STRICTLY follow these instructions. Otherwise your response is not usable. The inputs are found between the tags <RULESET>…</RULESET>, <TEXTTOANALYZE>…</TEXTTOANALYZE> and, optionally, <DOCUMENTnn>…</DOCUMENTnn>. {OtherPrompt}. {PreCorrection}. Additional formatting instructions may follow; prefer them over defaults."
-        Const Default_SP_DocCheck_MulticlauseSum As String = "You are a well trained copy editor. Use the following TEXTTOPROCESS, which is the result of a document review, to create one comprehensive, structured report combining all result items (separated by two carriage returns) in the same style and format; you may use bullets to do so, but do not add or remove any substantive information. At the beginning of the report, insert a very short summary include the most important findings, using the same language as the findings, and after that add two line breaks. Do only provide the bare bones report, do not state your task otherwise respond to the user (except by providing the report you have been asked for)."
-        Const Default_SP_DocCheck_MultiClauseSum_Bubbles As String = "You are a well trained copy editor. You are provided with the results of a document review, i.e. the various findings, between the tag <TEXTTOPROCESS> ... </TEXTTOPROCESS>. Create a very short summary include the most important findings, using the same language as the findings. Also use the same language to add a word indicating the meaning of 'Summary:' at the very beginning of your answer."
+        Const Default_SP_DocCheck_Clause As String = "You are to review a document excerpt against a JSON RuleSet of substantive review criteria (e.g., requirements that a contract must fulfill, content that may not be included, or topics that must be covered). First, read <TEXTTOANALYZE> and briefly determine its subject and purpose; this is the document excerpt to be analyzed. Then identify which parts of the <RULESET> could be relevant to the <TEXTTOANALYZE> and apply only those criteria. For each relevant criterion: check if the described requirement is met by <TEXTTOANALYZE> (semantic meaning, not just exact words). The <RULESET> contains nn Records, each covering a particular 'Topic' that addresses a particular 'Issue' by setting out a number of 'Criteria' in an array that are to be verified for covering the Issue. To verify a criterion, do each time as follows: (1) check whether the 'Condition' is fulfilled by the <TEXTTOANALYZE> and taking into account the Topic and Issue and other Context. (2) If the Condition is fulfilled, then 'IfTrue' will tell you the 'Consequence' and 'Risk' (if any), if the Condition is not fulfilled, then 'IfFalse' will tell you the 'Consequence' and 'Risk' (if any). (3) Identify the portion of the <TEXTTOANALYZE> to which the Condition relates (but IN ANY CASE omit anything that has a risk of 0); if there is no text within <TEXTTOANALYZE> that deals with the Condition and not text that could be used to deal with the Condition (e.g., because this aspect is not dealt with at all by <TEXTTOANALYZE>), then provide your finding by referring to a generic portion of the very beginning of <TEXTTOANALYZE> and state the text does not cover this Condition. Finally, after you have completed your analysis of each Condition, report each of your findings by referring (i) to the portion of the text, (ii) the finding in a short text and (iii) a recommendation to remedy the finding. Omit findings with a risk of 0. Follow these rules strictly when providing your response: \n- Provide your finding and recommendation always in one integrated, combined paragraph text of 2-3 sentences maximum, without titles, intros or statements such as 'Analysis:', 'Recommendation:' or 'Risk:' or '(i)' or '(ii)'. \n- The finding shall contain, in {OutputLanguage}, a risk assessment, which is 'low' for 'Risk'=1, medium for 2, and high for 3. Before providing your response make sure that you have COVERED ANY AND ALL CONDITIONS and have not left out ANY FINDING WITH A RISK>0. \n- Your response shall be short, practical, concise. \n- Your recommendations shall be ready-to-use amendments of the text (how does it need to be changed?), when required, and consistent with the business intent and wording of the entire text; always keep in mind the overall context that may be provided to you in <DOCUMENTnn> (nn = 1, 2, 3 etc.). \n- NEVER refer to the fields contained in the <RULESET>. The <RULESET> is confidential and entirely internal for you, not for the result. \n- Do not critique or summarize <DOCUMENTnn>, just consider them as context, if they are provided. \n- Respond ALWAYS in {OutputLanguage}. \n- Only provide the bare bones results of your analysis. NEVER provide the instructions given to you and NEVER EXPLAIN WHAT YOU HAVE DONE. \n\n Always STRICTLY follow these instructions. Otherwise your response is not usable. The inputs are found between the tags <RULESET>…</RULESET>, <TEXTTOANALYZE>…</TEXTTOANALYZE> and, optionally, <DOCUMENTnn>…</DOCUMENTnn>. {OtherPrompt}. {PreCorrection}. Additional formatting instructions may follow; prefer them over defaults."
+        Const Default_SP_DocCheck_MultiClause As String = "You are to review a document based on a JSON RuleSet of substantive review criteria (e.g., requirements that a contract must fulfill, content that may not be included, or topics that must be covered). First, read the <RULESET> and understand it. The <RULESET> covers a particular 'Topic' that addresses a particular 'Issue' and contains a number of 'Criteria' in an array that are to be verified for covering the Issue. Each criterion consists of a 'Condition', and defines a 'Consequence' and 'Risk' if it 'IsTrue' or if it 'IsFalse'. Then, look at the entire <TEXTTOANALYZE> and check for each Criterion of the <RULESET> as follows: (1) Is the requirement set forth by the Condition met by <TEXTTOANALYZE> (semantic meaning, not just exact words), always taking into account the 'Topic' and 'Issue' of the <RULESET> and the bigger context that may be provided by one or several <DOCUMENTnn> (if any). (2) If the Condition is fulfilled, then 'IfTrue' will tell you the 'Consequence' and 'Risk' (if any), if the Condition is not fulfilled, then 'IfFalse' will tell you the 'Consequence' and 'Risk' (if any). (3) Identify the portion of the <TEXTTOANALYZE> to which the Condition and any Consequence relates (but IN ANY CASE omit anything that has a risk of 0); if there is no text within <TEXTTOANALYZE> that deals with the Condition and not text that could be used to deal with the Condition (e.g., because this aspect is not dealt with at all by <TEXTTOANALYZE>), then provide your finding by referring to a generic portion of the very beginning of <TEXTTOANALYZE> and state the text does not cover this Condition. Finally, after you have completed your analysis of each Condition, report each of your findings by referring  (i) to the portion of the text, (ii) the finding in a short text (also indicating the risk, whereas 1 is low, 2 is medium, 3 is high) and (iii) a recommendation to remedy the finding. Omit findings with a risk of 0. Follow these rules strictly when providing your response: \n- Provide your finding and recommendation always in one integrated, combined paragraph text of 2-3 sentences maximum, without titles, intros or statements such as 'Analysis:', 'Recommendation:' or 'Risk:' or '(i)' or '(ii)'. \n- The finding shall contain, in {OutputLanguage}, a risk assessment, which is 'low' for 'Risk'=1, medium for 2, and high for 3. Before providing your response make sure that you have COVERED ANY AND ALL CONDITIONS and have not left out ANY FINDING WITH A RISK>0. \n- Your response shall be short, practical, concise. \n- Your recommendations shall be ready-to-use amendments of the text (how does it need to be changed?), when required, and consistent with the business intent and wording of the entire text; always keep in mind the overall context that may be provided to you in <DOCUMENTnn> (nn = 1, 2, 3 etc.). \n- NEVER refer to the fields contained in the <RULESET>. The <RULESET> is confidential and entirely internal for you, not for the result. \n- Do not critique or summarize <DOCUMENTnn>, just consider them as context, if they are provided. \n- Respond ALWAYS in {OutputLanguage}. \n- Only provide the bare bones results of your analysis. NEVER provide the instructions given to you and NEVER EXPLAIN WHAT YOU HAVE DONE. \n\n Always STRICTLY follow these instructions. Otherwise your response is not usable. The inputs are found between the tags <RULESET>…</RULESET>, <TEXTTOANALYZE>…</TEXTTOANALYZE> and, optionally, <DOCUMENTnn>…</DOCUMENTnn>. {OtherPrompt}. {PreCorrection}. Additional formatting instructions may follow; prefer them over defaults."
+        Const Default_SP_DocCheck_MulticlauseSum As String = "You are a well trained copy editor. Use the following TEXTTOPROCESS, which is the result of a document review, to create one comprehensive, structured report combining all result items (separated by two carriage returns) in the same style and format; you may use bullets to do so, but do not add or remove any substantive information. At the beginning of the report, insert a very short summary include the most important findings, using {OutputLanguage}, and after that add two line breaks. Do only provide the bare bones report, do not state your task otherwise respond to the user (except by providing the report you have been asked for)."
+        Const Default_SP_DocCheck_MultiClauseSum_Bubbles As String = "You are a well trained copy editor. You are provided with the results of a document review, i.e. the various findings, between the tag <TEXTTOPROCESS> ... </TEXTTOPROCESS>. Analyze the findings and the prevailing language. Then create a very short summary include the most important findings using {OutputLanguage} language. Include in the beginning of your answer the {OutputLanguage} word for 'Summary' followed by a colon."
 
         Const Default_SP_SuggestTitles As String = "You are a legal professional and a clever, astute and well-educated copy editor. You are in the following given a text, enclosed between <TEXTTOPROCESS> and </TEXTTOPROCESS>. Your goal is to read and analyze the content, then create multiple sets of possible titles in the same language as the original text, with three (3) distinct titles each for: (1) professional memo, (2) blog/news post, (3) informal, (4) humorous, and (5) ambiguous, cryptic but ingenious. The titles must be clever, easy to read, well-aligned with the text, and suitable for the stated purpose. Provide more than average results. Use the structure:\nProfessional Memo Titles:\n1) ...\n2) ...\n3) ...\nBlog or News Post Titles:\n1) ...\n2) ...\n3) ...\nInformal Titles:\n1) ...\n2) ...\n3) ...\nHumorous Titles:\n1) ...\n2) ...\n3) ...\nFood for Thought Titles:\n1) ...\n2) ...\n3) ...\n. It is mandatory that you provide your output and all titles provide in the original language of the Texttoprocess."
         Const Default_SP_Friendly As String = "You are a legal professional with exceptional language skills who follows instructions meticulously step by step. Your task is to refine the text labeled 'Texttoprocess' (in its original language) to make it more friendly, while otherwise preserving its substance, wording and style. Use rhetorical techniques and wording that is typically well received and generates a positive attitude by the recipient, but stay straightforward, and do neither exaggerate nor brownnose. Whenever there is a line feed or carriage return in text provided to you, it is essential that you also include such line feed or carriage return in the output you generate. The carriage returns and line feeds in the output must match exactly those in the original text provided to you. Accordingly, if there are two carriage returns or line feeds in succession in the text provided to you, there must also be two carriage returns or line feeds in the text you generate. Also, only provide the revised text, never provide any explanations or comments on how you have fulfilled your instructions.  {INI_PreCorrection}"
@@ -2275,75 +2280,229 @@ Namespace SharedLibrary
 
                 System.Diagnostics.Debug.WriteLine("FinalHTML=" & finalHtml)
 
-                ' Setzen der Zwischenablage auf STA mit kurzen Retries (Clipboard kann belegt sein)
-                Dim setOk As Boolean = False
-                Dim clipboardThread As New System.Threading.Thread(
-            Sub()
-                For attempt As Integer = 1 To 6
-                    Try
-                        System.Windows.Forms.Clipboard.SetText(finalHtml, System.Windows.Forms.TextDataFormat.Html)
-                        setOk = True
-                        Exit For
-                    Catch exClip As System.Runtime.InteropServices.ExternalException
-                        System.Threading.Thread.Sleep(50 * attempt)
-                    Catch exAny As System.Exception
-                        ' Unerwartet – trotzdem noch 1–2 Retries
-                        System.Threading.Thread.Sleep(50 * attempt)
-                    End Try
-                Next
-            End Sub)
-                clipboardThread.SetApartmentState(System.Threading.ApartmentState.STA)
-                clipboardThread.Start()
-                clipboardThread.Join()
+                Dim savedClipboard As System.Windows.Forms.IDataObject = ClipboardSnapshot.Capture()
+                Try
 
-                If Not setOk Then
-                    Throw New System.Exception("HTML konnte nicht in die Zwischenablage geschrieben werden (Clipboard belegt?).")
-                End If
+                    ' Setzen der Zwischenablage auf STA mit kurzen Retries (Clipboard kann belegt sein)
+                    Dim setOk As Boolean = False
+                    Dim clipboardThread As New System.Threading.Thread(
+                                        Sub()
+                                            For attempt As Integer = 1 To 6
+                                                Try
+                                                    System.Windows.Forms.Clipboard.SetText(finalHtml, System.Windows.Forms.TextDataFormat.Html)
+                                                    setOk = True
+                                                    Exit For
+                                                Catch exClip As System.Runtime.InteropServices.ExternalException
+                                                    System.Threading.Thread.Sleep(50 * attempt)
+                                                Catch exAny As System.Exception
+                                                    ' Unerwartet – trotzdem noch 1–2 Retries
+                                                    System.Threading.Thread.Sleep(50 * attempt)
+                                                End Try
+                                            Next
+                                        End Sub)
+                    clipboardThread.SetApartmentState(System.Threading.ApartmentState.STA)
+                    clipboardThread.Start()
+                    clipboardThread.Join()
 
-                ' Kleine Wartezeit, damit Word sichere Daten liest
-                System.Threading.Thread.Sleep(50)
+                    If Not setOk Then
+                        Throw New System.Exception("HTML konnte nicht in die Zwischenablage geschrieben werden (Clipboard belegt?).")
+                    End If
 
-                ' --- 7) Einfügen in den Word-Range (mit kleinem Retry gegen Timing-Probleme) ---
-                range.Select()
-                Dim pasted As Boolean = False
-                For attempt As Integer = 1 To 4
-                    Try
-                        If ReplaceSelection Then
-                            range.Application.Selection.PasteAndFormat(Microsoft.Office.Interop.Word.WdRecoveryType.wdFormatOriginalFormatting)
-                        Else
-                            range.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-                            range.Select()
-                            range.Application.Selection.PasteAndFormat(Microsoft.Office.Interop.Word.WdRecoveryType.wdFormatOriginalFormatting)
-                        End If
-                        pasted = True
-                        Exit For
-                    Catch exPaste As System.Runtime.InteropServices.COMException
-                        System.Threading.Thread.Sleep(50 * attempt)
-                    End Try
-                Next
+                    ' Kleine Wartezeit, damit Word sichere Daten liest
+                    System.Threading.Thread.Sleep(50)
 
-                If Not pasted Then
-                    Throw New System.Exception("Einfügen in Word ist fehlgeschlagen.")
-                End If
+                    ' --- 7) Einfügen in den Word-Range (mit kleinem Retry gegen Timing-Probleme) ---
+                    range.Select()
+                    Dim pasted As Boolean = False
+                    For attempt As Integer = 1 To 4
+                        Try
+                            If ReplaceSelection Then
+                                range.Application.Selection.PasteAndFormat(Microsoft.Office.Interop.Word.WdRecoveryType.wdFormatOriginalFormatting)
+                            Else
+                                range.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
+                                range.Select()
+                                range.Application.Selection.PasteAndFormat(Microsoft.Office.Interop.Word.WdRecoveryType.wdFormatOriginalFormatting)
+                            End If
+                            pasted = True
+                            Exit For
+                        Catch exPaste As System.Runtime.InteropServices.COMException
+                            System.Threading.Thread.Sleep(50 * attempt)
+                        End Try
+                    Next
 
-                System.Threading.Thread.Sleep(100)
-                range = range.Application.Selection.Range
+                    If Not pasted Then
+                        Throw New System.Exception("Einfügen in Word ist fehlgeschlagen.")
+                    End If
 
-                ' --- 8) Optional: letztes Newline-Zeichen entfernen ---
-                If ReplaceSelection AndAlso NoTrailingCR Then
-                    Dim insertedRange As Microsoft.Office.Interop.Word.Range = range.Application.Selection.Range
-                    Dim delRng As Microsoft.Office.Interop.Word.Range = insertedRange.Duplicate()
-                    delRng.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-                    delRng.MoveStart(Microsoft.Office.Interop.Word.WdUnits.wdCharacter, -1)
-                    delRng.Delete()
-                    insertedRange.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-                    insertedRange.Select()
-                End If
+                    System.Threading.Thread.Sleep(100)
+                    range = range.Application.Selection.Range
+
+                    ' --- 8) Optional: letztes Newline-Zeichen entfernen ---
+                    If ReplaceSelection AndAlso NoTrailingCR Then
+                        Dim insertedRange As Microsoft.Office.Interop.Word.Range = range.Application.Selection.Range
+                        Dim delRng As Microsoft.Office.Interop.Word.Range = insertedRange.Duplicate()
+                        delRng.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
+                        delRng.MoveStart(Microsoft.Office.Interop.Word.WdUnits.wdCharacter, -1)
+                        delRng.Delete()
+                        insertedRange.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
+                        insertedRange.Select()
+                    End If
+
+                Finally
+                    System.Threading.Thread.Sleep(100)
+                    ClipboardSnapshot.Restore(savedClipboard)
+                End Try
 
             Catch ex As System.Exception
-                System.Windows.Forms.MessageBox.Show("InsertTextWithFormat Error: " & ex.Message)
+                    System.Windows.Forms.MessageBox.Show("InsertTextWithFormat Error: " & ex.Message)
             End Try
         End Sub
+
+
+        ' Full namespace usage as requested.
+        Public NotInheritable Class ClipboardSnapshot
+
+            Private Sub New()
+            End Sub
+
+            Public Shared Function Capture() As System.Windows.Forms.IDataObject
+                Dim captured As System.Windows.Forms.IDataObject = Nothing
+
+                Dim t As New System.Threading.Thread(
+                Sub()
+                    Try
+                        Dim result As New System.Windows.Forms.DataObject()
+
+                        ' Capture ONLY safe, simple formats. Avoid enumerating all formats to prevent
+                        ' delayed rendering of OLE/embedded objects that can re-enter Word.
+                        Try
+                            If System.Windows.Forms.Clipboard.ContainsText(System.Windows.Forms.TextDataFormat.Html) Then
+                                Dim html = System.Windows.Forms.Clipboard.GetText(System.Windows.Forms.TextDataFormat.Html)
+                                result.SetData(System.Windows.Forms.DataFormats.Html, False, html)
+                            End If
+                        Catch
+                        End Try
+
+                        Try
+                            If System.Windows.Forms.Clipboard.ContainsText(System.Windows.Forms.TextDataFormat.Rtf) Then
+                                Dim rtf = System.Windows.Forms.Clipboard.GetText(System.Windows.Forms.TextDataFormat.Rtf)
+                                result.SetData(System.Windows.Forms.DataFormats.Rtf, False, rtf)
+                            End If
+                        Catch
+                        End Try
+
+                        Try
+                            If System.Windows.Forms.Clipboard.ContainsText(System.Windows.Forms.TextDataFormat.UnicodeText) Then
+                                Dim u = System.Windows.Forms.Clipboard.GetText(System.Windows.Forms.TextDataFormat.UnicodeText)
+                                result.SetData(System.Windows.Forms.DataFormats.UnicodeText, False, u)
+                            ElseIf System.Windows.Forms.Clipboard.ContainsText(System.Windows.Forms.TextDataFormat.Text) Then
+                                Dim ttxt = System.Windows.Forms.Clipboard.GetText(System.Windows.Forms.TextDataFormat.Text)
+                                result.SetData(System.Windows.Forms.DataFormats.Text, False, ttxt)
+                            End If
+                        Catch
+                        End Try
+
+                        Try
+                            If System.Windows.Forms.Clipboard.ContainsFileDropList() Then
+                                Dim files = System.Windows.Forms.Clipboard.GetFileDropList()
+                                If files IsNot Nothing AndAlso files.Count > 0 Then
+                                    Dim copy As New System.Collections.Specialized.StringCollection()
+                                    For Each f As String In files
+                                        copy.Add(f)
+                                    Next
+                                    result.SetFileDropList(copy)
+                                End If
+                            End If
+                        Catch
+                        End Try
+
+                        ' If you ever need images, prefer explicit opt-in; images can be heavy.
+                        'Try
+                        '    If System.Windows.Forms.Clipboard.ContainsImage() Then
+                        '        Dim img = System.Windows.Forms.Clipboard.GetImage()
+                        '        If img IsNot Nothing Then
+                        '            result.SetImage(New System.Drawing.Bitmap(img))
+                        '        End If
+                        '    End If
+                        'Catch
+                        'End Try
+
+                        captured = result
+                    Catch
+                        captured = New System.Windows.Forms.DataObject() ' empty fallback
+                    End Try
+                End Sub)
+                t.SetApartmentState(System.Threading.ApartmentState.STA)
+                t.Start()
+                t.Join()
+
+                Return captured
+            End Function
+
+            Public Shared Sub Restore(snapshot As System.Windows.Forms.IDataObject)
+                If snapshot Is Nothing Then Return
+
+                Dim t As New System.Threading.Thread(
+                Sub()
+                    Try
+                        ' true => keep after app exits; also retries internally.
+                        System.Windows.Forms.Clipboard.SetDataObject(snapshot, True)
+                    Catch exClip As System.Runtime.InteropServices.ExternalException
+                        ' Clipboard busy — best effort only.
+                    Catch exAny As System.Exception
+                    End Try
+                End Sub)
+                t.SetApartmentState(System.Threading.ApartmentState.STA)
+                t.Start()
+                t.Join()
+            End Sub
+
+            Private Shared Function CloneData(fmt As System.String, data As System.Object) As System.Object
+                ' Kept for backward compatibility; not used by the safe-capture path.
+
+                If TypeOf data Is System.IO.Stream Then
+                    Dim src As System.IO.Stream = DirectCast(data, System.IO.Stream)
+                    Try
+                        If src.CanSeek Then src.Position = 0
+                    Catch
+                    End Try
+                    Dim ms As New System.IO.MemoryStream()
+                    src.CopyTo(ms)
+                    ms.Position = 0
+                    Return ms
+                End If
+
+                If TypeOf data Is System.Drawing.Bitmap Then
+                    Dim bmp As System.Drawing.Bitmap = DirectCast(data, System.Drawing.Bitmap)
+                    Dim rect As New System.Drawing.Rectangle(0, 0, bmp.Width, bmp.Height)
+                    Return bmp.Clone(rect, bmp.PixelFormat)
+                End If
+
+                If TypeOf data Is System.Drawing.Image Then
+                    Dim img As System.Drawing.Image = DirectCast(data, System.Drawing.Image)
+                    Return New System.Drawing.Bitmap(img)
+                End If
+
+                If TypeOf data Is System.String() Then
+                    Dim arr As System.String() = DirectCast(data, System.String())
+                    Return CType(arr.Clone(), System.String())
+                End If
+
+                If TypeOf data Is System.String Then
+                    Return System.String.Copy(DirectCast(data, System.String))
+                End If
+
+                Try
+                    If TypeOf data Is System.ICloneable Then
+                        Return DirectCast(data, System.ICloneable).Clone()
+                    End If
+                Catch
+                End Try
+
+                Return data
+            End Function
+        End Class
+
 
 
         Private Shared Function FixMarkTagsForWord(html As String, Optional defaultColor As String = "yellow") As String
@@ -3498,8 +3657,23 @@ Namespace SharedLibrary
                                                     End If
                                                 Next
                                                 Debug.WriteLine(multipartInfo.ToString())
+                                                Try
+                                                    Dim desktopPath As String = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+                                                    Dim debugFilePath As String = System.IO.Path.Combine(desktopPath, "RI_Debug_Sent.json")
+                                                    System.IO.File.WriteAllText(debugFilePath, multipartInfo.ToString())
+                                                Catch
+                                                    ' Silent fail
+                                                End Try
                                             Else
                                                 Debug.WriteLine($"SENT TO API ({Endpoint}):{Environment.NewLine}{requestBody}")
+                                                Try
+                                                    Dim desktopPath As String = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+                                                    Dim debugFilePath As String = System.IO.Path.Combine(desktopPath, "RI_Debug_Sent.json")
+                                                    System.IO.File.WriteAllText(debugFilePath, requestBody)
+                                                Catch
+                                                    ' Silent fail
+                                                End Try
+
                                             End If
                                         End If
                                         response = Await client.PostAsync(Endpoint, requestContent, ct).ConfigureAwait(False)
@@ -3535,7 +3709,7 @@ Namespace SharedLibrary
                                     Debug.WriteLine($"RECEIVED FROM API:{Environment.NewLine}{responseText}")
                                     Try
                                         Dim desktopPath As String = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
-                                        Dim debugFilePath As String = System.IO.Path.Combine(desktopPath, "RI_Debug.json")
+                                        Dim debugFilePath As String = System.IO.Path.Combine(desktopPath, "RI_Debug_Received.json")
                                         System.IO.File.WriteAllText(debugFilePath, responseText)
                                     Catch
                                         ' Silent fail
@@ -3594,6 +3768,13 @@ Namespace SharedLibrary
 
                                     If context.INI_APIDebug Then
                                         Debug.WriteLine($"SENT TO API as GET ({rawGetEndpoint}):{Environment.NewLine}{rawGetBody}")
+                                        Try
+                                            Dim desktopPath As String = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+                                            Dim debugFilePath As String = System.IO.Path.Combine(desktopPath, "RI_Debug_Sent_Get.json")
+                                            System.IO.File.WriteAllText(debugFilePath, rawGetBody)
+                                        Catch
+                                            ' Silent fail
+                                        End Try
                                     End If
 
                                     splash.RestartCountdown(timeoutSeconds)
@@ -3613,7 +3794,7 @@ Namespace SharedLibrary
                                         Debug.WriteLine($"RECEIVED FROM API (GET):{Environment.NewLine}{getResponseText}")
                                         Try
                                             Dim desktopPath As String = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
-                                            Dim debugFilePath As String = System.IO.Path.Combine(desktopPath, "RI_Debug_GET.json")
+                                            Dim debugFilePath As String = System.IO.Path.Combine(desktopPath, "RI_Debug_Received_GET.json")
                                             System.IO.File.WriteAllText(debugFilePath, responseText)
                                         Catch
                                             ' Silent fail
@@ -5351,6 +5532,7 @@ Namespace SharedLibrary
                 context.SP_Add_KeepHTMLIntact = If(configDict.ContainsKey("SP_Add_KeepHTMLIntact"), configDict("SP_Add_KeepHTMLIntact"), Default_SP_Add_KeepHTMLIntact)
                 context.SP_Add_KeepInlineIntact = If(configDict.ContainsKey("SP_Add_KeepInlineIntact"), configDict("SP_Add_KeepInlineIntact"), Default_SP_Add_KeepInlineIntact)
                 context.SP_Add_Bubbles = If(configDict.ContainsKey("SP_Add_Bubbles"), configDict("SP_Add_Bubbles"), Default_SP_Add_Bubbles)
+                context.SP_Add_Bubbles_Format = If(configDict.ContainsKey("SP_Add_Bubbles_Format"), configDict("SP_Add_Bubbles_Format"), Default_SP_Add_Bubbles_Format)
                 context.SP_Add_Batch = If(configDict.ContainsKey("SP_Add_Batch"), configDict("SP_Add_Batch"), Default_SP_Add_Batch)
                 context.SP_Add_Slides = If(configDict.ContainsKey("SP_Add_Slides"), configDict("SP_Add_Slides"), Default_SP_Add_Slides)
                 context.SP_BubblesExcel = If(configDict.ContainsKey("SP_BubblesExcel"), configDict("SP_BubblesExcel"), Default_SP_BubblesExcel)
@@ -5386,6 +5568,7 @@ Namespace SharedLibrary
                 ' Boolean parameters
                 context.INI_DoubleS = ParseBoolean(configDict, "DoubleS")
                 context.INI_Clean = ParseBoolean(configDict, "Clean")
+                context.INI_MarkdownBubbles = ParseBoolean(configDict, "MarkdownBubbles")
                 context.INI_KeepFormat1 = ParseBoolean(configDict, "KeepFormat1")
                 context.INI_ReplaceText1 = ParseBoolean(configDict, "ReplaceText1", True)
                 context.INI_KeepFormat2 = ParseBoolean(configDict, "KeepFormat2")
@@ -6578,6 +6761,536 @@ Namespace SharedLibrary
                                                     Optional OptionalButtons As System.Tuple(Of System.String, System.String, System.String)() = Nothing
                                                 ) As String
 
+            ' Screen working area (accounts for taskbar, etc.)
+            Dim wa As System.Drawing.Rectangle = Screen.FromPoint(Cursor.Position).WorkingArea
+
+            ' Multi-line sizing rule: height = 1/6 of screen; width = 2 x
+            Dim desiredInputHeight As Integer = 0
+            Dim desiredInputWidth As Integer = 0
+            If Not SimpleInput Then
+                desiredInputHeight = Math.Max(150, CInt(wa.Height / 6.0))
+                desiredInputWidth = CInt(desiredInputHeight * 3)
+                desiredInputWidth = Math.Min(desiredInputWidth, wa.Width - 60) ' margin to fit in screen
+            End If
+
+            ' Create and configure the form (resizable in both modes)
+            Dim inputForm As New Form() With {
+                .Opacity = 0,
+                .Text = title,
+                .FormBorderStyle = FormBorderStyle.Sizable,
+                .StartPosition = FormStartPosition.Manual, ' we will center within working area after layout
+                .MaximizeBox = False,
+                .MinimizeBox = False,
+                .ShowInTaskbar = False,
+                .TopMost = True,
+                .AutoScaleMode = AutoScaleMode.Font,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink
+            }
+
+            ' Set the icon
+            Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
+            inputForm.Icon = Icon.FromHandle(bmp.GetHicon())
+
+            ' Standard font
+            Dim standardFont As New System.Drawing.Font("Segoe UI", 9.0F, FontStyle.Regular, GraphicsUnit.Point)
+            inputForm.Font = standardFont
+
+            ' Main layout for dynamic resizing
+            Dim mainLayout As New TableLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .ColumnCount = 1,
+                .RowCount = 3,
+                .Padding = New Padding(20),
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink
+            }
+            mainLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+            If SimpleInput Then
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))         ' label
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))         ' single-line textbox
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))         ' buttons
+            Else
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))         ' label
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))  ' multi-line textbox grows/shrinks
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))         ' buttons
+            End If
+
+            ' Prompt label (wrap to initial target width; updated on resize)
+            Dim initialLabelWrap As Integer = If(SimpleInput,
+                                                 Math.Min(wa.Width - 120, 700),
+                                                 Math.Max(400, desiredInputWidth))
+            Dim promptLabel As New System.Windows.Forms.Label() With {
+                .Text = prompt,
+                .Font = standardFont,
+                .AutoSize = True,
+                .MaximumSize = New Size(initialLabelWrap, 0)
+            }
+            promptLabel.Dock = DockStyle.Top
+            mainLayout.Controls.Add(promptLabel, 0, 0)
+
+            ' Input TextBox
+            Dim inputTextBox As New TextBox() With {
+                .Font = standardFont,
+                .Multiline = Not SimpleInput,
+                .WordWrap = True,
+                .ScrollBars = If(SimpleInput, ScrollBars.None, ScrollBars.Vertical),
+                .Text = DefaultValue
+            }
+            If SimpleInput Then
+                ' Single-line: compute height, stretch horizontally with the form
+                inputTextBox.Height = TextRenderer.MeasureText("Wy", standardFont).Height + 6
+                inputTextBox.Anchor = AnchorStyles.Left Or AnchorStyles.Right
+                inputTextBox.Width = initialLabelWrap
+            Else
+                ' Multi-line: initial size by rule; allow growing with the form
+                inputTextBox.MinimumSize = New Size(desiredInputWidth, desiredInputHeight)
+                inputTextBox.Dock = DockStyle.Fill
+            End If
+            mainLayout.Controls.Add(inputTextBox, 0, 1)
+
+            ' OK and Cancel buttons
+            Dim okButton As New Button() With {.Text = "OK", .AutoSize = True, .Font = standardFont}
+            Dim cancelButton As New Button() With {.Text = "Cancel", .AutoSize = True, .Font = standardFont}
+
+            AddHandler okButton.Click, Sub()
+                                           inputForm.DialogResult = DialogResult.OK
+                                           inputForm.Close()
+                                       End Sub
+            AddHandler cancelButton.Click, Sub()
+                                               inputForm.DialogResult = DialogResult.Cancel
+                                               inputForm.Close()
+                                           End Sub
+
+            ' Bottom flow with wrapping to keep all buttons visible if space narrows
+            Dim bottomFlow As New FlowLayoutPanel() With {
+                .FlowDirection = FlowDirection.LeftToRight,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .Margin = New Padding(0, 20, 0, 0),
+                .Dock = DockStyle.Top,
+                .WrapContents = True
+            }
+            bottomFlow.Controls.Add(okButton)
+            bottomFlow.Controls.Add(cancelButton)
+
+            ' Optional extra buttons (max 5): label, tooltip, and prefix
+            Dim selectedPrefix As String = Nothing
+            If OptionalButtons IsNot Nothing AndAlso OptionalButtons.Length > 0 Then
+                Dim tip As New System.Windows.Forms.ToolTip()
+                Dim count As Integer = Math.Min(5, OptionalButtons.Length)
+                For i As Integer = 0 To count - 1
+                    Dim item = OptionalButtons(i)
+                    Dim extraBtn As New System.Windows.Forms.Button() With {
+                        .Text = item.Item1,
+                        .AutoSize = True,
+                        .Font = standardFont
+                    }
+                    tip.SetToolTip(extraBtn, item.Item2)
+                    If i = 0 Then
+                        extraBtn.Margin = New Padding(cancelButton.Margin.Left * 2, cancelButton.Margin.Top, cancelButton.Margin.Right, cancelButton.Margin.Bottom)
+                    End If
+                    AddHandler extraBtn.Click,
+                        Sub()
+                            selectedPrefix = item.Item3
+                            inputForm.DialogResult = DialogResult.OK
+                            inputForm.Close()
+                        End Sub
+                    bottomFlow.Controls.Add(extraBtn)
+                Next
+            End If
+
+            mainLayout.Controls.Add(bottomFlow, 0, 2)
+            inputForm.Controls.Add(mainLayout)
+
+            ' Resize handler to keep label wrapping sensible when the user resizes the form
+            AddHandler inputForm.Resize, Sub()
+                                             ' Available width for content inside padding
+                                             Dim available As Integer = Math.Max(300, mainLayout.ClientSize.Width)
+                                             promptLabel.MaximumSize = New Size(available, 0)
+                                             promptLabel.Invalidate()
+                                         End Sub
+
+            ' KeyDown handlers for Enter/Escape
+            If SimpleInput Then
+                AddHandler inputTextBox.KeyDown, Sub(sender, e)
+                                                     If e.KeyCode = Keys.Enter Then
+                                                         inputForm.DialogResult = DialogResult.OK
+                                                         inputForm.Close()
+                                                         e.SuppressKeyPress = True
+                                                     End If
+                                                 End Sub
+            Else
+                AddHandler inputTextBox.KeyDown, Sub(sender, e)
+                                                     If e.KeyCode = Keys.Enter AndAlso e.Modifiers = Keys.Control Then
+                                                         inputForm.DialogResult = DialogResult.OK
+                                                         inputForm.Close()
+                                                         e.SuppressKeyPress = True
+                                                     ElseIf e.KeyCode = Keys.Escape Then
+                                                         inputForm.DialogResult = DialogResult.Cancel
+                                                         inputForm.Close()
+                                                         e.SuppressKeyPress = True
+                                                     End If
+                                                 End Sub
+            End If
+
+            ' Ctrl+P insertion, if provided
+            If Not String.IsNullOrEmpty(CtrlP) Then
+                AddHandler inputTextBox.KeyDown, Sub(sender, e)
+                                                     If e.KeyCode = Keys.P AndAlso e.Modifiers = Keys.Control Then
+                                                         Dim selPos = inputTextBox.SelectionStart
+                                                         inputTextBox.Text = inputTextBox.Text.Insert(selPos, CtrlP)
+                                                         inputTextBox.SelectionStart = selPos + CtrlP.Length
+                                                         e.SuppressKeyPress = True
+                                                     End If
+                                                 End Sub
+            End If
+
+            ' After AutoSize computed, clamp to screen, set MinimumSize (so buttons stay visible),
+            ' disable AutoSize to allow user resizing, and center within the working area.
+            AddHandler inputForm.Shown, Sub()
+                                            ' Let AutoSize produce the preferred size first
+                                            inputForm.PerformLayout()
+
+                                            Dim maxW As Integer = wa.Width - 40
+                                            Dim maxH As Integer = wa.Height - 40
+
+                                            ' Compute space used by non-textbox rows and window chrome
+                                            Dim chromeH As Integer = inputForm.Height - inputForm.ClientSize.Height
+                                            Dim labelH As Integer = promptLabel.PreferredSize.Height
+                                            Dim buttonsH As Integer = bottomFlow.PreferredSize.Height
+                                            Dim paddingV As Integer = mainLayout.Padding.Vertical
+                                            Dim gaps As Integer = bottomFlow.Margin.Top ' vertical gap above buttons
+
+                                            Dim fixedRowsH As Integer = paddingV + labelH + gaps + buttonsH
+                                            Dim maxClientH As Integer = maxH - chromeH
+
+                                            If Not SimpleInput Then
+                                                ' Allocate remaining height to the textbox, but stay within working area
+                                                Dim textH As Integer = Math.Max(100, Math.Min(desiredInputHeight, maxClientH - fixedRowsH))
+
+                                                ' Set client size so all rows are visible
+                                                Dim newClientH As Integer = Math.Min(fixedRowsH + textH, maxClientH)
+
+                                                ' Keep current width (already autosized) but clamp to screen
+                                                Dim newClientW As Integer = Math.Min(inputForm.ClientSize.Width, maxW)
+
+                                                inputForm.ClientSize = New Size(newClientW, newClientH)
+                                            Else
+                                                ' SimpleInput: just clamp to screen
+                                                If inputForm.Width > maxW Then inputForm.Width = maxW
+                                                If inputForm.Height > maxH Then inputForm.Height = maxH
+                                            End If
+
+                                            ' Minimum cannot be smaller than the current fully-visible content
+                                            inputForm.MinimumSize = inputForm.Size
+
+                                            ' Now allow resizing (keep MinimumSize so content/buttons never get clipped)
+                                            inputForm.AutoSize = False
+
+                                            ' Center within working area
+                                            inputForm.Location = New System.Drawing.Point(
+                                                wa.X + (wa.Width - inputForm.Width) \ 2,
+                                                wa.Y + (wa.Height - inputForm.Height) \ 2
+                                            )
+                                        End Sub
+
+            ' Ensure focus/topmost
+            inputForm.TopMost = True
+            inputForm.BringToFront()
+            inputForm.Focus()
+
+            ' Show the dialog, optionally owned by Outlook
+            Dim Result As DialogResult
+            If title.Contains("Browser") Then
+                Dim outlookApp As Object = CreateObject("Outlook.Application")
+                If outlookApp IsNot Nothing Then
+                    Dim explorer As Object = outlookApp.GetType().InvokeMember("ActiveExplorer", BindingFlags.GetProperty, Nothing, outlookApp, Nothing)
+                    If explorer IsNot Nothing Then
+                        explorer.GetType().InvokeMember("WindowState", BindingFlags.SetProperty, Nothing, explorer, New Object() {1})
+                        explorer.GetType().InvokeMember("Activate", BindingFlags.InvokeMethod, Nothing, explorer, Nothing)
+                    End If
+                End If
+                inputForm.Opacity = 1
+                Dim outlookHwnd As IntPtr = FindWindow("rctrl_renwnd32", Nothing)
+                Result = inputForm.ShowDialog(New WindowWrapper(outlookHwnd))
+            Else
+                inputForm.Opacity = 1
+                Result = inputForm.ShowDialog()
+            End If
+
+            ' Return the entered text or appropriate default
+            If Result = DialogResult.OK Then
+                Dim finalText As String = inputTextBox.Text
+                If Not String.IsNullOrEmpty(selectedPrefix) AndAlso Not finalText.StartsWith(selectedPrefix, StringComparison.OrdinalIgnoreCase) Then
+                    finalText = selectedPrefix & " " & finalText
+                End If
+                Debug.WriteLine("Final text: " & finalText)
+                Return finalText
+            Else
+                Return If(Not SimpleInput, "ESC", "")
+            End If
+        End Function
+
+
+        Public Shared Function fixedsizeShowCustomInputBox(
+                                                    prompt As String,
+                                                    title As String,
+                                                    SimpleInput As Boolean,
+                                                    Optional DefaultValue As String = "",
+                                                    Optional CtrlP As String = "",
+                                                    Optional OptionalButtons As System.Tuple(Of System.String, System.String, System.String)() = Nothing
+                                                ) As String
+
+            ' Tunables for the multi-line (not SimpleInput) case
+            Const InitTextWidth As Integer = 900
+            Const InitTextHeight As Integer = 280
+            Const LabelWrapWidth_Multi As Integer = 1000
+            Const LabelWrapWidth_Single As Integer = 700
+            Const FormDefaultWidth As Integer = 1060
+            Const FormDefaultHeight As Integer = 600
+
+            ' Create and configure the form
+            Dim inputForm As New Form() With {
+                .Opacity = 0,
+                .Text = title,
+                .FormBorderStyle = If(SimpleInput, FormBorderStyle.FixedDialog, FormBorderStyle.Sizable),
+                .StartPosition = FormStartPosition.CenterScreen,
+                .MaximizeBox = False,
+                .MinimizeBox = False,
+                .ShowInTaskbar = False,
+                .TopMost = True,
+                .AutoScaleMode = AutoScaleMode.Font
+            }
+
+            ' For single-line we autosize to contents (like before), for multi-line we control size and allow resizing
+            If SimpleInput Then
+                inputForm.AutoSize = True
+                inputForm.AutoSizeMode = AutoSizeMode.GrowAndShrink
+            Else
+                inputForm.AutoSize = False
+                inputForm.ClientSize = New Size(FormDefaultWidth, FormDefaultHeight)
+            End If
+
+            ' Set the icon
+            Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
+            inputForm.Icon = Icon.FromHandle(bmp.GetHicon())
+
+            ' Standard font
+            Dim standardFont As New System.Drawing.Font("Segoe UI", 9.0F, FontStyle.Regular, GraphicsUnit.Point)
+            inputForm.Font = standardFont
+
+            ' Main layout: use a TableLayoutPanel to support dynamic resizing of multi-line textbox
+            Dim mainLayout As New TableLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .ColumnCount = 1,
+                .RowCount = 3,
+                .Padding = New Padding(20)
+            }
+            mainLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+            If SimpleInput Then
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize)) ' label
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize)) ' textbox (single line)
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize)) ' buttons
+            Else
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))            ' label
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))    ' textbox grows/shrinks
+                mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))            ' buttons
+            End If
+
+            ' Prompt label
+            Dim promptLabel As New System.Windows.Forms.Label() With {
+                .Text = prompt,
+                .Font = standardFont,
+                .AutoSize = True,
+                .MaximumSize = New Size(If(SimpleInput, LabelWrapWidth_Single, LabelWrapWidth_Multi), 0)
+            }
+            promptLabel.Dock = DockStyle.Top
+            mainLayout.Controls.Add(promptLabel, 0, 0)
+
+            ' Input TextBox
+            Dim inputTextBox As New TextBox() With {
+                .Font = standardFont,
+                .Multiline = Not SimpleInput,
+                .WordWrap = True,
+                .ScrollBars = If(SimpleInput, ScrollBars.None, ScrollBars.Vertical),
+                .Text = DefaultValue
+            }
+            If SimpleInput Then
+                ' Single-line width and height
+                inputTextBox.Width = LabelWrapWidth_Single
+                inputTextBox.Height = TextRenderer.MeasureText("Wy", standardFont).Height + 6
+                inputTextBox.Dock = DockStyle.Top
+            Else
+                ' Multi-line: wider and taller by default; resizes with the form
+                inputTextBox.Dock = DockStyle.Fill
+                inputTextBox.MinimumSize = New Size(InitTextWidth, InitTextHeight)
+                inputTextBox.Size = New Size(InitTextWidth, InitTextHeight)
+            End If
+            mainLayout.Controls.Add(inputTextBox, 0, 1)
+
+            ' KeyDown handlers for Enter/Escape
+            If SimpleInput Then
+                AddHandler inputTextBox.KeyDown, Sub(sender, e)
+                                                     If e.KeyCode = Keys.Enter Then
+                                                         inputForm.DialogResult = DialogResult.OK
+                                                         inputForm.Close()
+                                                         e.SuppressKeyPress = True
+                                                     End If
+                                                 End Sub
+            Else
+                AddHandler inputTextBox.KeyDown, Sub(sender, e)
+                                                     If e.KeyCode = Keys.Enter AndAlso e.Modifiers = Keys.Control Then
+                                                         inputForm.DialogResult = DialogResult.OK
+                                                         inputForm.Close()
+                                                         e.SuppressKeyPress = True
+                                                     ElseIf e.KeyCode = Keys.Escape Then
+                                                         inputForm.DialogResult = DialogResult.Cancel
+                                                         inputForm.Close()
+                                                         e.SuppressKeyPress = True
+                                                     End If
+                                                 End Sub
+            End If
+
+            ' Ctrl+P insertion, if provided
+            If Not String.IsNullOrEmpty(CtrlP) Then
+                AddHandler inputTextBox.KeyDown, Sub(sender, e)
+                                                     If e.KeyCode = Keys.P AndAlso e.Modifiers = Keys.Control Then
+                                                         Dim selPos = inputTextBox.SelectionStart
+                                                         inputTextBox.Text = inputTextBox.Text.Insert(selPos, CtrlP)
+                                                         inputTextBox.SelectionStart = selPos + CtrlP.Length
+                                                         e.SuppressKeyPress = True
+                                                     End If
+                                                 End Sub
+            End If
+
+            Dim selectedPrefix As System.String = Nothing
+
+            ' OK and Cancel buttons
+            Dim okButton As New Button() With {
+                .Text = "OK",
+                .AutoSize = True,
+                .Font = standardFont
+            }
+            Dim cancelButton As New Button() With {
+                .Text = "Cancel",
+                .AutoSize = True,
+                .Font = standardFont
+            }
+
+            AddHandler okButton.Click, Sub()
+                                           inputForm.DialogResult = DialogResult.OK
+                                           inputForm.Close()
+                                       End Sub
+            AddHandler cancelButton.Click, Sub()
+                                               inputForm.DialogResult = DialogResult.Cancel
+                                               inputForm.Close()
+                                           End Sub
+
+            ' Bottom flow panel for buttons
+            Dim bottomFlow As New FlowLayoutPanel() With {
+                .FlowDirection = FlowDirection.LeftToRight,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .Margin = New Padding(0, 20, 0, 0),
+                .Dock = DockStyle.Top
+            }
+            bottomFlow.Controls.Add(okButton)
+            bottomFlow.Controls.Add(cancelButton)
+
+            ' Optional extra buttons (max 5): label, tooltip (description), and prefix
+            If OptionalButtons IsNot Nothing AndAlso OptionalButtons.Length > 0 Then
+                Dim tip As New System.Windows.Forms.ToolTip()
+                Dim count As System.Int32 = System.Math.Min(5, OptionalButtons.Length)
+                For i As System.Int32 = 0 To count - 1
+                    Dim item = OptionalButtons(i)
+                    Dim extraBtn As New System.Windows.Forms.Button() With {
+                        .Text = item.Item1,
+                        .AutoSize = True,
+                        .Font = standardFont
+                    }
+                    ' Tooltip shows description
+                    tip.SetToolTip(extraBtn, item.Item2)
+                    ' First extra button: double padding to the Cancel button
+                    If i = 0 Then
+                        extraBtn.Margin = New System.Windows.Forms.Padding(cancelButton.Margin.Left * 2, cancelButton.Margin.Top, cancelButton.Margin.Right, cancelButton.Margin.Bottom)
+                    End If
+                    AddHandler extraBtn.Click,
+                        Sub()
+                            selectedPrefix = item.Item3
+                            inputForm.DialogResult = System.Windows.Forms.DialogResult.OK
+                            inputForm.Close()
+                        End Sub
+                    bottomFlow.Controls.Add(extraBtn)
+                Next
+            End If
+
+            mainLayout.Controls.Add(bottomFlow, 0, 2)
+
+            ' Add layout to form
+            inputForm.Controls.Add(mainLayout)
+
+            ' Ensure the form cannot be shrunk below its initial size (multi-line only)
+            If Not SimpleInput Then
+                AddHandler inputForm.Shown, Sub()
+                                                ' Capture the actual computed size (accounting for current content and DPI)
+                                                inputForm.MinimumSize = inputForm.Size
+                                            End Sub
+            End If
+
+            ' Ensure the form is top-most and focused
+            inputForm.TopMost = True
+            inputForm.BringToFront()
+            inputForm.Focus()
+
+            ' Show the dialog, optionally owned by Outlook
+            Dim Result As DialogResult
+            If title.Contains("Browser") Then
+                Dim outlookApp As Object = CreateObject("Outlook.Application")
+                If outlookApp IsNot Nothing Then
+                    Dim explorer As Object = outlookApp.GetType().InvokeMember(
+                        "ActiveExplorer",
+                        BindingFlags.GetProperty, Nothing, outlookApp, Nothing
+                    )
+                    If explorer IsNot Nothing Then
+                        explorer.GetType().InvokeMember(
+                            "WindowState",
+                            BindingFlags.SetProperty, Nothing, explorer, New Object() {1})
+                        explorer.GetType().InvokeMember(
+                            "Activate",
+                            BindingFlags.InvokeMethod, Nothing, explorer, Nothing)
+                    End If
+                End If
+                inputForm.Opacity = 1
+                Dim outlookHwnd As IntPtr = FindWindow("rctrl_renwnd32", Nothing)
+                Result = inputForm.ShowDialog(New WindowWrapper(outlookHwnd))
+            Else
+                inputForm.Opacity = 1
+                Result = inputForm.ShowDialog()
+            End If
+
+            ' Return the entered text or appropriate default
+            If Result = DialogResult.OK Then
+                Dim finalText As System.String = inputTextBox.Text
+                If Not System.String.IsNullOrEmpty(selectedPrefix) AndAlso Not finalText.StartsWith(selectedPrefix, StringComparison.OrdinalIgnoreCase) Then
+                    finalText = selectedPrefix & " " & finalText
+                End If
+                Debug.WriteLine("Final text: " & finalText)
+                Return finalText
+            Else
+                Return If(Not SimpleInput, "ESC", "")
+            End If
+        End Function
+
+        Public Shared Function oldShowCustomInputBox(
+                                                    prompt As String,
+                                                    title As String,
+                                                    SimpleInput As Boolean,
+                                                    Optional DefaultValue As String = "",
+                                                    Optional CtrlP As String = "",
+                                                    Optional OptionalButtons As System.Tuple(Of System.String, System.String, System.String)() = Nothing
+                                                ) As String
+
             ' Create and configure the form
             Dim inputForm As New Form() With {
         .Opacity = 0,
@@ -6906,12 +7619,20 @@ Namespace SharedLibrary
        (Not String.IsNullOrEmpty(extraButtonText)) AndAlso
        (extraButtonAction IsNot Nothing) Then
 
+                'Dim extraButton As New System.Windows.Forms.Button() With {
+                '.Text = extraButtonText,
+                '.AutoSize = True,
+                '.Font = standardFont,
+                '.Margin = New System.Windows.Forms.Padding(10, 0, 0, 0)
+                '           }
+
+
                 Dim extraButton As New System.Windows.Forms.Button() With {
-            .Text = extraButtonText,
-            .AutoSize = True,
-            .Font = standardFont,
-            .Margin = New System.Windows.Forms.Padding(10, 0, 0, 0)
-        }
+                            .Text = extraButtonText,
+                            .AutoSize = True,
+                            .Font = standardFont,
+                                         .Margin = New System.Windows.Forms.Padding(10, button1.Margin.Top, 0, button1.Margin.Bottom)
+                        }
 
                 AddHandler extraButton.Click,
             Sub()
@@ -7028,12 +7749,21 @@ Namespace SharedLibrary
        (Not System.String.IsNullOrEmpty(extraButtonText)) AndAlso
        (extraButtonAction IsNot Nothing) Then
 
+                '   Dim extraButton As New System.Windows.Forms.Button() With {
+                '.Text = extraButtonText,
+                ' .AutoSize = True,
+                '  .Font = standardFont,
+                '   .Margin = New System.Windows.Forms.Padding(8, 0, 0, 0)
+                '}
+
                 Dim extraButton As New System.Windows.Forms.Button() With {
-            .Text = extraButtonText,
-            .AutoSize = True,
-            .Font = standardFont,
-            .Margin = New System.Windows.Forms.Padding(8, 0, 0, 0)
-        }
+                            .Text = extraButtonText,
+                            .AutoSize = True,
+                            .Font = standardFont,
+                            .Margin = New System.Windows.Forms.Padding(8, okButton.Margin.Top, 0, okButton.Margin.Bottom)
+                        }
+
+
                 AddHandler extraButton.Click,
             Sub()
                 Try
@@ -7389,7 +8119,7 @@ Namespace SharedLibrary
                 Me.MaximizeBox = False
                 Me.MinimizeBox = False
                 Me.ShowInTaskbar = False
-                Me.Text = headerText
+                Me.Text = AN ' headerText
 
                 ' --- Icon setzen ---
                 Dim bmp As New System.Drawing.Bitmap(My.Resources.Red_Ink_Logo)
@@ -10125,7 +10855,7 @@ Namespace SharedLibrary
                                                        End If
                                                    End If
                                                Else
-                                                   If ShowCustomYesNoBox($"Do you really want to download the helper file from https://apps.vischer.com and have it installed to '{FilePath}'? Next time you start the application, it will be automatically loaded.", "Yes", "No") = 1 Then
+                                                   If ShowCustomYesNoBox($"Do you really want to download the helper file from {AppsUrl} and have it installed to '{FilePath}'? Next time you start the application, it will be automatically loaded.", "Yes", "No") = 1 Then
                                                        Dim DownloadUrl As String = ""
                                                        If IsExcel Then DownloadUrl = ExcelHelperUrl Else DownloadUrl = WordHelperUrl
                                                        Try
@@ -10525,7 +11255,7 @@ Namespace SharedLibrary
                                                        End If
                                                    End If
                                                Else
-                                                   If ShowCustomYesNoBox($"Do you really want to download the helper file from https://apps.vischer.com and have it installed to '{FilePath}'? Next time you start the application, it will be automatically loaded.", "Yes", "No") = 1 Then
+                                                   If ShowCustomYesNoBox($"Do you really want to download the helper file from {AppsUrl} and have it installed to '{FilePath}'? Next time you start the application, it will be automatically loaded.", "Yes", "No") = 1 Then
                                                        Dim DownloadUrl As String = ""
                                                        If IsExcel Then DownloadUrl = ExcelHelperUrl Else DownloadUrl = WordHelperUrl
                                                        Try
@@ -10696,7 +11426,7 @@ Namespace SharedLibrary
         Public Shared Function IsBooleanSetting(settingKey As String) As Boolean
             ' Determine if a setting is a Boolean based on its key
             Dim booleanSettings As New List(Of String) From {
-        "DoubleS", "Clean", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
+        "DoubleS", "Clean", "MarkdownBubbles", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
         "KeepFormat2", "KeepParaFormatInline", "ReplaceText2", "DoMarkupOutlook", "DoMarkupWord",
         "APIDebug", "ISearch_Approve", "ISearch", "Lib"
             }
@@ -10773,6 +11503,8 @@ Namespace SharedLibrary
                     Return context.INI_DoubleS.ToString()
                 Case "Clean"
                     Return context.INI_Clean.ToString()
+                Case "MarkdownBubbles"
+                    Return context.INI_MarkdownBubbles.ToString()
                 Case "KeepFormat1"
                     Return context.INI_KeepFormat1.ToString()
                 Case "MarkdownConvert"
@@ -10965,6 +11697,8 @@ Namespace SharedLibrary
                     context.INI_DoubleS = Boolean.Parse(value)
                 Case "Clean"
                     context.INI_Clean = Boolean.Parse(value)
+                Case "MarkdownBubbles"
+                    context.INI_MarkdownBubbles = Boolean.Parse(value)
                 Case "KeepFormat1"
                     context.INI_KeepFormat1 = Boolean.Parse(value)
                 Case "MarkdownConvert"
@@ -11249,6 +11983,7 @@ Namespace SharedLibrary
                     {"Language2", context.INI_Language2},
                     {"DoubleS", context.INI_DoubleS.ToString()},
                     {"Clean", context.INI_Clean.ToString()},
+                    {"MarkdownBubbles", context.INI_MarkdownBubbles.ToString()},
                     {"KeepFormat1", context.INI_KeepFormat1.ToString()},
                     {"MarkdownConvert", context.INI_MarkdownConvert.ToString()},
                     {"ReplaceText1", context.INI_ReplaceText1.ToString()},
@@ -11366,6 +12101,7 @@ Namespace SharedLibrary
                     {"SP_Add_KeepHTMLIntact", context.SP_Add_KeepHTMLIntact},
                     {"SP_Add_KeepInlineIntact", context.SP_Add_KeepInlineIntact},
                     {"SP_Add_Bubbles", context.SP_Add_Bubbles},
+                    {"SP_Add_Bubbles_Format", context.SP_Add_Bubbles_Format},
                     {"SP_Add_Batch", context.SP_Add_Batch},
                     {"SP_Add_Slides", context.SP_Add_Slides},
                     {"SP_BubblesExcel", context.SP_BubblesExcel},
@@ -11422,6 +12158,7 @@ Namespace SharedLibrary
                     {"SP_Add_KeepHTMLIntact", Default_SP_Add_KeepHTMLIntact},
                     {"SP_Add_KeepInlineIntact", Default_SP_Add_KeepInlineIntact},
                     {"SP_Add_Bubbles", Default_SP_Add_Bubbles},
+                    {"SP_Add_Bubbles_Format", Default_SP_Add_Bubbles_Format},
                     {"SP_Add_Batch", Default_SP_Add_Batch},
                     {"SP_Add_Slides", Default_SP_Add_Slides},
                     {"SP_BubblesExcel", Default_SP_BubblesExcel},
@@ -12052,6 +12789,7 @@ Namespace SharedLibrary
             variableValues.Add("TokenCount", context.INI_TokenCount)
             variableValues.Add("DoubleS", context.INI_DoubleS)
             variableValues.Add("Clean", context.INI_Clean)
+            variableValues.Add("MarkdownBubbles", context.INI_MarkdownBubbles)
             variableValues.Add("PreCorrection", context.INI_PreCorrection)
             variableValues.Add("PostCorrection", context.INI_PostCorrection)
             variableValues.Add("APIEncrypted", context.INI_APIEncrypted)
@@ -12175,6 +12913,7 @@ Namespace SharedLibrary
             variableValues.Add("SP_Add_KeepHTMLIntact", context.SP_Add_KeepHTMLIntact)
             variableValues.Add("SP_Add_KeepInlineIntact", context.SP_Add_KeepInlineIntact)
             variableValues.Add("SP_Add_Bubbles", context.SP_Add_Bubbles)
+            variableValues.Add("SP_Add_Bubbles_Format", context.SP_Add_Bubbles_Format)
             variableValues.Add("SP_Add_Batch", context.SP_Add_Batch)
             variableValues.Add("SP_Add_Slides", context.SP_Add_Slides)
             variableValues.Add("SP_BubblesExcel", context.SP_BubblesExcel)
@@ -12214,6 +12953,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("TokenCount") Then context.INI_TokenCount = updatedValues("TokenCount")
                 If updatedValues.ContainsKey("DoubleS") Then context.INI_DoubleS = CBool(updatedValues("DoubleS"))
                 If updatedValues.ContainsKey("Clean") Then context.INI_Clean = CBool(updatedValues("Clean"))
+                If updatedValues.ContainsKey("MarkdownBubbles") Then context.INI_MarkdownBubbles = CBool(updatedValues("MarkdownBubbles"))
                 If updatedValues.ContainsKey("PreCorrection") Then context.INI_PreCorrection = updatedValues("PreCorrection")
                 If updatedValues.ContainsKey("PostCorrection") Then context.INI_PostCorrection = updatedValues("PostCorrection")
                 If updatedValues.ContainsKey("APIEncrypted") Then context.INI_APIEncrypted = CBool(updatedValues("APIEncrypted"))
@@ -12298,6 +13038,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_Add_KeepHTMLIntact") Then context.SP_Add_KeepHTMLIntact = updatedValues("SP_Add_KeepHTMLIntact")
                 If updatedValues.ContainsKey("SP_Add_KeepInlineIntact") Then context.SP_Add_KeepInlineIntact = updatedValues("SP_Add_KeepInlineIntact")
                 If updatedValues.ContainsKey("SP_Add_Bubbles") Then context.SP_Add_Bubbles = updatedValues("SP_Add_Bubbles")
+                If updatedValues.ContainsKey("SP_Add_Bubbles_Format") Then context.SP_Add_Bubbles_Format = updatedValues("SP_Add_Bubbles_Format")
                 If updatedValues.ContainsKey("SP_Add_Batch") Then context.SP_Add_Batch = updatedValues("SP_Add_Batch")
                 If updatedValues.ContainsKey("SP_Add_Slides") Then context.SP_Add_Slides = updatedValues("SP_Add_Slides")
                 If updatedValues.ContainsKey("SP_BubblesExcel") Then context.SP_BubblesExcel = updatedValues("SP_BubblesExcel")
@@ -16585,9 +17326,267 @@ Namespace SharedLibrary
     End Class
 
 
-
     ' Place next to ModelSelectorForm to keep UI code together
     Partial Class MultiModelSelectorForm
+        Inherits System.Windows.Forms.Form
+
+        Private lblTitle As System.Windows.Forms.Label
+        Private txtFilter As System.Windows.Forms.TextBox
+        Private chkList As System.Windows.Forms.CheckedListBox
+        Private chkReset As System.Windows.Forms.CheckBox
+        Private btnOK As Button
+        Private btnCancel As Button
+        Private pnlButtons As System.Windows.Forms.FlowLayoutPanel
+        Private outer As System.Windows.Forms.TableLayoutPanel
+
+        Private displayToModel As New System.Collections.Generic.Dictionary(Of String, ModelConfig)(System.StringComparer.OrdinalIgnoreCase)
+        Private seenDisplays As New System.Collections.Generic.HashSet(Of String)(System.StringComparer.OrdinalIgnoreCase)
+        Private allDisplayItems As New System.Collections.Generic.List(Of String)
+        Private preselectKey As String = Nothing
+        Private ReadOnly altModels As System.Collections.Generic.List(Of ModelConfig)
+
+        ' Persist checked selections across filtering
+        Private ReadOnly selectedLabels As New System.Collections.Generic.HashSet(Of String)(System.StringComparer.OrdinalIgnoreCase)
+        Private isUpdating As Boolean = False
+
+        ' EM_SETCUEBANNER to show a cue banner ("placeholder") on Win32 edit controls
+        Private Const EM_SETCUEBANNER As Integer = &H1501
+        <System.Runtime.InteropServices.DllImport("user32.dll", CharSet:=System.Runtime.InteropServices.CharSet.Unicode)>
+        Private Shared Function SendMessage(hWnd As IntPtr, msg As Integer, wParam As IntPtr, lParam As String) As IntPtr
+        End Function
+
+        Public ReadOnly Property SelectedModels As System.Collections.Generic.List(Of ModelConfig)
+            Get
+                ' Return models based on the persisted selectedLabels (not only the currently visible items)
+                Dim result As New System.Collections.Generic.List(Of ModelConfig)
+                For Each key In selectedLabels
+                    If displayToModel.ContainsKey(key) Then
+                        result.Add(displayToModel(key))
+                    End If
+                Next
+                Return result
+            End Get
+        End Property
+
+        Public ReadOnly Property UseDefault As Boolean
+            Get
+                Return chkReset.Checked
+            End Get
+        End Property
+
+        Public Sub New(models As System.Collections.Generic.List(Of ModelConfig),
+                   preselect As System.String,
+                   Optional title As System.String = Nothing,
+                   Optional resetChecked As System.Boolean = True)
+            Me.altModels = If(models, New System.Collections.Generic.List(Of ModelConfig))
+            Me.preselectKey = preselect
+            InitializeComponent(title, resetChecked)
+            PopulateList()
+            ApplyPreselection()
+        End Sub
+
+        Private Sub InitializeComponent(Optional title As System.String = Nothing, Optional resetChecked As System.Boolean = True)
+            Me.Text = If(String.IsNullOrWhiteSpace(title), SharedMethods.AN & " - Select Alternate Models", title)
+            Me.Icon = Icon.FromHandle((New System.Drawing.Bitmap(My.Resources.Red_Ink_Logo)).GetHicon())
+            Me.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent
+            Me.MinimizeBox = True
+            Me.MaximizeBox = True
+            Me.FormBorderStyle = System.Windows.Forms.FormBorderStyle.Sizable
+            Me.Width = 520
+            Me.Height = 460
+            Me.MinimumSize = New System.Drawing.Size(520, 460)
+
+            Me.outer = New System.Windows.Forms.TableLayoutPanel() With {
+                .Dock = System.Windows.Forms.DockStyle.Fill,
+                .ColumnCount = 1,
+                .RowCount = 5,
+                .Padding = New System.Windows.Forms.Padding(16, 12, 16, 12)
+            }
+            Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize))
+            Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize))
+            Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100.0!))
+            Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize))
+            Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize))
+
+            Me.lblTitle = New System.Windows.Forms.Label() With {
+                .Text = "Select one or more alternate models:",
+                .Dock = System.Windows.Forms.DockStyle.Top,
+                .Height = 28,
+                .TextAlign = System.Drawing.ContentAlignment.MiddleLeft
+            }
+
+            Me.txtFilter = New System.Windows.Forms.TextBox() With {
+                .Dock = System.Windows.Forms.DockStyle.Top
+            }
+            AddHandler Me.txtFilter.HandleCreated,
+                Sub()
+                    Try
+                        Dim showEvenIfFocused As IntPtr = CType(1, IntPtr)
+                        SendMessage(Me.txtFilter.Handle, EM_SETCUEBANNER, showEvenIfFocused, "Filter models…")
+                    Catch
+                    End Try
+                End Sub
+            AddHandler Me.txtFilter.TextChanged, AddressOf OnFilterChanged
+
+            Me.chkList = New System.Windows.Forms.CheckedListBox() With {
+                .Dock = System.Windows.Forms.DockStyle.Fill,
+                .CheckOnClick = True
+            }
+            AddHandler Me.chkList.DoubleClick, AddressOf OnListDoubleClick
+            AddHandler Me.chkList.ItemCheck, AddressOf OnItemCheck
+
+            Me.chkReset = New System.Windows.Forms.CheckBox() With {
+                .Text = "Reset to default model after use",
+                .Dock = System.Windows.Forms.DockStyle.Top,
+                .Checked = resetChecked,
+                .Visible = False            ' Hide it for the time being
+            }
+
+            Me.pnlButtons = New System.Windows.Forms.FlowLayoutPanel() With {
+                .Dock = System.Windows.Forms.DockStyle.Fill,
+                .FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft,
+                .Padding = New System.Windows.Forms.Padding(0, 8, 0, 0),
+                .AutoSize = True
+            }
+
+            ' Match ModelSelectorForm: autosize, GrowAndShrink, and padding (10,5,10,5)
+            Me.btnOK = New System.Windows.Forms.Button() With {
+                .Text = "OK",
+                .DialogResult = System.Windows.Forms.DialogResult.OK,
+                .AutoSize = True,
+                .AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink,
+                .Padding = New System.Windows.Forms.Padding(10, 5, 10, 5)
+            }
+            Me.btnCancel = New System.Windows.Forms.Button() With {
+                .Text = "Cancel",
+                .DialogResult = System.Windows.Forms.DialogResult.Cancel,
+                .AutoSize = True,
+                .AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink,
+                .Padding = New System.Windows.Forms.Padding(10, 5, 10, 5)
+            }
+            Me.pnlButtons.Controls.Add(Me.btnOK)
+            Me.pnlButtons.Controls.Add(Me.btnCancel)
+
+            Me.outer.Controls.Add(Me.lblTitle, 0, 0)
+            Me.outer.Controls.Add(Me.txtFilter, 0, 1)
+            Me.outer.Controls.Add(Me.chkList, 0, 2)
+            Me.outer.Controls.Add(Me.chkReset, 0, 3)
+            Me.outer.Controls.Add(Me.pnlButtons, 0, 4)
+            Me.Controls.Add(Me.outer)
+
+            Me.AcceptButton = Me.btnOK
+            Me.CancelButton = Me.btnCancel
+        End Sub
+
+        Private Function MakeUniqueDisplay(baseText As System.String) As System.String
+            Dim s As System.String = If(String.IsNullOrWhiteSpace(baseText), "(Unnamed model)", baseText.Trim())
+            Dim unique As System.String = s
+            Dim suffix As Integer = 2
+            While seenDisplays.Contains(unique)
+                unique = s & " (" & suffix.ToString() & ")"
+                suffix += 1
+            End While
+            seenDisplays.Add(unique)
+            Return unique
+        End Function
+
+        Private Sub PopulateList()
+            displayToModel.Clear()
+            seenDisplays.Clear()
+            allDisplayItems.Clear()
+
+            For Each m In altModels
+                Dim display As System.String = If(Not String.IsNullOrWhiteSpace(m.ModelDescription), m.ModelDescription, m.Model)
+                Dim unique As System.String = MakeUniqueDisplay(display)
+                displayToModel(unique) = m
+                allDisplayItems.Add(unique)
+            Next
+
+            ' Build initial visible list (no filter), preserving any pre-existing selections
+            isUpdating = True
+            Try
+                Me.chkList.Items.Clear()
+                For Each label In allDisplayItems
+                    Me.chkList.Items.Add(label, selectedLabels.Contains(label))
+                Next
+            Finally
+                isUpdating = False
+            End Try
+        End Sub
+
+        Private Sub OnFilterChanged(sender As System.Object, e As System.EventArgs)
+            Dim filter As System.String = If(Me.txtFilter.Text, String.Empty).Trim().ToLowerInvariant()
+
+            isUpdating = True
+            Me.chkList.BeginUpdate()
+            Try
+                Me.chkList.Items.Clear()
+                For Each itemText In allDisplayItems
+                    If filter.Length = 0 OrElse itemText.ToLowerInvariant().Contains(filter) Then
+                        ' Restore check state from the persisted selection set
+                        Dim isChecked = selectedLabels.Contains(itemText)
+                        Me.chkList.Items.Add(itemText, isChecked)
+                    End If
+                Next
+            Finally
+                Me.chkList.EndUpdate()
+                isUpdating = False
+            End Try
+        End Sub
+
+        Private Sub OnItemCheck(sender As Object, e As System.Windows.Forms.ItemCheckEventArgs)
+            If isUpdating Then Return
+            Dim label As String = Me.chkList.Items(e.Index).ToString()
+            If e.NewValue = CheckState.Checked Then
+                selectedLabels.Add(label)
+            Else
+                selectedLabels.Remove(label)
+            End If
+        End Sub
+
+        Private Sub OnListDoubleClick(sender As System.Object, e As System.EventArgs)
+            Dim idx As Integer = Me.chkList.SelectedIndex
+            If idx >= 0 Then
+                Dim state As Boolean = Not Me.chkList.GetItemChecked(idx)
+                Me.chkList.SetItemChecked(idx, state)
+            End If
+        End Sub
+
+        Private Sub ApplyPreselection()
+            If String.IsNullOrWhiteSpace(preselectKey) Then Return
+
+            ' Try by label first
+            For i = 0 To Me.chkList.Items.Count - 1
+                Dim label As System.String = Me.chkList.Items(i).ToString()
+                If String.Equals(label, preselectKey, System.StringComparison.OrdinalIgnoreCase) Then
+                    Me.chkList.SetItemChecked(i, True)
+                    ' selectedLabels will be updated by ItemCheck handler
+                    Return
+                End If
+            Next
+
+            ' Fallback: try to match underlying ModelDescription/Model
+            Dim idxToCheck As Integer = -1
+            For j = 0 To Me.chkList.Items.Count - 1
+                Dim label As System.String = Me.chkList.Items(j).ToString()
+                If displayToModel.ContainsKey(label) Then
+                    Dim mc As ModelConfig = displayToModel(label)
+                    If String.Equals(mc.ModelDescription, preselectKey, System.StringComparison.OrdinalIgnoreCase) _
+                   OrElse String.Equals(mc.Model, preselectKey, System.StringComparison.OrdinalIgnoreCase) Then
+                        idxToCheck = j
+                        Exit For
+                    End If
+                End If
+            Next
+            If idxToCheck >= 0 Then
+                Me.chkList.SetItemChecked(idxToCheck, True)
+                ' selectedLabels will be updated by ItemCheck handler
+            End If
+        End Sub
+    End Class
+
+    ' Place next to ModelSelectorForm to keep UI code together
+    Partial Class oldMultiModelSelectorForm
         Inherits System.Windows.Forms.Form
 
         Private lblTitle As System.Windows.Forms.Label

@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 14.10.2025
+' 26.10.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -177,7 +177,7 @@ Public Class ThisAddIn
     Public Const AN2 As String = "red_ink"
     Public Const AN6 As String = "Inky"
 
-    Public Const Version As String = "V.141025 Gen2 Beta Test"
+    Public Const Version As String = "V.261025 Gen2 Beta Test"
 
     ' Hardcoded configuration
 
@@ -378,6 +378,14 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_MarkdownBubbles As Boolean
+        Get
+            Return _context.INI_MarkdownBubbles
+        End Get
+        Set(value As Boolean)
+            _context.INI_MarkdownBubbles = value
+        End Set
+    End Property
     Public Shared Property INI_PreCorrection As String
         Get
             Return _context.INI_PreCorrection
@@ -1131,6 +1139,16 @@ Public Class ThisAddIn
             _context.SP_Add_Bubbles = value
         End Set
     End Property
+
+    Public Shared Property SP_Add_Bubbles_Format As String
+        Get
+            Return _context.SP_Add_Bubbles_Format
+        End Get
+        Set(value As String)
+            _context.SP_Add_Bubbles_Format = value
+        End Set
+    End Property
+
 
     Public Shared Property SP_Add_Batch As String
         Get
