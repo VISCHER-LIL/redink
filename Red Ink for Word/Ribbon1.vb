@@ -32,7 +32,9 @@ Public Class Ribbon1
     End Sub
 
     Private Function DetectOfficeTheme() As OfficeTheme
-        Const registryPath As String = "Software\Microsoft\Office\16.0\Common"
+	Const registryPath As String = "Software\Microsoft\Office\16.0\Common"
+' 2025-10-27-RK: Software\Microsoft\Office\16.0\Common is the standard registry hive for Office 2016/Office 365 (all modern “16.x” builds, including current Microsoft 365). If you ever need to support older Office releases (15.0 = Office 2013, 14.0 = Office 2010, etc.), you’d have to probe the other hives as well. For today’s target (O365/Office 2016+), 16.0 is the right—and necessary—value.
+		
         Const valueName As String = "UI Theme"
 
         Try
