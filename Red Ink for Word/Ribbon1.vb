@@ -5,8 +5,63 @@
 ' 8.9.2025
 
 Imports Microsoft.Office.Tools.Ribbon
+Imports Microsoft.Win32
 
 Public Class Ribbon1
+
+    Private Enum OfficeTheme
+        Unknown
+        Light
+        Dark
+    End Enum
+
+    Private Sub ApplyThemeAwareMenuIcon()
+        Try
+            Dim theme = DetectOfficeTheme()
+            Select Case theme
+                Case OfficeTheme.Dark
+                    Menu1.Image = My.Resources.Red_Ink_Logo_Dark
+                Case Else
+                    Menu1.Image = My.Resources.Red_Ink_Logo
+            End Select
+            Menu1.ShowImage = True
+        Catch
+            Menu1.Image = My.Resources.Red_Ink_Logo
+            Menu1.ShowImage = True
+        End Try
+    End Sub
+
+    Private Function DetectOfficeTheme() As OfficeTheme
+        Const registryPath As String = "Software\Microsoft\Office\16.0\Common"
+        Const valueName As String = "UI Theme"
+
+        Try
+            Using key = Registry.CurrentUser.OpenSubKey(registryPath)
+                If key Is Nothing Then
+                    Return OfficeTheme.Unknown
+                End If
+
+                Dim raw = key.GetValue(valueName)
+                If raw Is Nothing Then
+                    Return OfficeTheme.Unknown
+                End If
+
+                Dim value As Integer
+                If Integer.TryParse(raw.ToString(), value) Then
+                    Select Case value
+                        Case 0, 4
+                            Return OfficeTheme.Light
+                        Case 1, 2
+                            Return OfficeTheme.Dark
+                    End Select
+                End If
+            End Using
+        Catch
+            Return OfficeTheme.Unknown
+        End Try
+
+        Return OfficeTheme.Unknown
+    End Function
 
     Public Sub RI_Correct_Click(sender As Object, e As RibbonControlEventArgs) 'Handles RI_Correct.Click
         Globals.ThisAddIn.Correct()

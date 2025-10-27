@@ -133,7 +133,6 @@ Partial Class Ribbon1
         'Menu1
         '
         Me.Menu1.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge
-        Me.Menu1.Image = Global.Red_Ink_for_Word.My.Resources.Resources.Red_Ink_Logo
         Me.Menu1.Items.Add(Me.RI_Primlang)
         Me.Menu1.Items.Add(Me.RI_SecLang)
         Me.Menu1.Items.Add(Me.RI_Translate)
@@ -619,11 +618,14 @@ Partial Class Ribbon1
 
 
     Private Async Sub Ribbon1_Load(ByVal sender As Object, ByVal e As RibbonUIEventArgs) Handles MyBase.Load
+        ' Set an initial image synchronously to avoid empty UI.
+        ApplyThemeAwareMenuIcon()
+
         ' Start initialization in background (asynchronously)
         Await InitializeAppAsync()
 
-        ' Now that the .NET assemblies and everything are safely loaded,
-        ' set your resource-based image here rather than in InitializeComponent.
+        ' Re-apply in case initialization changed theme-related state.
+        ApplyThemeAwareMenuIcon()
 
         AddHandler RI_Correct.Click, AddressOf RI_Correct_Click
         AddHandler RI_Correct2.Click, AddressOf RI_Correct2_Click
