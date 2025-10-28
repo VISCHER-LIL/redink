@@ -5,8 +5,65 @@
 ' 8.9.2025
 
 Imports Microsoft.Office.Tools.Ribbon
+Imports Microsoft.Win32
 
 Public Class Ribbon1
+
+    Private Enum OfficeTheme
+        Unknown
+        Light
+        Dark
+    End Enum
+
+    Private Sub ApplyThemeAwareMenuIcon()
+        Try
+            Dim theme = DetectOfficeTheme()
+            Select Case theme
+                Case OfficeTheme.Dark
+                    Menu1.Image = My.Resources.Red_Ink_Logo_Dark
+                Case Else
+                    Menu1.Image = My.Resources.Red_Ink_Logo
+            End Select
+            Menu1.ShowImage = True
+        Catch
+            Menu1.Image = My.Resources.Red_Ink_Logo
+            Menu1.ShowImage = True
+        End Try
+    End Sub
+
+    Private Function DetectOfficeTheme() As OfficeTheme
+		Const registryPath As String = "Software\Microsoft\Office\16.0\Common"
+		' 2025-10-27-RK: Software\Microsoft\Office\16.0\Common is the standard registry hive for Office 2016/Office 365 (all modern “16.x” builds, including current Microsoft 365). If you ever need to support older Office releases (15.0 = Office 2013, 14.0 = Office 2010, etc.), you’d have to probe the other hives as well. For today’s target (O365/Office 2016+), 16.0 is the right—and necessary—value.
+		
+        Const valueName As String = "UI Theme"
+
+        Try
+            Using key = Registry.CurrentUser.OpenSubKey(registryPath)
+                If key Is Nothing Then
+                    Return OfficeTheme.Unknown
+                End If
+
+                Dim raw = key.GetValue(valueName)
+                If raw Is Nothing Then
+                    Return OfficeTheme.Unknown
+                End If
+
+                Dim value As Integer
+                If Integer.TryParse(raw.ToString(), value) Then
+                    Select Case value
+                        Case 0, 4
+                            Return OfficeTheme.Light
+                        Case 1, 2
+                            Return OfficeTheme.Dark
+                    End Select
+                End If
+            End Using
+        Catch
+            Return OfficeTheme.Unknown
+        End Try
+
+        Return OfficeTheme.Unknown
+    End Function
 
     Public Sub RI_Correct_Click(sender As Object, e As RibbonControlEventArgs) 'Handles RI_Correct.Click
         Globals.ThisAddIn.Correct()

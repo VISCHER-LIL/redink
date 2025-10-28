@@ -501,6 +501,7 @@
     <EmbeddedResource Include="Ribbon1.resx">
       <DependentUpon>Ribbon1.vb</DependentUpon>
     </EmbeddedResource>
+    <None Include="Resources\Red_Ink_Logo_Dark.png" />
     <None Include="app.config" />
     <None Include="packages.config" />
     <None Include="protos\google\api\annotations.proto" />
@@ -560,6 +561,7 @@
     <None Include="protos\google\type\quaternion.proto" />
     <None Include="protos\google\type\timeofday.proto" />
     <None Include="readme.md" />
+    <None Include="Red Ink for Word_TemporaryKey.pfx" />
     <None Include="ThisAddIn.Designer.xml">
       <DependentUpon>ThisAddIn.vb</DependentUpon>
     </None>
