@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 26.10.2025
+' 27.10.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -206,7 +206,7 @@ Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.261025 Gen2 Beta Test"
+    Public Const Version As String = "V.271025 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -2401,7 +2401,7 @@ Public Class ThisAddIn
         Dim BubblesInstruct As String = $"use '{BubblesPrefix}' for inserting comments only"
         Dim PaneInstruct As String = $"use '{PanePrefix}' for using the pane"
         Dim ExtInstruct As String = $"; insert '{ExtTrigger}' (multiple times) for text of (a) file(s) (txt, docx, pdf) or '{ExtWSTrigger}' to add more worksheet(s)"
-        Dim AddonInstruct As String = $"; add'{ColorTrigger}' to check for colorcodes"
+        Dim AddonInstruct As String = $"; add '{ColorTrigger}' to check for colorcodes"
         Dim ObjectInstruct As String = $"; add '{ObjectTrigger}'/'{ObjectTrigger2}' for adding a file object"
         Dim FileObject As String = ""
         Dim InsertWS As String = ""
@@ -3431,8 +3431,23 @@ Public Class ThisAddIn
                     End If
 
                     ' 5) Farbe nur bei DoColor?
+                    'If Not shouldProcess AndAlso DoColor Then
+                    '                   If cell.Font.Color <> defaultFontColor OrElse cell.Interior.Color <> defaultInteriorColor Then
+                    'shouldProcess = True
+                    'End If
+                    'End If
+
+                    ' 5) Farbe nur bei DoColor?
                     If Not shouldProcess AndAlso DoColor Then
-                        If cell.Font.Color <> defaultFontColor OrElse cell.Interior.Color <> defaultInteriorColor Then
+                        ' Include empty cells only when they actually have a background fill (not "No Fill").
+                        ' Rationale: normal/transparent background is ColorIndex = xlColorIndexNone.
+                        Dim hasFill As Boolean = False
+                        Try
+                            hasFill = (cell.Interior.ColorIndex <> Excel.XlColorIndex.xlColorIndexNone)
+                        Catch
+                            ' Some Excel versions/situations may throw on ColorIndex; ignore and treat as no fill.
+                        End Try
+                        If hasFill Then
                             shouldProcess = True
                         End If
                     End If
@@ -3564,14 +3579,26 @@ Public Class ThisAddIn
                                 sb.AppendLine($"- Error reading dropdown {ex.Message}")
                             End Try
 
-
                             ' 2) Farben (nur bei Abweichung)
                             If DoColor Then
+                                ' Emit LLM-friendly CSS hex (#RRGGBB) plus rgb tuple.
                                 If cell.Font.Color <> defaultFontColor Then
-                                    sb.AppendLine($"- FontColor {cell.Font.Color}")
+                                    Try
+                                        Dim fc As System.Drawing.Color = System.Drawing.ColorTranslator.FromOle(CInt(cell.Font.Color))
+                                        sb.AppendLine($"- FontColor #{fc.R:X2}{fc.G:X2}{fc.B:X2} (rgb {fc.R},{fc.G},{fc.B})")
+                                    Catch
+                                        ' Fallback: still emit the raw value if conversion fails (rare).
+                                        sb.AppendLine($"- FontColor {cell.Font.Color}")
+                                    End Try
                                 End If
+
                                 If cell.Interior.Color <> defaultInteriorColor Then
-                                    sb.AppendLine($"- BackgroundColor {cell.Interior.Color}")
+                                    Try
+                                        Dim bc As System.Drawing.Color = System.Drawing.ColorTranslator.FromOle(CInt(cell.Interior.Color))
+                                        sb.AppendLine($"- BackgroundColor #{bc.R:X2}{bc.G:X2}{bc.B:X2} (rgb {bc.R},{bc.G},{bc.B})")
+                                    Catch
+                                        sb.AppendLine($"- BackgroundColor {cell.Interior.Color}")
+                                    End Try
                                 End If
                             End If
 
