@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 26.10.2025
+' 28.10.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -177,7 +177,7 @@ Public Class ThisAddIn
     Public Const AN2 As String = "red_ink"
     Public Const AN6 As String = "Inky"
 
-    Public Const Version As String = "V.261025 Gen2 Beta Test"
+    Public Const Version As String = "V.281025 Gen2 Beta Test"
 
     ' Hardcoded configuration
 
@@ -4041,6 +4041,11 @@ Public Class ThisAddIn
 
             My.Settings.LastPrompt = OtherPrompt
             My.Settings.Save()
+
+            If Not SharedMethods.ProcessParameterPlaceholders(OtherPrompt) Then
+                ShowCustomMessageBox("Freestyle canceled.", $"{AN} Freestyle")
+                Exit Sub
+            End If
 
             ' Check if otherPrompt starts with "Markup:" (case-insensitive)
 

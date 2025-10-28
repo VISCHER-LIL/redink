@@ -5360,12 +5360,12 @@ Public Class ThisAddIn
         My.Settings.LastPrompt = OtherPrompt
         My.Settings.Save()
 
-        If Not ProcessParameterPlaceholders(OtherPrompt) Then
-            ShowCustomMessageBox("Freestyle canceled.", $"{AN} Freestyle")
-            Exit Sub
-        End If
+            If Not SharedMethods.ProcessParameterPlaceholders(OtherPrompt) Then
+                ShowCustomMessageBox("Freestyle canceled.", $"{AN} Freestyle")
+                Exit Sub
+            End If
 
-        If OtherPrompt.IndexOf(AllTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
+            If OtherPrompt.IndexOf(AllTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
             OtherPrompt = OtherPrompt.Replace(AllTrigger, "").Trim()
             Dim document As Word.Document = Application.ActiveDocument
             document.Content.Select()
@@ -24576,199 +24576,6 @@ ContinueLoop:
         Return chosen.FullPath
     End Function
 
-    '   {parameter1 = Description; type; default; range-or-options; options}
-    '   {parameter1}  (reference/reuse)
-    Private Function ProcessParameterPlaceholders(ByRef script As String) As Boolean
-        Dim defRx As New System.Text.RegularExpressions.Regex("\{\s*parameter(\d+)\s*=\s*(.*?)\}", RegexOptions.IgnoreCase Or RegexOptions.Singleline)
-        Dim refRx As New System.Text.RegularExpressions.Regex("\{\s*parameter(\d+)\s*\}", RegexOptions.IgnoreCase)
-
-        ' Collect definition matches first
-        Dim defMatches = defRx.Matches(script)
-        If defMatches.Count = 0 Then
-            ' No definitions -> nothing to prompt for; still OK (references stay literal)
-            Return True
-        End If
-
-        ' First definition wins per parameter number
-        Dim paramDefs As New Dictionary(Of Integer, (MatchObj As Match, Definition As String))()
-        For Each m As Match In defMatches
-            Dim num = Integer.Parse(m.Groups(1).Value)
-            If Not paramDefs.ContainsKey(num) Then
-                paramDefs(num) = (m, m.Groups(2).Value.Trim())
-            End If
-        Next
-
-        ' Prepare UI parameter list
-        Dim parameterDefs As New List(Of SharedLibrary.SharedLibrary.SharedMethods.InputParameter)()
-        Dim metaList As New List(Of (ParamNumber As Integer,
-                                     TypeName As String,
-                                     RangeTuple As (Integer?, Integer?),
-                                     DisplayOptions As List(Of String),
-                                     CodeOptions As List(Of String)))()
-
-        For Each num In paramDefs.Keys.OrderBy(Function(i) i)
-            Dim definition = paramDefs(num).Definition
-            Dim segments = definition.Split(";"c).
-                                      Select(Function(s) s.Trim()).
-                                      Where(Function(s) s.Length > 0).ToArray()
-            If segments.Length = 0 Then Continue For
-
-            Dim desc = segments(0)
-            Dim t = If(segments.Length > 1, segments(1).ToLowerInvariant(), "string")
-            Dim defaultStr = If(segments.Length > 2, segments(2), "")
-
-            Dim rangeTuple As (Integer?, Integer?) = (Nothing, Nothing)
-            Dim optsRaw As List(Of String) = Nothing
-
-            If (t = "integer" OrElse t = "long" OrElse t = "double") AndAlso segments.Length > 3 Then
-                If System.Text.RegularExpressions.Regex.IsMatch(segments(3), "^\d+\s*-\s*\d+$") Then
-                    Dim parts = segments(3).Split("-"c)
-                    Dim minVal = Integer.Parse(parts(0))
-                    Dim maxVal = Integer.Parse(parts(1))
-                    rangeTuple = (minVal, maxVal)
-                    If segments.Length > 4 Then
-                        optsRaw = segments(4).Split(","c).Select(Function(o) o.Trim()).
-                                                 Where(Function(o) o.Length > 0).ToList()
-                    End If
-                Else
-                    optsRaw = segments(3).Split(","c).Select(Function(o) o.Trim()).
-                                             Where(Function(o) o.Length > 0).ToList()
-                End If
-            ElseIf t = "string" AndAlso segments.Length > 3 Then
-                optsRaw = segments(3).Split(","c).Select(Function(o) o.Trim()).
-                                         Where(Function(o) o.Length > 0).ToList()
-            End If
-
-            Dim displayList As List(Of String) = Nothing
-            Dim codeList As List(Of String) = Nothing
-            If optsRaw IsNot Nothing AndAlso optsRaw.Count > 0 Then
-                displayList = New List(Of String)()
-                codeList = New List(Of String)()
-                For Each o In optsRaw
-                    If String.IsNullOrWhiteSpace(o) Then Continue For
-                    Dim lbl = o
-                    Dim code = o
-                    Dim idx1 = o.IndexOf("<"c)
-                    Dim idx2 = o.IndexOf(">"c)
-                    If idx1 >= 0 AndAlso idx2 > idx1 Then
-                        lbl = o.Substring(0, idx1).Trim()
-                        code = o.Substring(idx1 + 1, idx2 - idx1 - 1).Trim()
-                    End If
-                    displayList.Add(lbl)
-                    codeList.Add(code)
-                Next
-            End If
-
-            Dim defaultDisplay As Object = defaultStr
-            If codeList IsNot Nothing Then
-                Dim idxDef = codeList.IndexOf(defaultStr)
-                If idxDef >= 0 Then defaultDisplay = displayList(idxDef)
-            End If
-
-            Dim typedDefault As Object
-            Select Case t
-                Case "boolean"
-                    Dim b As Boolean : Boolean.TryParse(defaultStr, b) : typedDefault = b
-                Case "integer"
-                    Dim i As Integer : Integer.TryParse(defaultStr, i) : typedDefault = i
-                Case "long"
-                    Dim l As Long : Long.TryParse(defaultStr, l) : typedDefault = l
-                Case "double"
-                    Dim d As Double : Double.TryParse(defaultStr, d) : typedDefault = d
-                Case Else
-                    typedDefault = defaultDisplay
-            End Select
-
-            If displayList IsNot Nothing Then
-                parameterDefs.Add(New SharedLibrary.SharedLibrary.SharedMethods.InputParameter(desc, typedDefault, displayList))
-            Else
-                parameterDefs.Add(New SharedLibrary.SharedLibrary.SharedMethods.InputParameter(desc, typedDefault))
-            End If
-
-            metaList.Add((num, t, rangeTuple, displayList, codeList))
-        Next
-
-        If parameterDefs.Count = 0 Then Return True
-
-        Dim prmArray = parameterDefs.ToArray()
-        If Not ShowCustomVariableInputForm("Please configure your parameters:", $"{AN} Parameters", prmArray) Then
-            Return False
-        End If
-
-        ' Build final value map
-        Dim valueByParam As New Dictionary(Of Integer, String)()
-        For i = 0 To metaList.Count - 1
-            Dim meta = metaList(i)
-            Dim p = prmArray(i)
-            Dim rawValue = If(p.Value Is Nothing, "", p.Value.ToString()).Trim()
-            Dim finalValue As String
-
-            If meta.TypeName = "boolean" Then
-                finalValue = rawValue.ToLowerInvariant()
-            Else
-                ' Map display -> code
-                If meta.DisplayOptions IsNot Nothing Then
-                    Dim idx = meta.DisplayOptions.IndexOf(rawValue)
-                    If idx >= 0 Then
-                        finalValue = meta.CodeOptions(idx)
-                    Else
-                        finalValue = rawValue
-                    End If
-                Else
-                    Dim rvLower = rawValue.ToLowerInvariant()
-                    If rvLower.StartsWith("(keine auswahl)") OrElse rvLower.StartsWith("(no selection)") OrElse rawValue.StartsWith("---") Then
-                        finalValue = ""
-                    Else
-                        finalValue = rawValue
-                    End If
-                End If
-
-                ' Clamp numeric
-                If (meta.TypeName = "integer" OrElse meta.TypeName = "long" OrElse meta.TypeName = "double") AndAlso (meta.RangeTuple.Item1.HasValue OrElse meta.RangeTuple.Item2.HasValue) Then
-                    Dim num As Double
-                    If Double.TryParse(finalValue, num) Then
-                        If meta.RangeTuple.Item1.HasValue AndAlso num < meta.RangeTuple.Item1.Value Then num = meta.RangeTuple.Item1.Value
-                        If meta.RangeTuple.Item2.HasValue AndAlso num > meta.RangeTuple.Item2.Value Then num = meta.RangeTuple.Item2.Value
-                        If meta.TypeName = "integer" OrElse meta.TypeName = "long" Then
-                            finalValue = CLng(System.Math.Round(num)).ToString()
-                        Else
-                            finalValue = num.ToString()
-                        End If
-                    End If
-                End If
-            End If
-
-            ' Minimal JSON escaping (keep consistent with old behavior)
-            Dim jsonEscaped = finalValue.Replace("\", "\\").Replace("""", "\""")
-            valueByParam(meta.ParamNumber) = jsonEscaped
-        Next
-
-        ' Positional replacement (definitions first)
-        Dim sb As New System.Text.StringBuilder(script)
-
-        ' Replace definitions (remove braces + template)
-        For Each m As Match In defMatches.Cast(Of Match)().OrderByDescending(Function(mm) mm.Index)
-            Dim paramNumber = Integer.Parse(m.Groups(1).Value)
-            Dim repl = If(valueByParam.ContainsKey(paramNumber), valueByParam(paramNumber), "")
-            sb.Remove(m.Index, m.Length)
-            sb.Insert(m.Index, repl)
-        Next
-
-        ' Replace references {parameterN}
-        Dim refMatches = refRx.Matches(sb.ToString())
-        For Each m As Match In refMatches.Cast(Of Match)().OrderByDescending(Function(mm) mm.Index)
-            ' Skip those that were definitions (already replaced)
-            If m.Groups.Count > 0 AndAlso m.Value.Contains("=") Then Continue For
-            Dim paramNumber = Integer.Parse(m.Groups(1).Value)
-            If valueByParam.ContainsKey(paramNumber) Then
-                sb.Remove(m.Index, m.Length)
-                sb.Insert(m.Index, valueByParam(paramNumber))
-            End If
-        Next
-
-        script = sb.ToString()
-        Return True
-    End Function
 
     Private Function ProcessWebAgentSecretPlaceholders(ByRef script As String) As Boolean
         ' Looks for:  "env": { "secrets": { "key": "{{secret:Description; type(optional)}}" ... } }
@@ -24938,7 +24745,7 @@ ContinueLoop:
         End If
 
         ' 2) Detect and process parameter placeholders {{parameterN = ...}}
-        If Not ProcessParameterPlaceholders(script) Then
+        If Not SLib.ProcessParameterPlaceholders(script) Then
             ShowCustomMessageBox("WebAgent canceled (no parameters applied).", $"{AN} WebAgent")
             Exit Sub
         End If
