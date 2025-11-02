@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 28.10.2025
+' 2.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -169,15 +169,13 @@ Public Class ThisAddIn
     End Sub
 
 
-
-
     ' Hardcoded config values
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "red_ink"
     Public Const AN6 As String = "Inky"
 
-    Public Const Version As String = "V.281025 Gen2 Beta Test"
+    Public Const Version As String = "V.021125 Gen2 Beta Test"
 
     ' Hardcoded configuration
 
@@ -1140,6 +1138,25 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Add_BubblesReply As String
+        Get
+            Return _context.SP_Add_BubblesReply
+        End Get
+        Set(value As String)
+            _context.SP_Add_BubblesReply = value
+        End Set
+    End Property
+
+    Public Shared Property SP_Add_BubblesExtract As String
+        Get
+            Return _context.SP_Add_BubblesExtract
+        End Get
+        Set(value As String)
+            _context.SP_Add_BubblesExtract = value
+        End Set
+    End Property
+
+
     Public Shared Property SP_Add_Bubbles_Format As String
         Get
             Return _context.SP_Add_Bubbles_Format
@@ -1580,6 +1597,16 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_PromptLibPathLocal As String
+        Get
+            Return _context.INI_PromptLibPathLocal
+        End Get
+        Set(value As String)
+            _context.INI_PromptLibPathLocal = value
+        End Set
+    End Property
+
+
     Public Shared Property INI_MyStylePath As String
         Get
             Return _context.INI_MyStylePath
@@ -1730,6 +1757,15 @@ Public Class ThisAddIn
         End Get
         Set(value As String)
             _context.INI_Model_Parameter4 = value
+        End Set
+    End Property
+
+    Public Shared Property SP_FindPrompts As String
+        Get
+            Return _context.SP_FindPrompts
+        End Get
+        Set(value As String)
+            _context.SP_FindPrompts = value
         End Set
     End Property
 
@@ -2021,8 +2057,8 @@ Public Class ThisAddIn
         End If
         SharedMethods.ShowSettingsWindow(Settings, SettingsTips, _context)
     End Function
-    Private Function ShowPromptSelector(filePath As String, enableMarkup As Boolean, enableBubbles As Boolean) As (String, Boolean, Boolean, Boolean)
-        Return SharedMethods.ShowPromptSelector(filePath, enableMarkup, enableBubbles, _context)
+    Private Function ShowPromptSelector(filePath As String, filePathlocal As String, enableMarkup As Boolean, enableBubbles As Boolean) As (String, Boolean, Boolean, Boolean)
+        Return SharedMethods.ShowPromptSelector(filePath, filePathlocal, enableMarkup, enableBubbles, _context)
     End Function
 
 #End Region
@@ -3740,8 +3776,6 @@ Public Class ThisAddIn
                 Return
             End If
 
-
-
             ' Get the selected text and range
             Dim selection As Microsoft.Office.Interop.Word.Selection = wordEditor.Application.Selection
             Dim range As Microsoft.Office.Interop.Word.Range = selection.Range.Duplicate ' Duplicate to preserve original
@@ -3787,6 +3821,9 @@ Public Class ThisAddIn
             If INI_PostCorrection <> "" Then
                 LLMResult = Await PostCorrection(LLMResult)
             End If
+
+            ' Remove horizontal whitespace (incl. NBSP) between real newline tokens (CRLF/CR/LF)
+            LLMResult = System.Text.RegularExpressions.Regex.Replace(LLMResult, "(\r\n|\r|\n)[^\S\r\n]+(\r\n|\r|\n)", "$1$2")
 
             Debug.WriteLine("TrailingCR=" & trailingCR)
             Debug.WriteLine($"Selection='{selection.Text}'")
@@ -4026,7 +4063,7 @@ Public Class ThisAddIn
 
                 Dim promptlibresult As (String, Boolean, Boolean, Boolean)
 
-                promptlibresult = ShowPromptSelector(INI_PromptLibPath, Not NoText, Nothing)
+                promptlibresult = ShowPromptSelector(INI_PromptLibPath, INI_PromptLibPathLocal, Not NoText, Nothing)
 
                 OtherPrompt = promptlibresult.Item1
                 DoMarkup = promptlibresult.Item2
@@ -5147,7 +5184,8 @@ Public Class ThisAddIn
                         {"PreCorrection", "Additional instruction for prompts"},
                         {"PostCorrection", "Prompt to apply after queries"},
                         {"Language1", "Default translation language"},
-                        {"PromptLibPath", "Prompt library file"}
+                        {"PromptLibPath", "Prompt library file"},
+                        {"PromptLibPathLocal", "Prompt library file (local)"}
                     }
 
         Dim SettingsTips As New Dictionary(Of String, String) From {
@@ -5168,7 +5206,8 @@ Public Class ThisAddIn
                         {"PreCorrection", "Add prompting text that will be added to all basic requests (e.g., for special language tasks)"},
                         {"PostCorrection", "Add a prompt that will be applied to each result before it is further processed (slow!)"},
                         {"Language1", "The language (in English) that will be used for the quick access button in the ribbon"},
-                        {"PromptLibPath", "The filename (including path, support environmental variables) for your prompt library (if any)"}
+                        {"PromptLibPath", "The filename (including path, support environmental variables) for your prompt library (if any)"},
+                        {"PromptLibPathLocal", "The filename (including path, support environmental variables) for your local prompt library (if any)"}
                     }
 
         ShowSettingsWindow(Settings, SettingsTips)
@@ -7877,7 +7916,7 @@ Public Class ThisAddIn
                 '─── prompt library branch ─────────────────────────────────────
                 If String.IsNullOrEmpty(OtherPrompt) AndAlso OtherPrompt <> "ESC" AndAlso INI_PromptLib Then
                     Dim sel = Await SwitchToUi(Function()
-                                                   Return ShowPromptSelector(INI_PromptLibPath, Not noText, Nothing)
+                                                   Return ShowPromptSelector(INI_PromptLibPath, INI_PromptLibPathLocal, Not noText, Nothing)
                                                End Function)                         ' (prompt, doMarkup, doInsert, canceled)
 
                     OtherPrompt = sel.Item1

@@ -333,6 +333,7 @@ Partial Class Ribbon1
     Private Async Sub Ribbon1_Load(ByVal sender As Object, ByVal e As RibbonUIEventArgs) Handles MyBase.Load
         ' Start initialization in background (asynchronously)
         Await InitializeAppAsync()
+        ApplyThemeAwareMenuIcon()
     End Sub
 
 

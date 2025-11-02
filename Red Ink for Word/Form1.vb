@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
 '
-' 19.10.2025
+' 29.10.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -545,10 +545,66 @@ Public Class frmAIChat
         End If
     End Sub
 
+    ' Reads the entire document's text.
+    Private Function GetActiveDocumentText() As String
+        Try
+            Dim doc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
+            Dim baseText As String = doc.Content.Text
+
+            Dim bubbles As String = ""
+            Try
+                bubbles = ThisAddIn.BubblesExtract(doc.Content, True) ' Silent=True
+            Catch
+                ' ignore and keep baseText
+            End Try
+
+            If Not String.IsNullOrEmpty(bubbles) Then
+                Return baseText & vbCr & vbCr & bubbles
+            End If
+
+            Return baseText
+        Catch ex As Exception
+            Return ""
+        End Try
+    End Function
+
+    ' Reads the current selection's text.
+    Private Function GetCurrentSelectionText() As String
+        Try
+            ' Get the active document
+            Dim activeDoc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
+
+            ' Get the selection from the active window
+            Dim sel As Microsoft.Office.Interop.Word.Selection = activeDoc.Application.Selection
+
+            If String.IsNullOrEmpty(sel.Text) Then
+                chkIncludeselection.Checked = False
+                Return ""
+            Else
+                Dim baseText As String = sel.Text
+
+                Dim bubbles As String = ""
+                Try
+                    bubbles = ThisAddIn.BubblesExtract(sel.Range, True) ' Silent=True
+                Catch
+                    ' ignore and keep baseText
+                End Try
+
+                If Not String.IsNullOrEmpty(bubbles) Then
+                    Return baseText & " " & bubbles
+                End If
+
+                Return baseText
+            End If
+        Catch ex As Exception
+            Return ""
+        End Try
+    End Function
+
 
     ' Reads the entire document's text.
 
-    Private Function GetActiveDocumentText() As String
+    Private Function OldGetActiveDocumentText() As String
         Try
             Dim doc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
             Return doc.Content.Text
@@ -560,7 +616,7 @@ Public Class frmAIChat
 
     ' Reads the current selection's text.
 
-    Private Function GetCurrentSelectionText() As String
+    Private Function OldGetCurrentSelectionText() As String
         Try
             ' Get the active document
             Dim activeDoc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
@@ -806,6 +862,20 @@ Public Class frmAIChat
                     System.Threading.Thread.Sleep(500)
                     ExecuteFindCommand(pc.Argument1, OnlySelection)
 
+                Case "addcomment"
+                    CommandsList = $"Adding comment '{pc.Argument2}' to the text '{pc.Argument1}'" & Environment.NewLine & CommandsList
+                    LastCommandsList = CommandsList
+                    'InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):" & Environment.NewLine & Environment.NewLine & CommandsList)
+                    System.Threading.Thread.Sleep(500)
+                    ExecuteAddComment(pc.Argument1, pc.Argument2, OnlySelection)
+
+                Case "replycomment"
+                    CommandsList = $"Replying to comment '{pc.Argument1}' to with '{pc.Argument2}'" & Environment.NewLine & CommandsList
+                    LastCommandsList = CommandsList
+                    'InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):" & Environment.NewLine & Environment.NewLine & CommandsList)
+                    System.Threading.Thread.Sleep(500)
+                    ExecuteReplyToCommentByIdToken(pc.Argument1, pc.Argument2)
+
                 Case "replace"
                     If String.IsNullOrEmpty(pc.Argument2) Then
                         CommandsList = $"Deleting '{pc.Argument1}'" & Environment.NewLine & CommandsList
@@ -894,6 +964,239 @@ Public Class frmAIChat
         End Try
     End Sub
 
+
+    ' Adds a threaded reply to an existing Word comment identified by a single LLM-friendly token.
+    ' Token formats accepted (order of precedence):
+    '  - "1234|abcdef..."              (id|hash)
+    '  - "id=1234;hash=abcdef..."      (labels; separators ; , | or whitespace)
+    '  - "wid:1234 ph:abcdef..."       (labels with ':' and whitespace)
+    '  - "1234"                        (id only)
+    '  - "abcdef..."                   (hash only)
+    Private Sub ExecuteReplyToCommentByIdToken(
+    ByVal idToken As String,
+    ByVal replyText As String
+)
+        Dim app As Microsoft.Office.Interop.Word.Application = Nothing
+        Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
+        Dim hadSel As Boolean = False
+        Dim origStart As Integer = -1
+        Dim origEnd As Integer = -1
+
+        Try
+            app = Globals.ThisAddIn.Application
+            If app IsNot Nothing AndAlso app.Documents IsNot Nothing AndAlso app.Documents.Count > 0 Then
+                doc = app.ActiveDocument
+                If app.Selection IsNot Nothing Then
+                    origStart = app.Selection.Start
+                    origEnd = app.Selection.End
+                    hadSel = True
+                End If
+            End If
+
+            ' ——— existing logic ———
+            If String.IsNullOrWhiteSpace(idToken) Then
+                Debug.WriteLine("Add-Reply: Missing ID token.")
+                Exit Sub
+            End If
+            If String.IsNullOrWhiteSpace(replyText) Then
+                Debug.WriteLine("Add-Reply: Reply text is empty.")
+                Exit Sub
+            End If
+
+            Dim wordId As System.Nullable(Of Integer) = Nothing
+            Dim pseudoHash As String = Nothing
+
+            If Not TryParseCommentIdToken(idToken, wordId, pseudoHash) Then
+                Debug.WriteLine("Add-Reply: Could not parse ID token (expected formats like '1234|abcdef' or 'id=1234;hash=abcdef').")
+                Exit Sub
+            End If
+
+            Dim formatted As Boolean = chkConvertMarkdown.Checked
+            Dim ok As Boolean = ThisAddIn.ReplyToWordComment(wordId, pseudoHash, replyText, formatted)
+            If Not ok Then
+                Debug.WriteLine("Add-Reply: Failed to add comment reply (target not found).")
+            End If
+            ' ——— end existing logic ———
+
+        Finally
+            ' Restore focus and selection to main text story; avoid leaving caret in a comment
+            Try
+                If app IsNot Nothing AndAlso doc IsNot Nothing AndAlso hadSel Then
+                    app.ActiveWindow.Activate()
+                    Dim s As Integer = Math.Max(doc.Content.Start, Math.Min(origStart, doc.Content.End))
+                    Dim e As Integer = Math.Max(doc.Content.Start, Math.Min(origEnd, doc.Content.End))
+                    doc.Range(s, e).Select() ' use a doc Range to force wdMainTextStory
+                End If
+            Catch
+                ' best-effort restore; ignore failures
+            End Try
+        End Try
+    End Sub
+
+
+
+    ' Parses a combined ID token into Word comment Index (WordID) and/or PseudoHash.
+    ' Returns True if at least one identifier could be extracted.
+    Private Function TryParseCommentIdToken(
+    ByVal raw As String,
+    ByRef wordId As System.Nullable(Of Integer),
+    ByRef pseudoHash As String
+) As Boolean
+        wordId = Nothing
+        pseudoHash = Nothing
+        If String.IsNullOrWhiteSpace(raw) Then Return False
+
+        Dim s As String = raw.Trim()
+
+        ' 1) Fast path: split "id|hash"
+        Dim pipeParts = s.Split(New Char() {"|"c}, 2, StringSplitOptions.None)
+        If pipeParts.Length = 2 Then
+            Dim left = pipeParts(0).Trim()
+            Dim right = pipeParts(1).Trim()
+            Dim idVal As Integer
+            If Integer.TryParse(left, idVal) Then wordId = idVal
+            If Not String.IsNullOrWhiteSpace(right) Then pseudoHash = right
+            Return (wordId.HasValue OrElse Not String.IsNullOrWhiteSpace(pseudoHash))
+        End If
+
+        ' 2) Labeled forms: allow separators ; , | or whitespace; allow labels wid/id and ph/hash/pseudohash
+        ' Examples: "id=1234;hash=abcdef", "wid:1234 ph:abcdef"
+        Dim idMatch = System.Text.RegularExpressions.Regex.Match(s, "(?:\bwid|\bid|\bwordid)\s*[:=]\s*(?<id>-?\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        If idMatch.Success Then
+            Dim idVal As Integer
+            If Integer.TryParse(idMatch.Groups("id").Value, idVal) Then wordId = idVal
+        End If
+        Dim hashMatch = System.Text.RegularExpressions.Regex.Match(s, "(?:\bph|\bhash|\bpseudohash)\s*[:=]\s*(?<hash>[A-Za-z0-9_-]{6,})", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        If hashMatch.Success Then
+            pseudoHash = hashMatch.Groups("hash").Value.Trim()
+        End If
+        If wordId.HasValue OrElse Not String.IsNullOrWhiteSpace(pseudoHash) Then Return True
+
+        ' 3) Single token fallback:
+        '    - all digits => id only
+        '    - otherwise   => treat as hash
+        Dim onlyDigits As Boolean = s.All(Function(ch) Char.IsDigit(ch))
+        If onlyDigits Then
+            Dim idVal As Integer
+            If Integer.TryParse(s, idVal) Then wordId = idVal
+            Return True
+        Else
+            ' Accept as hash if it looks non-empty
+            If s.Length >= 6 Then
+                pseudoHash = s
+                Return True
+            End If
+        End If
+
+        Return False
+    End Function
+
+    Private Sub ExecuteAddComment(
+    ByVal searchTerm As String,
+    ByVal commentText As String,
+    Optional ByVal onlySelection As Boolean = False
+)
+
+        Dim app As Microsoft.Office.Interop.Word.Application = Nothing
+        Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
+
+        ' Validate inputs
+        If String.IsNullOrWhiteSpace(searchTerm) Then
+            Debug.WriteLine("AddComments: Search term is empty.")
+            Return
+        End If
+        If String.IsNullOrWhiteSpace(commentText) Then
+            Debug.WriteLine("AddComments: Comment text is empty.")
+            Return
+        End If
+
+        ' Get Word application and active document
+        Try
+            Try
+                app = CType(System.Runtime.InteropServices.Marshal.GetActiveObject("Word.Application"), Microsoft.Office.Interop.Word.Application)
+            Catch
+                app = Globals.ThisAddIn.Application
+            End Try
+        Catch ex As System.Exception
+            Debug.WriteLine("AddComments: Unable to access Word Application instance.")
+            Return
+        End Try
+
+        Try
+            doc = app.ActiveDocument
+        Catch
+            Debug.WriteLine("AddComments: No active document found.")
+            Return
+        End Try
+        If doc Is Nothing Then
+            Debug.WriteLine("AddComments: No active document found.")
+            Return
+        End If
+
+        Dim sel As Microsoft.Office.Interop.Word.Selection = doc.Application.Selection
+        Dim originalSelStart As Integer = sel.Start
+        Dim originalSelEnd As Integer = sel.End
+
+        ' Determine working range
+        Dim workRange As Microsoft.Office.Interop.Word.Range
+        If onlySelection AndAlso sel IsNot Nothing AndAlso Not String.IsNullOrEmpty(sel.Text) Then
+            workRange = sel.Range.Duplicate
+        Else
+            workRange = doc.Content.Duplicate
+        End If
+
+        ' Initialize selection to the working range bounds
+        sel.SetRange(workRange.Start, workRange.End)
+        Dim limitEnd As Integer = workRange.End
+
+        Dim added As Integer = 0
+
+        Try
+            ' Iterate all matches using the robust chunk finder already available
+            Do While Globals.ThisAddIn.FindLongTextInChunks(searchTerm, sel) = True
+                If sel Is Nothing Then Exit Do
+
+                Try
+                    ' Anchor the comment to the found range
+                    Dim anchor As Microsoft.Office.Interop.Word.Range = sel.Range.Duplicate
+                    Dim newComment As Microsoft.Office.Interop.Word.Comment = Nothing
+
+                    ' Create empty comment, then fill body
+                    newComment = doc.Comments.Add(anchor, String.Empty)
+
+                    If chkConvertMarkdown.Checked Then
+                        ThisAddIn.InsertMarkdownToComment(newComment.Range, commentText)
+                    Else
+                        newComment.Range.Text = commentText
+                    End If
+
+                    added += 1
+                Catch
+                    ' Ignore and continue with next occurrence
+                End Try
+
+                ' Advance selection beyond current match to continue searching
+                sel.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
+
+                ' Safety: if we reached the end of our working region, stop
+                If sel.Start >= limitEnd Then Exit Do
+
+                sel.SetRange(sel.Start, limitEnd)
+            Loop
+        Catch ex As System.Exception
+            Debug.WriteLine($"AddComments failed: {ex.Message}")
+        Finally
+            ' Restore original selection and ensure we're back in the main document story
+            Try
+                Dim s As Integer = Math.Max(doc.Content.Start, Math.Min(originalSelStart, doc.Content.End))
+                Dim e As Integer = Math.Max(doc.Content.Start, Math.Min(originalSelEnd, doc.Content.End))
+                doc.Range(s, e).Select()
+            Catch
+            End Try
+        End Try
+        Debug.WriteLine($"AddComments: Added {added} comments for term '{searchTerm}'.")
+        Return
+    End Sub
 
     Private Sub ExecuteFindCommand(searchTerm As String, Optional OnlySelection As Boolean = False)
         Dim doc As Word.Document = Globals.ThisAddIn.Application.ActiveDocument

@@ -88,6 +88,7 @@ Partial Class Ribbon1
         Me.RI_DefineMyStyle = Me.Factory.CreateRibbonButton
         Me.RI_WebAgent = Me.Factory.CreateRibbonButton
         Me.RI_EditWebAgent = Me.Factory.CreateRibbonButton
+        Me.RI_FindHidden = Me.Factory.CreateRibbonButton
         Me.RI_Anonymization = Me.Factory.CreateRibbonButton
         Me.RI_FreestyleNM = Me.Factory.CreateRibbonButton
         Me.RI_FreestyleAM = Me.Factory.CreateRibbonButton
@@ -108,6 +109,7 @@ Partial Class Ribbon1
         Me.RI_PrimLang2 = Me.Factory.CreateRibbonButton
         Me.RI_Correct2 = Me.Factory.CreateRibbonButton
         Me.RI_Chat = Me.Factory.CreateRibbonButton
+        Me.RI_ContentControls = Me.Factory.CreateRibbonButton
         Me.Tab1.SuspendLayout()
         Me.Group1.SuspendLayout()
         Me.Group2.SuspendLayout()
@@ -322,6 +324,7 @@ Partial Class Ribbon1
         Me.Menu3.Items.Add(Me.RI_DefineMyStyle)
         Me.Menu3.Items.Add(Me.RI_WebAgent)
         Me.Menu3.Items.Add(Me.RI_EditWebAgent)
+        Me.Menu3.Items.Add(Me.RI_FindHidden)
         Me.Menu3.Items.Add(Me.RI_Anonymization)
         Me.Menu3.Label = "Analyze"
         Me.Menu3.Name = "Menu3"
@@ -425,6 +428,15 @@ Partial Class Ribbon1
         Me.RI_EditWebAgent.ScreenTip = "Allows you to create or edit a WebAgent script using your LLM"
         Me.RI_EditWebAgent.ShowImage = True
         '
+        'RI_FindHidden
+        '
+        Me.RI_FindHidden.Label = "Find Hidden Prompts"
+        Me.RI_FindHidden.Name = "RI_FindHidden"
+        Me.RI_FindHidden.OfficeImageId = "FlagMessage"
+        Me.RI_FindHidden.ScreenTip = "Checks your selected text for hidden and malicious text (e.g., prompt injections)" &
+    ""
+        Me.RI_FindHidden.ShowImage = True
+        '
         'RI_Anonymization
         '
         Me.RI_Anonymization.Label = "Anonymization"
@@ -475,6 +487,7 @@ Partial Class Ribbon1
         Me.Menu2.Items.Add(Me.RI_Regex)
         Me.Menu2.Items.Add(Me.RI_Import)
         Me.Menu2.Items.Add(Me.RI_Markdown)
+        Me.Menu2.Items.Add(Me.RI_ContentControls)
         Me.Menu2.Items.Add(Me.RI_InsertClipboard)
         Me.Menu2.Label = "Word Helpers"
         Me.Menu2.Name = "Menu2"
@@ -601,6 +614,15 @@ Partial Class Ribbon1
         Me.RI_Chat.ScreenTip = "Will open a window where you can chat with the LLM"
         Me.RI_Chat.ShowImage = True
         '
+        'RI_ContentControls
+        '
+        Me.RI_ContentControls.Label = "Remove Content Controls"
+        Me.RI_ContentControls.Name = "RI_ContentControls"
+        Me.RI_ContentControls.OfficeImageId = "SectionMergeWithPrevious"
+        Me.RI_ContentControls.ScreenTip = "Removes content controls from the selected or all text while preserving content a" &
+    "nd formatting"
+        Me.RI_ContentControls.ShowImage = True
+        '
         'Ribbon1
         '
         Me.Name = "Ribbon1"
@@ -621,9 +643,7 @@ Partial Class Ribbon1
     Private Async Sub Ribbon1_Load(ByVal sender As Object, ByVal e As RibbonUIEventArgs) Handles MyBase.Load
         ' Start initialization in background (asynchronously)
         Await InitializeAppAsync()
-
-        ' Now that the .NET assemblies and everything are safely loaded,
-        ' set your resource-based image here rather than in InitializeComponent.
+        ApplyThemeAwareMenuIcon()
 
         AddHandler RI_Correct.Click, AddressOf RI_Correct_Click
         AddHandler RI_Correct2.Click, AddressOf RI_Correct2_Click
@@ -836,6 +856,8 @@ Partial Class Ribbon1
     Friend WithEvents RI_WebAgent As RibbonButton
     Friend WithEvents RI_EditWebAgent As RibbonButton
     Friend WithEvents RI_Markdown As RibbonButton
+    Friend WithEvents RI_FindHidden As RibbonButton
+    Friend WithEvents RI_ContentControls As RibbonButton
 End Class
 
 Partial Class ThisRibbonCollection

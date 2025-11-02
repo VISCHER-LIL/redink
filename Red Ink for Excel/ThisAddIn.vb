@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 28.10.2025
+' 2.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -206,7 +206,7 @@ Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.281025 Gen2 Beta Test"
+    Public Const Version As String = "V.021125 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -1160,6 +1160,24 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Add_BubblesReply As String
+        Get
+            Return _context.SP_Add_BubblesReply
+        End Get
+        Set(value As String)
+            _context.SP_Add_BubblesReply = value
+        End Set
+    End Property
+
+    Public Shared Property SP_Add_BubblesExtract As String
+        Get
+            Return _context.SP_Add_BubblesExtract
+        End Get
+        Set(value As String)
+            _context.SP_Add_BubblesExtract = value
+        End Set
+    End Property
+
     Public Shared Property SP_Add_Bubbles_Format As String
         Get
             Return _context.SP_Add_Bubbles_Format
@@ -1593,6 +1611,16 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_PromptLibPathLocal As String
+        Get
+            Return _context.INI_PromptLibPathLocal
+        End Get
+        Set(value As String)
+            _context.INI_PromptLibPathLocal = value
+        End Set
+    End Property
+
+
     Public Shared Property INI_PromptLibPath_Transcript As String
         Get
             Return _context.INI_PromptLibPath_Transcript
@@ -1746,6 +1774,15 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_FindPrompts As String
+        Get
+            Return _context.SP_FindPrompts
+        End Get
+        Set(value As String)
+            _context.SP_FindPrompts = value
+        End Set
+    End Property
+
     Public Shared Property SP_MergePrompt As String
         Get
             Return _context.SP_MergePrompt
@@ -1787,8 +1824,8 @@ Public Class ThisAddIn
     Private Function ShowSettingsWindow(Settings As Dictionary(Of String, String), SettingsTips As Dictionary(Of String, String))
         SharedMethods.ShowSettingsWindow(Settings, SettingsTips, _context)
     End Function
-    Private Function ShowPromptSelector(filePath As String, enableMarkup As Boolean, enableBubbles As Boolean) As (String, Boolean, Boolean, Boolean)
-        Return SharedMethods.ShowPromptSelector(filePath, enableMarkup, enableBubbles, _context)
+    Private Function ShowPromptSelector(filePath As String, filepathlocal As String, enableMarkup As Boolean, enableBubbles As Boolean) As (String, Boolean, Boolean, Boolean)
+        Return SharedMethods.ShowPromptSelector(filePath, filepathlocal, enableMarkup, enableBubbles, _context)
     End Function
 
 #End Region
@@ -2438,7 +2475,7 @@ Public Class ThisAddIn
 
             Dim promptlibresult As (String, Boolean, Boolean, Boolean)
 
-            promptlibresult = ShowPromptSelector(INI_PromptLibPath, Nothing, Nothing)
+            promptlibresult = ShowPromptSelector(INI_PromptLibPath, INI_PromptLibPathLocal, Nothing, Nothing)
 
             OtherPrompt = promptlibresult.Item1
             DoClipboard = promptlibresult.Item4
@@ -2617,8 +2654,12 @@ Public Class ThisAddIn
             ' Count total occurrences first (case-insensitive) so inserted file text containing {doc} does not trigger extra loops.
             Dim totalOccurrences As Integer = Regex.Matches(OtherPrompt, Regex.Escape(ExtTrigger), RegexOptions.IgnoreCase).Count
 
+            ' Detect if a placeholder occurrence is already enclosed by any tag, e.g. <tag>...{doc}...</tag>
+            Dim wrappedPattern As String =
+                "<(?<name>[A-Za-z][\w\-]*)\b[^>]*>[^<]*" & Regex.Escape(ExtTrigger) & "[^<]*</\k<name>>"
+
             If totalOccurrences = 1 Then
-                ' Original single-occurrence behavior
+                ' Single-occurrence behavior with optional auto-wrapping
                 DragDropFormLabel = ""
                 DragDropFormFilter = ""
                 Dim doc As String = Await GetFileContent(Nothing, False, Not String.IsNullOrWhiteSpace(INI_APICall_Object), True)
@@ -2626,7 +2667,11 @@ Public Class ThisAddIn
                     ShowCustomMessageBox("The file you have selected is empty or not supported - exiting.")
                     Return False
                 End If
-                OtherPrompt = Regex.Replace(OtherPrompt, Regex.Escape(ExtTrigger), doc, RegexOptions.IgnoreCase)
+
+                Dim isWrapped As Boolean = Regex.IsMatch(OtherPrompt, wrappedPattern, RegexOptions.IgnoreCase)
+                Dim replacementText As String = If(isWrapped, doc, $"<document>{doc}</document>")
+
+                OtherPrompt = Regex.Replace(OtherPrompt, Regex.Escape(ExtTrigger), replacementText, RegexOptions.IgnoreCase)
                 ShowCustomMessageBox($"This file will be included in your prompt where you have referred to {ExtTrigger}: " & vbCrLf & vbCrLf & doc)
             Else
                 ' Multi-occurrence behavior: prompt separately for each placeholder
@@ -2642,8 +2687,21 @@ Public Class ThisAddIn
                         Return False
                     End If
 
+                    ' Determine if this specific occurrence is already wrapped by any tag pair
+                    Dim isWrappedThis As Boolean = False
+                    Dim mcol As MatchCollection = Regex.Matches(OtherPrompt, wrappedPattern, RegexOptions.IgnoreCase)
+                    For Each m As Match In mcol
+                        If idx >= m.Index AndAlso idx < m.Index + m.Length Then
+                            isWrappedThis = True
+                            Exit For
+                        End If
+                    Next
+
+                    Dim replacementText As String =
+                        If(isWrappedThis, docPart, $"<document{occurrence}>{docPart}</document{occurrence}>")
+
                     ' Replace only the first remaining occurrence (manual replacement keeps later placeholders intact)
-                    OtherPrompt = OtherPrompt.Substring(0, idx) & docPart & OtherPrompt.Substring(idx + ExtTrigger.Length)
+                    OtherPrompt = OtherPrompt.Substring(0, idx) & replacementText & OtherPrompt.Substring(idx + ExtTrigger.Length)
 
                     ShowCustomMessageBox($"This file will be included at occurrence #{occurrence} (of {totalOccurrences}) where you used {ExtTrigger}:" &
                                          vbCrLf & vbCrLf & docPart)
@@ -4927,7 +4985,8 @@ Public Class ThisAddIn
                 {"PostCorrection", "Prompt to apply after queries"},
                 {"Language1", "Default translation language 1"},
                 {"Language2", "Default translation language 2"},
-                {"PromptLibPath", "Prompt library file"}
+                {"PromptLibPath", "Prompt library file"},
+                {"PromptLibPathLocal", "Prompt library file (local)"}
             }
 
         Dim SettingsTips As New Dictionary(Of String, String) From {
@@ -4940,7 +4999,8 @@ Public Class ThisAddIn
                 {"PostCorrection", "Add a prompt that will be applied to each result before it is further processed (slow!)"},
                 {"Language1", "The language (in English) that will be used for the first quick access button in the ribbon"},
                 {"Language2", "The language (in English) that will be used for the second quick access button in the ribbon"},
-                {"PromptLibPath", "The filename (including path, support environmental variables) for your prompt library (if any)"}
+                {"PromptLibPath", "The filename (including path, support environmental variables) for your prompt library (if any)"},
+                {"PromptLibPath", "The filename (including path, support environmental variables) for your local prompt library (if any)"}
                 }
         ShowSettingsWindow(Settings, SettingsTips)
 

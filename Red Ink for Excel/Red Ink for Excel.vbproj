@@ -36,7 +36,7 @@
     <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\redink_prerelease\excel\</PublishUrl>
     <InstallUrl>https://apps.vischer.com/redink/excel/</InstallUrl>
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.1.1.58</ApplicationVersion>
+    <ApplicationVersion>0.1.1.59</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
@@ -301,6 +301,9 @@
     <Compile Include="ThisAddIn.vb">
       <SubType>Code</SubType>
     </Compile>
+    <None Include="Resources\Red_Ink_Logo.png" />
+    <None Include="Resources\Red_Ink_Logo_Large.png" />
+    <None Include="Resources\Red_Ink_Logo_Medium.png" />
     <Content Include="VBA Helper\RI_Helper_Code_Excel.bas" />
     <EmbeddedResource Include="DragDropForm.resx" />
     <EmbeddedResource Include="Form1.resx" />
@@ -347,7 +350,6 @@
     <Content Include="License.txt">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
-    <None Include="Resources\Red_Ink_Logo.png" />
   </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>

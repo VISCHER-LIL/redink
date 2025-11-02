@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 26.10.2025
+' 2.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -1287,7 +1287,7 @@ Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.261025 Gen2 Beta Test"
+    Public Const Version As String = "V.021125 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -1303,6 +1303,7 @@ Public Class ThisAddIn
     Private Const NetTrigger As String = "(net)"
     Private Const LibTrigger As String = "(lib)"
     Private Const AllTrigger As String = "(all)"
+    Private Const BubblesExtractTrigger As String = "(bubbles)"
     Private Const TPMarkupTrigger As String = "(rev)"
     Private Const TPMarkupTriggerL As String = "(rev:"
     Private Const TPMarkupTriggerR As String = ")"
@@ -1335,6 +1336,8 @@ Public Class ThisAddIn
     Private Const ClipboardPrefix2 As String = "Clip:"
     Private Const PanePrefix As String = "Pane:"
     Private Const BubblesPrefix As String = "Bubbles:"
+    Private Const PushbackPrefix As String = "Reply:"
+    Private Const PushbackPrefix2 As String = "Pushback:"
     Private Const SlidesPrefix As String = "Slides:"
     Private Const BubbleCutText As String = " (" & ChrW(&H2702) & ")"
     Private Const SearchNextTrigger As String = "Next:"
@@ -2410,6 +2413,24 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Add_BubblesReply As String
+        Get
+            Return _context.SP_Add_BubblesReply
+        End Get
+        Set(value As String)
+            _context.SP_Add_BubblesReply = value
+        End Set
+    End Property
+
+    Public Shared Property SP_Add_BubblesExtract As String
+        Get
+            Return _context.SP_Add_BubblesExtract
+        End Get
+        Set(value As String)
+            _context.SP_Add_BubblesExtract = value
+        End Set
+    End Property
+
     Public Shared Property SP_Add_Bubbles_Format As String
         Get
             Return _context.SP_Add_Bubbles_Format
@@ -2866,6 +2887,16 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_PromptLibPathLocal As String
+        Get
+            Return _context.INI_PromptLibPathLocal
+        End Get
+        Set(value As String)
+            _context.INI_PromptLibPathLocal = value
+        End Set
+    End Property
+
+
     Public Shared Property INI_MyStylePath As String
         Get
             Return _context.INI_MyStylePath
@@ -3030,6 +3061,15 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_FindPrompts As String
+        Get
+            Return _context.SP_FindPrompts
+        End Get
+        Set(value As String)
+            _context.SP_FindPrompts = value
+        End Set
+    End Property
+
     Public Shared Property SP_MergePrompt As String
         Get
             Return _context.SP_MergePrompt
@@ -3078,8 +3118,8 @@ Public Class ThisAddIn
     Private Function ShowSettingsWindow(Settings As Dictionary(Of String, String), SettingsTips As Dictionary(Of String, String))
         SharedMethods.ShowSettingsWindow(Settings, SettingsTips, _context)
     End Function
-    Private Function ShowPromptSelector(filePath As String, enableMarkup As Boolean, enableBubbles As Boolean) As (String, Boolean, Boolean, Boolean)
-        Return SharedMethods.ShowPromptSelector(filePath, enableMarkup, enableBubbles, _context)
+    Private Function ShowPromptSelector(filePath As String, filePathlocal As String, enableMarkup As Boolean, enableBubbles As Boolean) As (String, Boolean, Boolean, Boolean)
+        Return SharedMethods.ShowPromptSelector(filePath, filePathlocal, enableMarkup, enableBubbles, _context)
     End Function
 
 #End Region
@@ -3943,7 +3983,8 @@ Public Class ThisAddIn
             True,
             False,
             INI_KeepFormatCap,
-            NoFormatAndFieldSaving:=Not INI_ReplaceText2
+            NoFormatAndFieldSaving:=Not INI_ReplaceText2,
+            DoBubblesExtract:=True
         )
 
         Catch ex As System.Exception
@@ -4214,9 +4255,16 @@ Public Class ThisAddIn
 
                 Dim newDoc As Word.Document = Globals.ThisAddIn.Application.Documents.Add()
                 newDoc.Activate()
-                Dim currentSelection As Word.Selection = newDoc.Application.Selection
-                currentSelection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
-                currentSelection.TypeText(FromFile)
+
+                Dim rng As Word.Range = newDoc.Content
+                rng.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+
+                ' Sanitize: remove NULs and normalize line breaks to CRLF
+                Dim safeText As String = If(FromFile, String.Empty)
+                safeText = safeText.Replace(ChrW(0), String.Empty)                
+
+                rng.InsertAfter(safeText)
+
                 newDoc.Content.Select()
                 SelectedText = newDoc.Application.Selection.Text.Trim()
 
@@ -4453,12 +4501,448 @@ Public Class ThisAddIn
     End Sub
 
 
-
     Public Async Sub SpecialModel()
         Try
             If INILoadFail() Then Return
 
             Dim DoPane As Boolean = True
+            Dim NoSelectedText As Boolean = False
+            Dim AlternateText As String = ""
+
+            If String.IsNullOrWhiteSpace(INI_SpecialServicePath) Then
+                ShowCustomMessageBox("No special service path is configured.")
+                Return
+            End If
+
+            If INILoadFail() Then Return
+            Dim application As Word.Application = Globals.ThisAddIn.Application
+            Dim selection As Word.Selection = application.Selection
+
+            OptionChecked = False
+
+            If Not ShowModelSelection(_context, INI_SpecialServicePath, "Special Service", "Select the special service you want To query:", "Output in a pane (not directly in the document)", 2) Then
+                originalConfigLoaded = False
+                Return
+            End If
+
+            If selection.Type = Word.WdSelectionType.wdSelectionIP Then
+                AlternateText = ShowCustomInputBox($"Provide the text for querying {INI_Model_2} (since you have not selected any text):", $"{AN} Special Service", False)
+                NoSelectedText = True
+                If AlternateText = "ESC" OrElse AlternateText.Trim() = "" Then
+                    Return
+                End If
+            End If
+
+            Dim iniValues() As String = {HideEscape(INI_Model_Parameter1), HideEscape(INI_Model_Parameter2), HideEscape(INI_Model_Parameter3), HideEscape(INI_Model_Parameter4)}
+            Dim parameterDefs As New List(Of SharedLibrary.SharedLibrary.SharedMethods.InputParameter)()
+            Dim typesList As New List(Of String)()
+            Dim rangesList As New List(Of Tuple(Of Integer, Integer))()
+            Dim optsDisplayList As New List(Of List(Of String))()
+            Dim optsCodeList As New List(Of List(Of String))()
+
+            For Each raw As String In iniValues
+                If String.IsNullOrWhiteSpace(raw) Then Continue For
+
+                Dim segments = raw.Split(";"c).Select(Function(s) s.Trim()).ToArray()
+                If segments.Length = 0 Then Continue For
+
+                Dim desc As String = segments(0)
+                Dim t As String = If(segments.Length > 1 AndAlso Not String.IsNullOrEmpty(segments(1)), segments(1).ToLowerInvariant(), "string")
+                Dim defaultStr As String = If(segments.Length > 2, segments(2), String.Empty)
+
+                ' Range (numeric only) and options
+                Dim rangeTuple As Tuple(Of Integer, Integer) = Nothing
+                Dim optsRaw As List(Of String) = Nothing
+
+                If (t = "integer" OrElse t = "long" OrElse t = "double") AndAlso segments.Length > 3 AndAlso System.Text.RegularExpressions.Regex.IsMatch(segments(3), "^\d+\s*-\s*\d+$") Then
+                    Dim parts = segments(3).Split("-"c).Select(Function(s) s.Trim()).ToArray()
+                    Dim minVal = Integer.Parse(parts(0), Globalization.CultureInfo.InvariantCulture)
+                    Dim maxVal = Integer.Parse(parts(1), Globalization.CultureInfo.InvariantCulture)
+                    rangeTuple = Tuple.Create(minVal, maxVal)
+
+                    If segments.Length > 4 AndAlso Not String.IsNullOrWhiteSpace(segments(4)) Then
+                        optsRaw = segments(4).Split(","c).Select(Function(o) o.Trim()).ToList()
+                    End If
+                End If
+
+                If t = "string" AndAlso segments.Length > 3 AndAlso Not String.IsNullOrWhiteSpace(segments(3)) Then
+                    optsRaw = segments(3).Split(","c).Select(Function(o) o.Trim()).ToList()
+                End If
+
+                ' Split options into display/code
+                Dim displayList As List(Of String) = Nothing
+                Dim codeList As List(Of String) = Nothing
+                If optsRaw IsNot Nothing Then
+                    displayList = New List(Of String)()
+                    codeList = New List(Of String)()
+                    For Each o As String In optsRaw
+                        Dim lbl = o
+                        Dim code = o
+                        Dim idx1 = o.IndexOf("<"c)
+                        Dim idx2 = o.IndexOf(">"c)
+                        If idx1 >= 0 AndAlso idx2 > idx1 Then
+                            lbl = o.Substring(0, idx1).Trim()
+                            code = o.Substring(idx1 + 1, idx2 - idx1 - 1).Trim()
+                        End If
+                        displayList.Add(lbl)
+                        codeList.Add(code)
+                    Next
+                End If
+
+                ' Default for UI: prefer display label if code match exists
+                Dim defaultDisplay As Object = defaultStr
+                If codeList IsNot Nothing Then
+                    Dim idxDef = codeList.IndexOf(defaultStr)
+                    If idxDef >= 0 Then defaultDisplay = displayList(idxDef)
+                End If
+
+                ' Parse default by type
+                Dim val As Object
+                Select Case t
+                    Case "boolean"
+                        Dim b As Boolean
+                        Boolean.TryParse(defaultStr, b)
+                        val = b
+                    Case "integer"
+                        Dim i As Integer
+                        Integer.TryParse(defaultStr, Globalization.NumberStyles.Integer, Globalization.CultureInfo.InvariantCulture, i)
+                        val = i
+                    Case "long"
+                        Dim l As Long
+                        Long.TryParse(defaultStr, Globalization.NumberStyles.Integer, Globalization.CultureInfo.InvariantCulture, l)
+                        val = l
+                    Case "double"
+                        Dim d As Double
+                        Double.TryParse(defaultStr, Globalization.NumberStyles.Float Or Globalization.NumberStyles.AllowThousands, Globalization.CultureInfo.InvariantCulture, d)
+                        val = d
+                    Case Else
+                        val = defaultDisplay
+                End Select
+
+                ' Build parameterDef
+                If displayList IsNot Nothing Then
+                    parameterDefs.Add(New SharedLibrary.SharedLibrary.SharedMethods.InputParameter(desc, val, displayList))
+                Else
+                    parameterDefs.Add(New SharedLibrary.SharedLibrary.SharedMethods.InputParameter(desc, val))
+                End If
+
+                ' Keep metadata aligned
+                typesList.Add(t)
+                rangesList.Add(rangeTuple)
+                optsDisplayList.Add(displayList)
+                optsCodeList.Add(codeList)
+            Next
+
+            If Not String.IsNullOrWhiteSpace(SP_QueryPrompt) Then
+                parameterDefs.Add(New SharedLibrary.SharedLibrary.SharedMethods.InputParameter("Run query assistant", False))
+            End If
+
+            OtherPrompt = ""
+            Dim runQueryAssistant As Boolean = False
+
+            If parameterDefs.Count > 0 Then
+                Dim parameters() As SharedLibrary.SharedLibrary.SharedMethods.InputParameter = parameterDefs.ToArray()
+                If ShowCustomVariableInputForm("Please configure your parameters:", "Use '" & INI_Model_2 & "'", parameters) Then
+
+                    ' Determine actual loop bounds robustly
+                    Dim realParamCount As Integer = typesList.Count
+                    Dim userParamCount As Integer = parameters.Length
+
+                    ' Strip optional trailing boolean (query assistant) if present
+                    If userParamCount > 0 Then
+                        Dim lastParam = parameters(userParamCount - 1)
+                        If TypeOf lastParam.Value Is Boolean Then
+                            runQueryAssistant = CType(lastParam.Value, Boolean)
+                            userParamCount -= 1
+                        End If
+                    End If
+
+                    Dim loopCount As Integer = System.Math.Min(userParamCount, realParamCount)
+
+                    ' Read values with clamping/mapping
+                    For i As Integer = 0 To loopCount - 1
+                        Dim p As SharedLibrary.SharedLibrary.SharedMethods.InputParameter = parameters(i)
+                        Dim rawValue As String = If(p.Value Is Nothing, String.Empty, p.Value.ToString()).Trim()
+                        Dim t As String = typesList(i)
+                        Dim range As Tuple(Of Integer, Integer) = rangesList(i)
+                        Dim dispList = optsDisplayList(i)
+                        Dim codeList = optsCodeList(i)
+
+                        Dim paramValue As String
+
+                        If TypeOf p.Value Is Boolean Then
+                            paramValue = CType(p.Value, Boolean).ToString().ToLowerInvariant()
+                        Else
+                            ' Numeric clamping when applicable
+                            If (t = "integer" OrElse t = "long" OrElse t = "double") AndAlso range IsNot Nothing Then
+                                Dim num As Double
+                                If Double.TryParse(rawValue, Globalization.NumberStyles.Float Or Globalization.NumberStyles.AllowThousands, Globalization.CultureInfo.InvariantCulture, num) Then
+                                    num = System.Math.Max(range.Item1, System.Math.Min(range.Item2, num))
+                                    If t = "integer" OrElse t = "long" Then
+                                        rawValue = CInt(System.Math.Round(num)).ToString(Globalization.CultureInfo.InvariantCulture)
+                                    Else
+                                        rawValue = num.ToString(Globalization.CultureInfo.InvariantCulture)
+                                    End If
+                                End If
+                            End If
+
+                            ' Display → code mapping when list exists
+                            If dispList IsNot Nothing Then
+                                Dim idx As Integer = dispList.IndexOf(rawValue)
+                                If idx >= 0 AndAlso idx < codeList.Count Then
+                                    paramValue = UnHideEscape(codeList(idx))
+                                Else
+                                    paramValue = UnHideEscape(rawValue)
+                                End If
+
+                                Dim lower = paramValue.ToLowerInvariant()
+                                If lower.StartsWith("(keine auswahl)") OrElse lower.StartsWith("(no selection)") OrElse paramValue.StartsWith("---") Then
+                                    paramValue = ""
+                                End If
+                            Else
+                                Dim rvLower As String = rawValue.ToLowerInvariant()
+                                If rvLower.StartsWith("(keine auswahl)") OrElse rvLower.StartsWith("(no selection)") OrElse rawValue.StartsWith("---") Then
+                                    rawValue = ""
+                                End If
+                                paramValue = UnHideEscape(rawValue)
+                            End If
+                        End If
+
+                        ' Prompt passthrough
+                        If p.Name IsNot Nothing AndAlso p.Name.ToLowerInvariant().Contains("prompt") Then
+                            OtherPrompt = UnHideEscape(paramValue)
+                        End If
+
+                        ' Placeholder replacement
+                        INI_Endpoint_2 = INI_Endpoint_2.Replace("{" & "parameter" & (i + 1) & "}", paramValue)
+                        INI_APICall_2 = INI_APICall_2.Replace("{" & "parameter" & (i + 1) & "}", paramValue)
+                        INI_APICall_Object_2 = INI_APICall_Object_2.Replace("{" & "parameter" & (i + 1) & "}", paramValue)
+                    Next
+
+                Else
+                    Return
+                End If
+            End If
+
+            If NoSelectedText Then
+                SelectedText = AlternateText.Trim()
+            Else
+                SelectedText = selection.Text.Trim()
+            End If
+
+            If runQueryAssistant And Not NoSelectedText Then
+
+                Dim querytext As String = Await LLM(SP_QueryPrompt, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>", "", "", 0, False)
+
+                querytext = SLib.ShowCustomInputBox("This prompt has been generated based on your selection; modify it as you wish:", $"{AN} Query Assistant", False, querytext.Trim()).Trim()
+                If String.IsNullOrWhiteSpace(querytext) OrElse querytext.ToLower() = "esc" Then
+                    Return
+                End If
+                SelectedText = querytext.Trim()
+
+            End If
+
+            Dim llmresult As String = Await LLM(OtherPrompt, SelectedText, "", "", 0, True)
+
+            SP_MergePrompt_Cached = SP_MergePrompt
+
+            If Not String.IsNullOrWhiteSpace(llmresult) Then
+                If OptionChecked Then
+
+                    Dim ClipPaneText1 As String = "Your service has provided the following result (you can edit it):"
+                    Dim ClipText2 As String = "You can choose whether you want to have the original text put into the clipboard or your text with any changes you have made (without formatting), or you can directly insert the original text in your document. If you select Cancel, nothing will be put into the clipboard."
+
+                    If DoPane Then
+
+                        If _uiContext IsNot Nothing Then  ' Make sure we run in the UI Thread
+                            _uiContext.Post(Sub(s)
+
+                                                ShowPaneAsync(
+                                        ClipPaneText1,
+                                        llmresult,
+                                        "",
+                                        AN,
+                                        noRTF:=False,
+                                        insertMarkdown:=True
+                                        )
+                                            End Sub, Nothing)
+                        Else
+
+                            ShowPaneAsync(ClipPaneText1, llmresult, "", AN, noRTF:=False, insertMarkdown:=True)
+
+                        End If
+
+                    Else
+
+                        Dim dialogResult As String = ""
+
+                        If _uiContext IsNot Nothing Then
+                            Dim doneEvent As New ManualResetEventSlim(False)            ' Make sure we run in the UI Thread
+
+                            _uiContext.Post(Sub(state)
+                                                Try
+
+                                                    Dim wordHwnd As IntPtr = GetWordMainWindowHandle()
+
+                                                    dialogResult = ShowCustomWindow(ClipPaneText1,
+                                                                            llmresult,
+                                                                            ClipText2,
+                                                                            AN,
+                                                                            NoRTF:=False,
+                                                                            Getfocus:=False,
+                                                                            InsertMarkdown:=True,
+                                                                            TransferToPane:=True,
+                                                                            parentWindowHwnd:=wordHwnd)
+
+                                                    If dialogResult <> "" And dialogResult <> "Pane" Then
+                                                        If dialogResult = "Markdown" Then
+
+                                                            Dim NewDocChoice As Integer = ShowCustomYesNoBox("Do you want to insert the text into a new Word document (if you cancel, it will be in the clipboard with formatting)?", "Yes, new", "No, into my existing doc")
+
+                                                            If NewDocChoice = 1 Then
+                                                                Dim newDoc As Word.Document = Globals.ThisAddIn.Application.Documents.Add()
+                                                                Dim currentSelection As Word.Selection = newDoc.Application.Selection
+                                                                currentSelection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                                                                InsertTextWithMarkdown(currentSelection, llmresult, True, True)
+                                                                Dim pattern As String = "\{\{(WFLD|WENT|WFNT):.*?\}\}"
+                                                                If Regex.IsMatch(llmresult, pattern) Then
+                                                                    Dim rng As Range = wordApp.currentSelection.Range
+                                                                    RestoreSpecialTextElements(rng)
+                                                                    rng.Document.Fields.Update()
+                                                                End If
+
+
+                                                            ElseIf NewDocChoice = 2 Then
+                                                                Globals.ThisAddIn.Application.Selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                                                                Globals.ThisAddIn.Application.Selection.TypeParagraph()
+                                                                InsertTextWithMarkdown(Globals.ThisAddIn.Application.Selection, vbCrLf & llmresult, False)
+                                                                Dim pattern As String = "\{\{(WFLD|WENT|WFNT):.*?\}\}"
+                                                                If Regex.IsMatch(llmresult, pattern) Then
+                                                                    Dim rng As Range = wordApp.Selection.Range
+                                                                    RestoreSpecialTextElements(rng)
+                                                                    rng.Document.Fields.Update()
+                                                                End If
+
+                                                            Else
+                                                                ShowCustomMessageBox("No text was inserted (but included in the clipboard as RTF).")
+                                                                SLib.PutInClipboard(MarkdownToRtfConverter.Convert((llmresult)))
+                                                            End If
+
+                                                        Else
+                                                            SLib.PutInClipboard(dialogResult)
+                                                        End If
+                                                    ElseIf dialogResult = "Pane" Then
+
+                                                        ShowPaneAsync(
+                                                                            ClipPaneText1,
+                                                                            llmresult,
+                                                                            "",
+                                                                            AN,
+                                                                            noRTF:=False,
+                                                                            insertMarkdown:=True
+                                                                            )
+                                                    End If
+
+                                                Finally
+                                                    doneEvent.Set()
+                                                End Try
+                                            End Sub, Nothing)
+                            ' doneEvent.Wait()
+
+                        Else
+                            dialogResult = ShowCustomWindow(
+                                            ClipPaneText1,
+                                            llmresult,
+                                            ClipText2,
+                                            AN,
+                                            NoRTF:=False,
+                                            Getfocus:=False,
+                                            InsertMarkdown:=True,
+                                            TransferToPane:=True)
+
+                            If dialogResult <> "" And dialogResult <> "Pane" Then
+                                If dialogResult = "Markdown" Then
+                                    Dim NewDocChoice As Integer = ShowCustomYesNoBox("Do you want to insert the text into a new Word document (if you cancel, it will be in the clipboard with formatting)?", "Yes, new", "No, into my existing doc")
+
+                                    If NewDocChoice = 1 Then
+                                        Dim newDoc As Word.Document = Globals.ThisAddIn.Application.Documents.Add()
+                                        Dim currentSelection As Word.Selection = newDoc.Application.Selection
+                                        currentSelection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                                        InsertTextWithMarkdown(currentSelection, llmresult, True, True)
+                                        Dim pattern As String = "\{\{(WFLD|WENT|WFNT):.*?\}\}"
+                                        If Regex.IsMatch(llmresult, pattern) Then
+                                            Dim rng As Range = wordApp.currentselection.Range
+                                            RestoreSpecialTextElements(rng)
+                                            rng.Document.Fields.Update()
+                                        End If
+
+                                    ElseIf NewDocChoice = 2 Then
+                                        Globals.ThisAddIn.Application.Selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                                        Globals.ThisAddIn.Application.Selection.TypeParagraph()
+                                        InsertTextWithMarkdown(Globals.ThisAddIn.Application.Selection, vbCrLf & llmresult, False)
+                                        Dim pattern As String = "\{\{(WFLD|WENT|WFNT):.*?\}\}"
+                                        If Regex.IsMatch(llmresult, pattern) Then
+                                            Dim rng As Range = wordApp.Selection.Range
+                                            RestoreSpecialTextElements(rng)
+                                            rng.Document.Fields.Update()
+                                        End If
+
+                                    Else
+                                        ShowCustomMessageBox("No text was inserted (but included in the clipboard as RTF).")
+                                        SLib.PutInClipboard(MarkdownToRtfConverter.Convert((llmresult)))
+                                    End If
+                                Else
+                                    SLib.PutInClipboard(dialogResult)
+                                End If
+                            ElseIf dialogResult = "Pane" Then
+
+                                ShowPaneAsync(
+                                                    ClipPaneText1,
+                                                    llmresult,
+                                                    "",
+                                                    AN,
+                                                    noRTF:=False,
+                                                    insertMarkdown:=True
+                                                    )
+                            End If
+
+                        End If
+
+                    End If
+                Else
+                    Globals.ThisAddIn.Application.Selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                    Globals.ThisAddIn.Application.Selection.TypeParagraph()
+                    Globals.ThisAddIn.Application.Selection.TypeParagraph()
+                    InsertTextWithMarkdown(Globals.ThisAddIn.Application.Selection, llmresult, False)
+                    Dim pattern As String = "\{\{(WFLD|WENT|WFNT):.*?\}\}"
+                    If Regex.IsMatch(llmresult, pattern) Then
+                        Dim rng As Range = wordApp.Selection.Range
+                        RestoreSpecialTextElements(rng)
+                        rng.Document.Fields.Update()
+                    End If
+                End If
+            End If
+
+        Catch ex As System.Exception
+            MessageBox.Show("Error in SpecialModel: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        Finally
+            If originalConfig IsNot Nothing Then
+                RestoreDefaults(_context, originalConfig)
+            End If
+            originalConfigLoaded = False
+        End Try
+    End Sub
+
+
+
+
+    Public Async Sub oldSpecialModel()
+        Try
+            If INILoadFail() Then Return
+
+            Dim DoPane As Boolean = True
+            Dim NoSelectedText As Boolean = False
+            Dim AlternateText As String = ""
 
             If String.IsNullOrWhiteSpace(INI_SpecialServicePath) Then
                 ShowCustomMessageBox("No special service path is configured.")
@@ -4470,16 +4954,22 @@ Public Class ThisAddIn
             Dim selection As Word.Selection = application.Selection
 
             If selection.Type = Word.WdSelectionType.wdSelectionIP Then
-                ShowCustomMessageBox("Please select the text to be processed.")
-                Return
+                'ShowCustomMessageBox("Please select the text to be processed.")
+                'Return
+                AlternateText = ShowCustomInputBox("Provide the text for querying the special service (since you have not selected any text):", $"{AN} Special Service", False)
+                NoSelectedText = True
+                If AlternateText = "ESC" Or AlternateText.Trim() = "" Then
+                    Return
+                End If
             End If
 
             OptionChecked = False
 
-            If Not ShowModelSelection(_context, INI_SpecialServicePath, "Special Service", "Select the special service you want to query:", "Output in a pane (not directly in the document)", 2) Then
+            If Not ShowModelSelection(_context, INI_SpecialServicePath, "Special Service", "Select the special service you want To query:", "Output in a pane (not directly in the document)", 2) Then
                 originalConfigLoaded = False
                 Return
             End If
+
 
             Dim iniValues() As String = {HideEscape(INI_Model_Parameter1), HideEscape(INI_Model_Parameter2), HideEscape(INI_Model_Parameter3), HideEscape(INI_Model_Parameter4)}
             Dim parameterDefs As New List(Of SharedLibrary.SharedLibrary.SharedMethods.InputParameter)()
@@ -4487,6 +4977,7 @@ Public Class ThisAddIn
             Dim rangesList As New List(Of Tuple(Of Integer, Integer))()
             Dim optsDisplayList As New List(Of List(Of String))()
             Dim optsCodeList As New List(Of List(Of String))()
+
 
             For Each raw As String In iniValues
                 If String.IsNullOrWhiteSpace(raw) Then Continue For
@@ -4600,8 +5091,8 @@ Public Class ThisAddIn
 
                     Dim loopCount As Integer = parameters.Length
 
-                    ' Wenn es einen SP_QueryPrompt gibt, ist der letzte Parameter unser Boolean-Flag
-                    If Not String.IsNullOrWhiteSpace(SP_QueryPrompt) Then
+                    ' Wenn es einen SP_QueryPrompt gibt, ist der letzte Parameter unser Boolean-Flag, aber nicht, wenn kein Text angewählt wurde
+                    If Not String.IsNullOrWhiteSpace(SP_QueryPrompt) AndAlso Not NoSelectedText Then
                         Dim lastParam = parameters(parameters.Length - 1)
                         If TypeOf lastParam.Value Is System.Boolean Then
                             runQueryAssistant = CType(lastParam.Value, System.Boolean)
@@ -4609,7 +5100,7 @@ Public Class ThisAddIn
                         End If
                     End If
 
-                    ' === NEU: Werte auslesen mit Range-Clamping und Mapping ===
+                    ' === Werte auslesen mit Range-Clamping und Mapping ===
                     For i As Integer = 0 To loopCount - 1
                         Dim p As SharedLibrary.SharedLibrary.SharedMethods.InputParameter = parameters(i)
                         Dim rawValue As String = p.Value.ToString().Trim()
@@ -4683,9 +5174,13 @@ Public Class ThisAddIn
                 End If
             End If
 
-            SelectedText = selection.Text.Trim()
+            If NoSelectedText Then
+                SelectedText = AlternateText.Trim()
+            Else
+                SelectedText = selection.Text.Trim()
+            End If
 
-            If runQueryAssistant Then
+            If runQueryAssistant And Not NoSelectedText Then
 
                 Dim querytext As String = Await LLM(SP_QueryPrompt, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>", "", "", 0, False)
 
@@ -4947,10 +5442,13 @@ Public Class ThisAddIn
             Dim DoSlides As Boolean = False
             Dim DoMyStyle As Boolean = False
             Dim DoMultiModel As Boolean = True
+            Dim DoBubblesExtract As Boolean = False
+            Dim DoPushback As Boolean = False
 
             Dim MarkupInstruct As String = $"start With '{MarkupPrefixAll}' for markups"
             Dim InplaceInstruct As String = $"with '{InPlacePrefix}'/'{AddPrefix} for replacing/adding to the selection"
             Dim BubblesInstruct As String = $"with '{BubblesPrefix}' for having your text commented"
+            Dim PushbackInstruct As String = $"with '{PushbackPrefix}' for responding to comments only"
             Dim SlidesInstruct As String = $"with '{SlidesPrefix}' for adding to a Powerpoint file"
             Dim ClipboardInstruct As String = $"with '{ClipboardPrefix}', '{NewdocPrefix}' or '{PanePrefix}' for separate output"
             Dim PromptLibInstruct As String = If(INI_PromptLib, " or press 'OK' for the prompt library", "")
@@ -4963,6 +5461,7 @@ Public Class ThisAddIn
             Dim NetInstruct As String = $"; add '{NetTrigger}' for internet search"
             Dim PureInstruct As String = $"; use '{PurePrefix}' for direct prompting"
             Dim ChunkInstruct As String = $"; add '{ChunkTrigger}' for iterating through the text"
+            Dim BubblesExtractInstruct As String = $"; add '{BubblesExtractTrigger}' for including bubble comments"
             Dim ObjectInstruct As String = $"; add '{ObjectTrigger}'/'{ObjectTrigger2}' for adding a file object"
             Dim MultiModelInstruct As String = $"; add '{MultiModelTrigger}' for multiple models"
             Dim LastPromptInstruct As String = If(String.IsNullOrWhiteSpace(My.Settings.LastPrompt), "", "; Ctrl-P for your last prompt")
@@ -4980,6 +5479,7 @@ Public Class ThisAddIn
                 AddOnInstruct += NoFormatInstruct.Replace("; add", ", ")
                 AddOnInstruct += TPMarkupInstruct.Replace("; add", ", ")
                 AddOnInstruct += ChunkInstruct.Replace("; add", ", ")
+                AddOnInstruct += BubblesExtractInstruct.Replace("; add", ", ")
             End If
             If INI_Lib Then
                 AddOnInstruct += LibInstruct.Replace("; add", ",")
@@ -5019,7 +5519,7 @@ Public Class ThisAddIn
                             System.Tuple.Create("OK, do a markup", $"Use this to automatically insert '{MarkupPrefixDiff}' as a prefix.", MarkupPrefixDiff)
                         }
 
-                    OtherPrompt = SLib.ShowCustomInputBox($"Please provide the prompt you wish to execute on the selected text ({MarkupInstruct}, {ClipboardInstruct}, {InplaceInstruct}, {BubblesInstruct} or {SlidesInstruct}){PromptLibInstruct}{ExtInstruct}{AddOnInstruct}{PureInstruct}{LastPromptInstruct}:", $"{AN} Freestyle (using " & If(UseSecondAPI, INI_Model_2, INI_Model) & ")", False, "", My.Settings.LastPrompt, OptionalButtons).Trim()
+                    OtherPrompt = SLib.ShowCustomInputBox($"Please provide the prompt you wish to execute on the selected text ({MarkupInstruct}, {ClipboardInstruct}, {InplaceInstruct}, {BubblesInstruct}, {PushbackInstruct} or {SlidesInstruct}){PromptLibInstruct}{ExtInstruct}{AddOnInstruct}{PureInstruct}{LastPromptInstruct}:", $"{AN} Freestyle (using " & If(UseSecondAPI, INI_Model_2, INI_Model) & ")", False, "", My.Settings.LastPrompt, OptionalButtons).Trim()
                 Else
                     Dim OptionalButtons As System.Tuple(Of String, String, String)() = {
                             System.Tuple.Create("OK, use window", $"Use this to automatically insert '{ClipboardPrefix}' as a prefix.", ClipboardPrefix),
@@ -5039,7 +5539,7 @@ Public Class ThisAddIn
 
                 SelectedText = selection.Text
 
-                If OtherPrompt.StartsWith("codebasis", StringComparison.OrdinalIgnoreCase) Then
+                If String.Equals(OtherPrompt.Trim(), "codebasis", StringComparison.OrdinalIgnoreCase) Then
                     SLib.WriteToRegistry(RemoveCR(RegPath_CodeBasis), RemoveCR(selection.Text))
                     selection.Range.Collapse(Direction:=Word.WdCollapseDirection.wdCollapseEnd)
                     Return
@@ -5049,7 +5549,7 @@ Public Class ThisAddIn
                     selection.Range.Collapse(Direction:=Word.WdCollapseDirection.wdCollapseEnd)
                     Return
                 End If
-                If OtherPrompt.StartsWith("encode", StringComparison.OrdinalIgnoreCase) Then
+                If String.Equals(OtherPrompt.Trim(), "encode", StringComparison.OrdinalIgnoreCase) Then
                     Dim Key As String = CodeAPIKey(RemoveCR(selection.Text))
                     SLib.PutInClipboard(Key)
                     selection.Range.Collapse(Direction:=Word.WdCollapseDirection.wdCollapseEnd)
@@ -5059,7 +5559,7 @@ Public Class ThisAddIn
                     Return
                 End If
 
-                If OtherPrompt.StartsWith("decode", StringComparison.OrdinalIgnoreCase) Then
+                If String.Equals(OtherPrompt.Trim(), "decode", StringComparison.OrdinalIgnoreCase) Then
                     Dim Key As String = DeCodeAPIKey(RemoveCR(selection.Text))
                     SLib.PutInClipboard(Key)
                     selection.Range.Collapse(Direction:=Word.WdCollapseDirection.wdCollapseEnd)
@@ -5075,24 +5575,24 @@ Public Class ThisAddIn
                 End If
 
             End If
-        If OtherPrompt.StartsWith("domain", StringComparison.OrdinalIgnoreCase) Then
-            ShowCustomMessageBox($"{AN} is running in the domain '{GetDomain()}' and configured to run in {If(String.IsNullOrEmpty(SLib.alloweddomains), "any domain ('alloweddomains' has not been set).", "'" & SLib.alloweddomains & "'.")}", "")
-            Return
-        End If
-        If OtherPrompt.StartsWith("model", StringComparison.OrdinalIgnoreCase) Then
-            ShowCustomMessageBox("I am using the " & INI_Model & " model as my primary model with a default timeout of " & (INI_Timeout / 1000) & " seconds (" & Microsoft.VisualBasic.Strings.Format(INI_Timeout / 60000, "0.00") & " minutes)." & If(INI_MaxOutputToken > 0, "The maximum output token length is " & INI_MaxOutputToken & ".", ""))
-            Return
-        End If
-        If OtherPrompt.StartsWith("terms", StringComparison.OrdinalIgnoreCase) Then
-            selection.Range.Collapse(Direction:=Word.WdCollapseDirection.wdCollapseEnd)
-            selection.TypeText(vbCrLf & If(INI_UsageRestrictions = "", "No usage restrictions or permissions have been defined in the configuration file.", "The defined usage restrictions or permissions defined in the configuration file are: " & INI_UsageRestrictions) & vbCrLf)
-            Return
-        End If
-        If OtherPrompt.StartsWith("anonymize", StringComparison.OrdinalIgnoreCase) Then
-            Call AnonymizeSelection()
-            Return
-        End If
-        If OtherPrompt.StartsWith("insertclipboard", StringComparison.OrdinalIgnoreCase) OrElse OtherPrompt.StartsWith("insertclip", StringComparison.OrdinalIgnoreCase) Then
+            If String.Equals(OtherPrompt.Trim(), "domain", StringComparison.OrdinalIgnoreCase) Then
+                ShowCustomMessageBox($"{AN} is running in the domain '{GetDomain()}' and configured to run in {If(String.IsNullOrEmpty(SLib.alloweddomains), "any domain ('alloweddomains' has not been set).", "'" & SLib.alloweddomains & "'.")}", "")
+                Return
+            End If
+            If String.Equals(OtherPrompt.Trim(), "model", StringComparison.OrdinalIgnoreCase) Then
+                ShowCustomMessageBox("I am using the " & INI_Model & " model as my primary model with a default timeout of " & (INI_Timeout / 1000) & " seconds (" & Microsoft.VisualBasic.Strings.Format(INI_Timeout / 60000, "0.00") & " minutes)." & If(INI_MaxOutputToken > 0, "The maximum output token length is " & INI_MaxOutputToken & ".", ""))
+                Return
+            End If
+            If String.Equals(OtherPrompt.Trim(), "terms", StringComparison.OrdinalIgnoreCase) Then
+                selection.Range.Collapse(Direction:=Word.WdCollapseDirection.wdCollapseEnd)
+                selection.TypeText(vbCrLf & If(INI_UsageRestrictions = "", "No usage restrictions or permissions have been defined in the configuration file.", "The defined usage restrictions or permissions defined in the configuration file are: " & INI_UsageRestrictions) & vbCrLf)
+                Return
+            End If
+            If String.Equals(OtherPrompt.Trim(), "anonymize", StringComparison.OrdinalIgnoreCase) Then
+                AnonymizeSelection()
+                Return
+            End If
+            If OtherPrompt.StartsWith("insertclipboard", StringComparison.OrdinalIgnoreCase) OrElse OtherPrompt.StartsWith("insertclip", StringComparison.OrdinalIgnoreCase) Then
             Call InsertClipboard()
             Return
         End If
@@ -5134,13 +5634,18 @@ Public Class ThisAddIn
         End If
 
 
-        If OtherPrompt.StartsWith("webagent", StringComparison.OrdinalIgnoreCase) Then
-            WebAgent()
-            Return
-        End If
+            If String.Equals(OtherPrompt.Trim(), "webagent", StringComparison.OrdinalIgnoreCase) Then
+                WebAgent()
+                Return
+            End If
+
+            If String.Equals(OtherPrompt.Trim(), "findhiddenprompts", StringComparison.OrdinalIgnoreCase) Then
+                FindHiddenPrompts()
+                Return
+            End If
 
 
-        If OtherPrompt.StartsWith("redinktest", StringComparison.OrdinalIgnoreCase) Then
+            If OtherPrompt.StartsWith("redinktest", StringComparison.OrdinalIgnoreCase) Then
 
             Dim desktopPath As String = Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
             Dim filePath As String = System.IO.Path.Combine(desktopPath, "redinktest.txt")
@@ -5180,38 +5685,38 @@ Public Class ThisAddIn
         End If
 
 
-        If OtherPrompt.StartsWith("switch", StringComparison.OrdinalIgnoreCase) Then
-            selection.Range.Collapse(Direction:=Word.WdCollapseDirection.wdCollapseEnd)
-            If INI_SecondAPI Then
-                SwitchModels(_context)
-                ShowCustomMessageBox("You have temporarily switched the two configured models. Primary is now '" & INI_Model & "', and secondary is '" & INI_Model_2 & "'.")
-            Else
-                ShowCustomMessageBox("You have defined only one model ('" & INI_Model & "').")
+            If String.Equals(OtherPrompt.Trim(), "switch", StringComparison.OrdinalIgnoreCase) Then
+                selection.Range.Collapse(Direction:=Word.WdCollapseDirection.wdCollapseEnd)
+                If INI_SecondAPI Then
+                    SwitchModels(_context)
+                    ShowCustomMessageBox("You have temporarily switched the two configured models. Primary is now '" & INI_Model & "', and secondary is '" & INI_Model_2 & "'.")
+                Else
+                    ShowCustomMessageBox("You have defined only one model ('" & INI_Model & "').")
+                End If
+                Return
             End If
-            Return
-        End If
-        If OtherPrompt.StartsWith("version", StringComparison.OrdinalIgnoreCase) Then
-            ShowCustomMessageBox("You are using " & Version & $" of {AN}. (c) by David Rosenthal, VISCHER. Go to https://vischer.com/{AN2} for more information. This copy of {AN} is set to expire on {LicensedTill.ToString("dd-MMM-yyyy")}", AN)
-            Return
-        End If
-        If OtherPrompt.StartsWith("reset", StringComparison.OrdinalIgnoreCase) Then
-            If ShowCustomYesNoBox($"Do you really want to reset your local configuration file and settings (if any) by removing non-mandatory entries? The current configuration file '{AN2}.ini' will NOT be saved to a '.bak' file. If you only want to reload the configuration settings for giving up any temporary changes, use 'reload' instead.", "Yes", "No") = 1 Then
-                INIloaded = False
-                ResetLocalAppConfig(_context)
-                MenusAdded = False
-                AddContextMenu()
-                ShowCustomMessageBox($"Following the reset, the configuration file '{AN2}.ini' has been be reloaded.")
+            If String.Equals(OtherPrompt.Trim(), "version", StringComparison.OrdinalIgnoreCase) Then
+                ShowCustomMessageBox("You are using " & Version & $" of {AN}. (c) by David Rosenthal, VISCHER. Go to https://vischer.com/{AN2} for more information. This copy of {AN} is set to expire on {LicensedTill.ToString("dd-MMM-yyyy")}", AN)
+                Return
             End If
-            Return
-        End If
+            If String.Equals(OtherPrompt.Trim(), "reset", StringComparison.OrdinalIgnoreCase) Then
+                If ShowCustomYesNoBox($"Do you really want to reset your local configuration file and settings (if any) by removing non-mandatory entries? The current configuration file '{AN2}.ini' will NOT be saved to a '.bak' file. If you only want to reload the configuration settings for giving up any temporary changes, use 'reload' instead.", "Yes", "No") = 1 Then
+                    INIloaded = False
+                    ResetLocalAppConfig(_context)
+                    MenusAdded = False
+                    AddContextMenu()
+                    ShowCustomMessageBox($"Following the reset, the configuration file '{AN2}.ini' has been be reloaded.")
+                End If
+                Return
+            End If
 
-        If OtherPrompt.StartsWith("speech", StringComparison.OrdinalIgnoreCase) Then
-            Transcriptor()
-            Return
+            If String.Equals(OtherPrompt.Trim(), "speech", StringComparison.OrdinalIgnoreCase) Then
+                Transcriptor()
+                Return
 
-        End If
+            End If
 
-        If OtherPrompt.StartsWith("readlocal", StringComparison.OrdinalIgnoreCase) Then
+            If OtherPrompt.StartsWith("readlocal", StringComparison.OrdinalIgnoreCase) Then
             SpeakSelectedText()
             Return
 
@@ -5261,33 +5766,33 @@ Public Class ThisAddIn
             Return
         End If
 
-        If OtherPrompt.StartsWith("voices", StringComparison.OrdinalIgnoreCase) Then
-            Using frm As New TTSSelectionForm("Select the voices you wish to use.", $"{AN} Text-to-Speech - Select Voices", False) ' TTSSelectionForm(_context, INI_OAuth2ClientMail, INI_OAuth2Scopes, INI_APIKey, INI_OAuth2Endpoint, INI_OAuth2ATExpiry, "Select the voices you wish to use.", $"{AN} Text-to-Speech - Select Voices", False)
-                If frm.ShowDialog() = DialogResult.OK Then
-                    ' Retrieve selected voices
-                    Dim selectedVoices As List(Of String) = frm.SelectedVoices
-                    Dim outputPath As String = frm.SelectedOutputPath
-                    ' Use the selected values
-                    If selectedVoices.Count > 0 Then
-                        MessageBox.Show("Selected Voice(s): " & String.Join(", ", selectedVoices))
+            If String.Equals(OtherPrompt.Trim(), "voices", StringComparison.OrdinalIgnoreCase) Then
+                Using frm As New TTSSelectionForm("Select the voices you wish to use.", $"{AN} Text-to-Speech - Select Voices", False) ' TTSSelectionForm(_context, INI_OAuth2ClientMail, INI_OAuth2Scopes, INI_APIKey, INI_OAuth2Endpoint, INI_OAuth2ATExpiry, "Select the voices you wish to use.", $"{AN} Text-to-Speech - Select Voices", False)
+                    If frm.ShowDialog() = DialogResult.OK Then
+                        ' Retrieve selected voices
+                        Dim selectedVoices As List(Of String) = frm.SelectedVoices
+                        Dim outputPath As String = frm.SelectedOutputPath
+                        ' Use the selected values
+                        If selectedVoices.Count > 0 Then
+                            MessageBox.Show("Selected Voice(s): " & String.Join(", ", selectedVoices))
+                        Else
+                            MessageBox.Show("No voices selected.")
+                        End If
+
+                        If outputPath = "" Then
+                            MessageBox.Show("Temporary output selected.")
+                        Else
+                            MessageBox.Show("Output path: " & outputPath)
+                        End If
                     Else
-                        MessageBox.Show("No voices selected.")
+                        MessageBox.Show("Voice selection was cancelled.")
                     End If
+                End Using
 
-                    If outputPath = "" Then
-                        MessageBox.Show("Temporary output selected.")
-                    Else
-                        MessageBox.Show("Output path: " & outputPath)
-                    End If
-                Else
-                    MessageBox.Show("Voice selection was cancelled.")
-                End If
-            End Using
+                Return
+            End If
 
-            Return
-        End If
-
-        If OtherPrompt.StartsWith("doccheck", StringComparison.OrdinalIgnoreCase) Then
+            If OtherPrompt.StartsWith("doccheck", StringComparison.OrdinalIgnoreCase) Then
             RunDocCheck()
             Return
         End If
@@ -5313,12 +5818,12 @@ Public Class ThisAddIn
             Return
         End If
 
-        If OtherPrompt.StartsWith("read", StringComparison.OrdinalIgnoreCase) Then
-            CreateAudio()
-            Return
-        End If
+            If String.Equals(OtherPrompt.Trim(), "read", StringComparison.OrdinalIgnoreCase) Then
+                CreateAudio()
+                Return
+            End If
 
-        If OtherPrompt.StartsWith("cleanmenu", StringComparison.OrdinalIgnoreCase) Then
+            If OtherPrompt.StartsWith("cleanmenu", StringComparison.OrdinalIgnoreCase) Then
             RemoveOldContextMenu()
             RemoveVeryOldContextMenu()
             MenusAdded = False
@@ -5326,26 +5831,26 @@ Public Class ThisAddIn
             Return
         End If
 
-        If OtherPrompt.StartsWith("reload", StringComparison.OrdinalIgnoreCase) Then
-            INIloaded = False
-            InitializeConfig(False, True)
-            MenusAdded = False
-            AddContextMenu()
-            ShowCustomMessageBox($"The configuration file '{AN2}.ini' has been be reloaded.")
-            Return
-        End If
-        If OtherPrompt.StartsWith("settings", StringComparison.OrdinalIgnoreCase) Then
-            ShowSettings()
-            Return
-        End If
+            If String.Equals(OtherPrompt.Trim(), "reload", StringComparison.OrdinalIgnoreCase) Then
+                INIloaded = False
+                InitializeConfig(False, True)
+                MenusAdded = False
+                AddContextMenu()
+                ShowCustomMessageBox($"The configuration file '{AN2}.ini' has been be reloaded.")
+                Return
+            End If
+            If String.Equals(OtherPrompt.Trim(), "settings", StringComparison.OrdinalIgnoreCase) Then
+                ShowSettings()
+                Return
+            End If
 
-        If String.IsNullOrEmpty(OtherPrompt) And OtherPrompt <> "ESC" And INI_PromptLib Then
+            If String.IsNullOrEmpty(OtherPrompt) And OtherPrompt <> "ESC" And INI_PromptLib Then
 
             Dim promptlibresult As (String, Boolean, Boolean, Boolean)
 
-            promptlibresult = ShowPromptSelector(INI_PromptLibPath, Not NoText, Not NoText)
+                promptlibresult = ShowPromptSelector(INI_PromptLibPath, INI_PromptLibPathLocal, Not NoText, Not NoText)
 
-            OtherPrompt = promptlibresult.Item1
+                OtherPrompt = promptlibresult.Item1
             DoMarkup = promptlibresult.Item2
             DoBubbles = promptlibresult.Item3
             DoClipboard = promptlibresult.Item4
@@ -5387,9 +5892,18 @@ Public Class ThisAddIn
             DoChunks = True
         End If
 
-        ' Formatting Trigger
+            If OtherPrompt.IndexOf(BubblesExtractTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
+                OtherPrompt = OtherPrompt.Replace(BubblesExtractTrigger, "").Trim()
+                DoBubblesExtract = True
+                If DoChunks Then
+                    ShowCustomMessageBox($"The '{BubblesExtractTrigger}' option cannot be used together with '{ChunkTrigger}' - the bubble comments will not be extracted.")
+                    DoBubblesExtract = False
+                End If
+            End If
 
-        If OtherPrompt.IndexOf(NoFormatTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
+            ' Formatting Trigger
+
+            If OtherPrompt.IndexOf(NoFormatTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
             OtherPrompt = OtherPrompt.Replace(NoFormatTrigger, "").Trim()
             KeepFormatCap = 1
         End If
@@ -5442,62 +5956,71 @@ Public Class ThisAddIn
             OtherPrompt = Regex.Replace(OtherPrompt, pattern, String.Empty, RegexOptions.IgnoreCase)
         End If
 
-        If OtherPrompt.StartsWith(ClipboardPrefix, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(ClipboardPrefix.Length).Trim()
-            DoClipboard = True
-            DoChunks = False
-        ElseIf OtherPrompt.StartsWith(ClipboardPrefix2, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(ClipboardPrefix2.Length).Trim()
-            DoClipboard = True
-            DoChunks = False
-        ElseIf OtherPrompt.StartsWith(NewdocPrefix, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(NewdocPrefix.Length).Trim()
-            DoClipboard = True
-            DoChunks = False
-            DoNewDoc = True
-        ElseIf OtherPrompt.StartsWith(BubblesPrefix, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(BubblesPrefix.Length).Trim()
-            DoBubbles = True
-        ElseIf OtherPrompt.StartsWith(SlidesPrefix, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(SlidesPrefix.Length).Trim()
-            DoSlides = True
-            DoClipboard = True
-            DoChunks = False
-        ElseIf OtherPrompt.StartsWith(InPlacePrefix, StringComparison.OrdinalIgnoreCase) And Not NoText Then
-            OtherPrompt = OtherPrompt.Substring(InPlacePrefix.Length).Trim()
-            DoInplace = True
-        ElseIf OtherPrompt.StartsWith(AddPrefix, StringComparison.OrdinalIgnoreCase) And Not NoText Then
-            OtherPrompt = OtherPrompt.Substring(AddPrefix.Length).Trim()
-            DoInplace = False
-        ElseIf OtherPrompt.StartsWith(AddPrefix2, StringComparison.OrdinalIgnoreCase) And Not NoText Then
-            OtherPrompt = OtherPrompt.Substring(AddPrefix2.Length).Trim()
-            DoInplace = False
-        ElseIf OtherPrompt.StartsWith(MarkupPrefix, StringComparison.OrdinalIgnoreCase) And Not NoText Then
-            OtherPrompt = OtherPrompt.Substring(MarkupPrefix.Length).Trim()
-            DoMarkup = True
-        ElseIf OtherPrompt.StartsWith(MarkupPrefixRegex, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(MarkupPrefixRegex.Length).Trim()
-            DoMarkup = True
-            MarkupMethod = 4
-        ElseIf OtherPrompt.StartsWith(MarkupPrefixWord, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(MarkupPrefixWord.Length).Trim()
-            DoMarkup = True
-            MarkupMethod = 1
-        ElseIf OtherPrompt.StartsWith(MarkupPrefixDiffW, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(MarkupPrefixDiffW.Length).Trim()
-            DoMarkup = True
-            MarkupMethod = 3
-        ElseIf OtherPrompt.StartsWith(MarkupPrefixDiff, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(MarkupPrefixDiff.Length).Trim()
-            DoMarkup = True
-            MarkupMethod = 2
-        ElseIf OtherPrompt.StartsWith(PanePrefix, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(PanePrefix.Length).Trim()
-            DoPane = True
-            DoClipboard = True
-            DoChunks = False
-        End If
-
+            If OtherPrompt.StartsWith(ClipboardPrefix, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(ClipboardPrefix.Length).Trim()
+                DoClipboard = True
+                DoChunks = False
+            ElseIf OtherPrompt.StartsWith(ClipboardPrefix2, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(ClipboardPrefix2.Length).Trim()
+                DoClipboard = True
+                DoChunks = False
+            ElseIf OtherPrompt.StartsWith(NewdocPrefix, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(NewdocPrefix.Length).Trim()
+                DoClipboard = True
+                DoChunks = False
+                DoNewDoc = True
+            ElseIf OtherPrompt.StartsWith(BubblesPrefix, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(BubblesPrefix.Length).Trim()
+                DoBubbles = True
+            ElseIf OtherPrompt.StartsWith(SlidesPrefix, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(SlidesPrefix.Length).Trim()
+                DoSlides = True
+                DoClipboard = True
+                DoChunks = False
+            ElseIf OtherPrompt.StartsWith(InPlacePrefix, StringComparison.OrdinalIgnoreCase) And Not NoText Then
+                OtherPrompt = OtherPrompt.Substring(InPlacePrefix.Length).Trim()
+                DoInplace = True
+            ElseIf OtherPrompt.StartsWith(AddPrefix, StringComparison.OrdinalIgnoreCase) And Not NoText Then
+                OtherPrompt = OtherPrompt.Substring(AddPrefix.Length).Trim()
+                DoInplace = False
+            ElseIf OtherPrompt.StartsWith(AddPrefix2, StringComparison.OrdinalIgnoreCase) And Not NoText Then
+                OtherPrompt = OtherPrompt.Substring(AddPrefix2.Length).Trim()
+                DoInplace = False
+            ElseIf OtherPrompt.StartsWith(MarkupPrefix, StringComparison.OrdinalIgnoreCase) And Not NoText Then
+                OtherPrompt = OtherPrompt.Substring(MarkupPrefix.Length).Trim()
+                DoMarkup = True
+            ElseIf OtherPrompt.StartsWith(MarkupPrefixRegex, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(MarkupPrefixRegex.Length).Trim()
+                DoMarkup = True
+                MarkupMethod = 4
+            ElseIf OtherPrompt.StartsWith(MarkupPrefixWord, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(MarkupPrefixWord.Length).Trim()
+                DoMarkup = True
+                MarkupMethod = 1
+            ElseIf OtherPrompt.StartsWith(MarkupPrefixDiffW, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(MarkupPrefixDiffW.Length).Trim()
+                DoMarkup = True
+                MarkupMethod = 3
+            ElseIf OtherPrompt.StartsWith(MarkupPrefixDiff, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(MarkupPrefixDiff.Length).Trim()
+                DoMarkup = True
+                MarkupMethod = 2
+            ElseIf OtherPrompt.StartsWith(PanePrefix, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(PanePrefix.Length).Trim()
+                DoPane = True
+                DoClipboard = True
+                DoChunks = False
+            ElseIf OtherPrompt.StartsWith(PushbackPrefix, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(PushbackPrefix.Length).Trim()
+                DoPushback = True
+                DoChunks = False
+                DoBubblesExtract = True
+            ElseIf OtherPrompt.StartsWith(PushbackPrefix2, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(PushbackPrefix2.Length).Trim()
+                DoPushback = True
+                DoChunks = False
+                DoBubblesExtract = True
+            End If
 
             If OtherPrompt.IndexOf(NetTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
                 OtherPrompt = OtherPrompt.Replace(NetTrigger, "").Trim()
@@ -5506,7 +6029,7 @@ Public Class ThisAddIn
 
             SelectedAlternateModels = Nothing
             If UseSecondAPI AndAlso Not String.IsNullOrWhiteSpace(INI_AlternateModelPath) AndAlso OtherPrompt.IndexOf(MultiModelTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
-                If Not DoMarkup AndAlso Not DoBubbles AndAlso Not DoSlides Then
+                If Not DoMarkup AndAlso Not DoBubbles AndAlso Not DoPushback AndAlso Not DoSlides Then
                     If Not ShowMultipleModelSelection(_context, INI_AlternateModelPath) OrElse SelectedAlternateModels Is Nothing OrElse SelectedAlternateModels.Count = 0 Then
                         Return
                     End If
@@ -5546,48 +6069,70 @@ Public Class ThisAddIn
             OtherPrompt = Regex.Replace(OtherPrompt, Regex.Escape(AddDocTrigger), "", RegexOptions.IgnoreCase)
         End If
 
-        If Not String.IsNullOrEmpty(OtherPrompt) AndAlso OtherPrompt.IndexOf(ExtTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
-            ' Count total (case-insensitive) occurrences first
-            Dim totalOccurrences As Integer =
+            If Not String.IsNullOrEmpty(OtherPrompt) AndAlso OtherPrompt.IndexOf(ExtTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
+                ' Count total (case-insensitive) occurrences first
+                Dim totalOccurrences As Integer =
                 Regex.Matches(OtherPrompt, Regex.Escape(ExtTrigger), RegexOptions.IgnoreCase).Count
 
-            If totalOccurrences = 1 Then
-                ' Original single-occurrence behavior
-                DragDropFormLabel = ""
-                DragDropFormFilter = ""
-                doc = Await GetFileContent(Nothing, False, Not String.IsNullOrWhiteSpace(INI_APICall_Object))
-                If String.IsNullOrWhiteSpace(doc) Then
-                    ShowCustomMessageBox("The file you have selected is empty or not supported - will abort.")
-                    Return
-                End If
-                OtherPrompt = Regex.Replace(OtherPrompt, Regex.Escape(ExtTrigger), doc, RegexOptions.IgnoreCase)
-                ShowCustomMessageBox($"This file will be included in your prompt where you have referred to {ExtTrigger}: " & vbCrLf & vbCrLf & doc)
-            Else
-                ' Multi-occurrence behavior: prompt separately per placeholder
-                For occurrence As Integer = 1 To totalOccurrences
-                    Dim idx As Integer = OtherPrompt.IndexOf(ExtTrigger, StringComparison.OrdinalIgnoreCase)
-                    If idx < 0 Then Exit For
+                ' Pattern that detects any tag that directly surrounds the placeholder, e.g. <tag>{doc}</tag>
+                Dim wrappedPattern As String =
+                "<(?<name>[A-Za-z][\w\-]*)\b[^>]*>\s*" & Regex.Escape(ExtTrigger) & "\s*</\k<name>>"
 
+                If totalOccurrences = 1 Then
+                    ' Original single-occurrence behavior (now with optional auto-wrapping)
                     DragDropFormLabel = ""
                     DragDropFormFilter = ""
                     doc = Await GetFileContent(Nothing, False, Not String.IsNullOrWhiteSpace(INI_APICall_Object))
                     If String.IsNullOrWhiteSpace(doc) Then
-                        ShowCustomMessageBox($"The file you selected for occurrence #{occurrence} is empty or not supported - will abort.")
+                        ShowCustomMessageBox("The file you have selected is empty or not supported - will abort.")
                         Return
                     End If
 
-                    ' Replace only the first remaining occurrence manually
-                    OtherPrompt = OtherPrompt.Substring(0, idx) &
-                                  doc &
+                    Dim isWrapped As Boolean = Regex.IsMatch(OtherPrompt, wrappedPattern, RegexOptions.IgnoreCase)
+                    Dim replacementText As String = If(isWrapped, doc, $"<document>{doc}</document>")
+
+                    OtherPrompt = Regex.Replace(OtherPrompt, Regex.Escape(ExtTrigger), replacementText, RegexOptions.IgnoreCase)
+                    ShowCustomMessageBox($"This file will be included in your prompt where you have referred to {ExtTrigger}: " & vbCrLf & vbCrLf & doc)
+
+                Else
+                    ' Multi-occurrence behavior: prompt separately per placeholder
+                    For occurrence As Integer = 1 To totalOccurrences
+                        Dim idx As Integer = OtherPrompt.IndexOf(ExtTrigger, StringComparison.OrdinalIgnoreCase)
+                        If idx < 0 Then Exit For
+
+                        DragDropFormLabel = ""
+                        DragDropFormFilter = ""
+                        doc = Await GetFileContent(Nothing, False, Not String.IsNullOrWhiteSpace(INI_APICall_Object))
+                        If String.IsNullOrWhiteSpace(doc) Then
+                            ShowCustomMessageBox($"The file you selected for occurrence #{occurrence} is empty or not supported - will abort.")
+                            Return
+                        End If
+
+                        ' Determine if this particular occurrence is already wrapped by any tag
+                        Dim isWrappedThis As Boolean = False
+                        Dim mcol As MatchCollection = Regex.Matches(OtherPrompt, wrappedPattern, RegexOptions.IgnoreCase)
+                        For Each m As Match In mcol
+                            If idx >= m.Index AndAlso idx < m.Index + m.Length Then
+                                isWrappedThis = True
+                                Exit For
+                            End If
+                        Next
+
+                        Dim replacementText As String =
+                        If(isWrappedThis, doc, $"<document{occurrence}>{doc}</document{occurrence}>")
+
+                        ' Replace only the first remaining occurrence manually
+                        OtherPrompt = OtherPrompt.Substring(0, idx) &
+                                  replacementText &
                                   OtherPrompt.Substring(idx + ExtTrigger.Length)
 
-                    ShowCustomMessageBox($"This file will be included at occurrence #{occurrence} (of {totalOccurrences}) where you used {ExtTrigger}:" &
+                        ShowCustomMessageBox($"This file will be included at occurrence #{occurrence} (of {totalOccurrences}) where you used {ExtTrigger}:" &
                                          vbCrLf & vbCrLf & doc)
-                Next
+                    Next
+                End If
             End If
-        End If
 
-        If DoFileObject Then
+            If DoFileObject Then
             If DoFileObjectClip Then
                 FileObject = "clipboard"
             Else
@@ -5720,20 +6265,20 @@ Public Class ThisAddIn
             End If
         End If
 
-        If Not DoInplace AndAlso DoMarkup Then
-            Dim AppendMarkup As Integer = ShowCustomYesNoBox("You have asked for a markup to be created, but according to the configuration, it will not replace your current selection but added to it at the end. Is this really what you want?", "Yes, add markup ", "No, replace text with markup")
-            If AppendMarkup = 0 Then
-                Return
-            ElseIf AppendMarkup = 2 Then
-                DoInplace = True
-                NoFormatAndFieldSaving = False
+            If Not DoInplace AndAlso DoMarkup Then
+                Dim AppendMarkup As Integer = ShowCustomYesNoBox("You have asked for a markup to be created, but according to the configuration, it will not replace your current selection but added to it at the end. Is this really what you want?", "Yes, add markup ", "No, replace text with markup")
+                If AppendMarkup = 0 Then
+                    Return
+                ElseIf AppendMarkup = 2 Then
+                    DoInplace = True
+                    NoFormatAndFieldSaving = False
+                End If
             End If
-        End If
 
-        If OtherPrompt.StartsWith(PurePrefix, StringComparison.OrdinalIgnoreCase) Then
-            OtherPrompt = OtherPrompt.Substring(PurePrefix.Length).Replace("(a file object follows)", "").Replace("(a clipboard object follows)", "").Trim()
-            SysPrompt = OtherPrompt
-        Else
+            If OtherPrompt.StartsWith(PurePrefix, StringComparison.OrdinalIgnoreCase) Then
+                OtherPrompt = OtherPrompt.Substring(PurePrefix.Length).Replace("(a file object follows)", "").Replace("(a clipboard object follows)", "").Trim()
+                SysPrompt = OtherPrompt
+            Else
                 If DoLib Then
                     Dim isSuccess As Boolean = Await ConsultLibrary(DoMarkup) ' updates SysPrompt
                     If Not isSuccess Then Return
@@ -5745,22 +6290,23 @@ Public Class ThisAddIn
                 Else
                     SysPrompt = SP_FreestyleText
                     If DoBubbles Then SysPrompt = SysPrompt & " " & SP_Add_Bubbles
+                    If DoPushback Then SysPrompt = SysPrompt & " " & SP_Add_BubblesReply
                     If INI_MarkdownBubbles Then FormatInstruction = SP_Add_Bubbles_Format Else FormatInstruction = ""
                 End If
             End If
 
             If DoChunks Then
-            Dim response As String = SLib.ShowCustomInputBox($"How many paragraphs shall be treated at the same time (max. 25)?", "Iterate through the text", True, ChunkSize.ToString()).Trim()
-            If Not Integer.TryParse(response, ChunkSize) Then ChunkSize = 0
-            If response = "" OrElse response.ToLower() = "esc" OrElse ChunkSize = 0 Then Return
-            If ChunkSize > 25 Then ChunkSize = 25
-        Else
-            ChunkSize = 0
-        End If
+                Dim response As String = SLib.ShowCustomInputBox($"How many paragraphs shall be treated at the same time (max. 25)?", "Iterate through the text", True, ChunkSize.ToString()).Trim()
+                If Not Integer.TryParse(response, ChunkSize) Then ChunkSize = 0
+                If response = "" OrElse response.ToLower() = "esc" OrElse ChunkSize = 0 Then Return
+                If ChunkSize > 25 Then ChunkSize = 25
+            Else
+                ChunkSize = 0
+            End If
 
-        Debug.WriteLine("Freestyle Prompt: " & SysPrompt)
+            Debug.WriteLine("Freestyle Prompt: " & SysPrompt)
 
-        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SysPrompt), True, DoKeepFormat, DoKeepParaFormat, DoInplace, DoMarkup, MarkupMethod, DoClipboard, DoBubbles, False, UseSecondAPI, KeepFormatCap, DoTPMarkup, TPMarkupName, False, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, InsertDocs <> "", DoMyStyle)
+            Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SysPrompt), True, DoKeepFormat, DoKeepParaFormat, DoInplace, DoMarkup, MarkupMethod, DoClipboard, DoBubbles, False, UseSecondAPI, KeepFormatCap, DoTPMarkup, TPMarkupName, False, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, InsertDocs <> "", DoMyStyle, DoBubblesExtract, DoPushback)
 
             If UseSecondAPI And originalConfigLoaded Then
             RestoreDefaults(_context, originalConfig)
@@ -6114,7 +6660,7 @@ Public Class ThisAddIn
     Dim paragraphFormat() As ParagraphFormatStructure
     Dim paraCount As Integer
 
-    Private Async Function ProcessSelectedText(SysCommand As String, CheckMaxToken As Boolean, KeepFormat As Boolean, ParaFormatInline As Boolean, InPlace As Boolean, DoMarkup As Boolean, MarkupMethod As Integer, PutInClipboard As Boolean, PutInBubbles As Boolean, SelectionMandatory As Boolean, UseSecondAPI As Boolean, FormattingCap As Integer, Optional DoTPMarkup As Boolean = False, Optional TPMarkupname As String = "", Optional CreatePodcast As Boolean = False, Optional FileObject As String = "", Optional DoPane As Boolean = False, Optional ChunkSize As Integer = 0, Optional NoFormatAndFieldSaving As Boolean = False, Optional DoNewDoc As Boolean = False, Optional SlideDeck As String = "", Optional AddDocs As Boolean = False, Optional DoMyStyle As Boolean = False) As Task(Of String)
+    Private Async Function ProcessSelectedText(SysCommand As String, CheckMaxToken As Boolean, KeepFormat As Boolean, ParaFormatInline As Boolean, InPlace As Boolean, DoMarkup As Boolean, MarkupMethod As Integer, PutInClipboard As Boolean, PutInBubbles As Boolean, SelectionMandatory As Boolean, UseSecondAPI As Boolean, FormattingCap As Integer, Optional DoTPMarkup As Boolean = False, Optional TPMarkupname As String = "", Optional CreatePodcast As Boolean = False, Optional FileObject As String = "", Optional DoPane As Boolean = False, Optional ChunkSize As Integer = 0, Optional NoFormatAndFieldSaving As Boolean = False, Optional DoNewDoc As Boolean = False, Optional SlideDeck As String = "", Optional AddDocs As Boolean = False, Optional DoMyStyle As Boolean = False, Optional DoBubblesExtract As Boolean = False, Optional DoPushback As Boolean = False) As Task(Of String)
 
         Dim application As Word.Application = Globals.ThisAddIn.Application
         Dim selection As Microsoft.Office.Interop.Word.Selection = application.Selection
@@ -6132,9 +6678,9 @@ Public Class ThisAddIn
         Try
             Using New WordUndoScope(application, $"{AN} Changes")
 
-                If selection.Type = WdSelectionType.wdSelectionIP Or selection.Tables.Count = 0 Or PutInClipboard Or PutInBubbles Then
+                If selection.Type = WdSelectionType.wdSelectionIP Or selection.Tables.Count = 0 Or PutInClipboard Or PutInBubbles Or DoPushback Then
 
-                    Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, CreatePodcast, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, AddDocs)
+                    Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, CreatePodcast, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, AddDocs, DoMyStyle, DoBubblesExtract, False, DoPushback)
 
                 Else
 
@@ -6208,7 +6754,7 @@ Public Class ThisAddIn
                                         InPlace, DoMarkup, MarkupMethod, PutInClipboard,
                                         PutInBubbles, SelectionMandatory, UseSecondAPI,
                                         FormattingCap, DoTPMarkup, TPMarkupname, False,
-                                        FileObject, DoPane, 0, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle)
+                                        FileObject, DoPane, 0, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
 
                                     ' throttle so Word doesn’t lock up
                                     Await System.Threading.Tasks.Task.Delay(500)
@@ -6258,7 +6804,7 @@ Public Class ThisAddIn
                                         ' Also verify it's not empty
                                         If textChunk.Start < textChunk.End Then
                                             textChunk.Select()
-                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle)
+                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
                                             Await System.Threading.Tasks.Task.Delay(500)
                                         End If
                                     Else
@@ -6269,7 +6815,7 @@ Public Class ThisAddIn
 
                                         If textChunk.Tables.Count = 0 AndAlso textChunk.Start < textChunk.End Then
                                             textChunk.Select()
-                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle)
+                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
                                             Await System.Threading.Tasks.Task.Delay(500)
                                         End If
 
@@ -6302,7 +6848,7 @@ Public Class ThisAddIn
                                         cellRange.End -= 1  ' Exclude cell marker
                                         If cellRange.Start < cellRange.End Then
                                             cellRange.Select()
-                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, 0, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle)
+                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, 0, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
                                             Await System.Threading.Tasks.Task.Delay(500)
                                         End If
                                     Next
@@ -6322,7 +6868,7 @@ Public Class ThisAddIn
 
                                     finalChunk.Select()
                                     Dim text = selection.Text
-                                    Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle)
+                                    Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
                                 Else
                                     Do
                                         finalChunk.Start += 1
@@ -6332,7 +6878,7 @@ Public Class ThisAddIn
 
                                     If finalChunk.Tables.Count = 0 AndAlso finalChunk.Start < finalChunk.End Then
                                         finalChunk.Select()
-                                        Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle)
+                                        Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
                                     End If
                                 End If
                             End If
@@ -6342,7 +6888,7 @@ Public Class ThisAddIn
 
                     ElseIf userdialog = 1 Then
 
-                        Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, CreatePodcast, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, AddDocs, DoMyStyle)
+                        Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, CreatePodcast, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, AddDocs, DoMyStyle, DoBubblesExtract, False, DoPushback)
 
                     End If
 
@@ -6368,7 +6914,7 @@ Public Class ThisAddIn
 
 
 
-    Private Async Function TrueProcessSelectedText(SysCommand As String, CheckMaxToken As Boolean, KeepFormat As Boolean, ParaFormatInline As Boolean, InPlace As Boolean, DoMarkup As Boolean, MarkupMethod As Integer, PutInClipboard As Boolean, PutInBubbles As Boolean, SelectionMandatory As Boolean, UseSecondAPI As Boolean, FormattingCap As Integer, Optional DoTPMarkup As Boolean = False, Optional TPMarkupname As String = "", Optional CreatePodcast As Boolean = False, Optional FileObject As String = "", Optional DoPane As Boolean = False, Optional ChunkSize As Integer = 0, Optional NoFormatAndFieldSaving As Boolean = False, Optional DoNewDoc As Boolean = False, Optional SlideDeck As String = "", Optional AddDocs As Boolean = False, Optional DoMyStyle As Boolean = False) As Task(Of String)
+    Private Async Function TrueProcessSelectedText(SysCommand As String, CheckMaxToken As Boolean, KeepFormat As Boolean, ParaFormatInline As Boolean, InPlace As Boolean, DoMarkup As Boolean, MarkupMethod As Integer, PutInClipboard As Boolean, PutInBubbles As Boolean, SelectionMandatory As Boolean, UseSecondAPI As Boolean, FormattingCap As Integer, Optional DoTPMarkup As Boolean = False, Optional TPMarkupname As String = "", Optional CreatePodcast As Boolean = False, Optional FileObject As String = "", Optional DoPane As Boolean = False, Optional ChunkSize As Integer = 0, Optional NoFormatAndFieldSaving As Boolean = False, Optional DoNewDoc As Boolean = False, Optional SlideDeck As String = "", Optional AddDocs As Boolean = False, Optional DoMyStyle As Boolean = False, Optional DoBubblesExtract As Boolean = False, Optional InTable As Boolean = False, Optional DoPushback As Boolean = False) As Task(Of String)
 
         Dim application As Word.Application = Globals.ThisAddIn.Application
         Dim selection As Microsoft.Office.Interop.Word.Selection = application.Selection
@@ -6393,7 +6939,10 @@ Public Class ThisAddIn
                     vbCrLf & "Slidedeck=" & SlideDeck &
                     vbCrLf & "NoFormatAndFieldSaving=" & NoFormatAndFieldSaving &
                     vbCrLf & "AddDocs=" & AddDocs &
-                    vbCrLf & "DoMyStyle=" & DoMyStyle
+                    vbCrLf & "DoMyStyle=" & DoMyStyle &
+                    vbCrLf & "DoBubblesExtract=" & DoBubblesExtract &
+                    vbCrLf & "InTable=" & InTable &
+                    vbCrLf & "DoPushback=" & DoPushback
                 )
 
         Try
@@ -6434,9 +6983,9 @@ Public Class ThisAddIn
 
             End If
 
-            If PutInBubbles Or PutInClipboard Or NoSelectedText Then NoFormatting = True
+            If PutInBubbles Or PutInClipboard Or NoSelectedText Or DoPushback Then NoFormatting = True
 
-            If PutInBubbles Then
+            If PutInBubbles Or DoPushback Then
                 DoMarkup = False
                 PutInClipboard = False
             End If
@@ -6689,6 +7238,9 @@ Public Class ThisAddIn
                 Debug.WriteLine($"4aRange Start = {rng.Start} Selection Start = {selection.Start}")
                 Debug.WriteLine($"Range End = {rng.End} Selection End = {selection.End}")
 
+                Dim BubblesText As String = BubblesExtract(rng, DoSilent Or InTable)
+
+                Debug.WriteLine($"BubblesText = '{BubblesText}'")
 
                 If Not NoSelectedText Then
 
@@ -6800,9 +7352,11 @@ Public Class ThisAddIn
 
                 Dim LLMResult As String = ""
 
-                If SelectedAlternateModels Is Nothing OrElse SelectedAlternateModels.Count = 0 OrElse DoMarkup OrElse PutInBubbles OrElse SlideInsert <> "" Then
 
-                    LLMResult = Await LLM(SysCommand & If(DoTPMarkup, " " & SP_Add_Revisions, "") & " " & If(SlideDeck = "", If(NoFormatting, "", If(KeepFormat, " " & SP_Add_KeepHTMLIntact, " " & SP_Add_KeepInlineIntact)), " " & SP_Add_Slides) & If(DoMyStyle, " " & MyStyleInsert, ""), If(NoSelectedText, If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>" & If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert), "", "", 0, UseSecondAPI, False, OtherPrompt, FileObject)
+
+                If SelectedAlternateModels Is Nothing OrElse SelectedAlternateModels.Count = 0 OrElse DoMarkup OrElse PutInBubbles OrElse DoPushback OrElse SlideInsert <> "" Then
+
+                    LLMResult = Await LLM(SysCommand & If(String.IsNullOrWhiteSpace(BubblesText), "", " " & SP_Add_BubblesExtract) & If(DoTPMarkup, " " & SP_Add_Revisions, "") & " " & If(SlideDeck = "", If(NoFormatting, "", If(KeepFormat, " " & SP_Add_KeepHTMLIntact, " " & SP_Add_KeepInlineIntact)), " " & SP_Add_Slides) & If(DoMyStyle, " " & MyStyleInsert, ""), If(NoSelectedText, If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>" & If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert & " " & BubblesText), "", "", 0, UseSecondAPI, False, OtherPrompt, FileObject)
 
                 Else
 
@@ -6810,19 +7364,26 @@ Public Class ThisAddIn
                         Dim err As Boolean = False
                         ApplyModelConfig(_context, mc, err)
 
-                        LLMResult += mc.ModelDescription & ":" & vbCrLf & vbCrLf & Await LLM(SysCommand & If(DoTPMarkup, " " & SP_Add_Revisions, "") & " " & If(SlideDeck = "", If(NoFormatting, "", If(KeepFormat, " " & SP_Add_KeepHTMLIntact, " " & SP_Add_KeepInlineIntact)), " " & SP_Add_Slides) & If(DoMyStyle, " " & MyStyleInsert, ""), If(NoSelectedText, If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>" & If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert), "", "", 0, UseSecondAPI, False, OtherPrompt, FileObject) & vbCrLf
+                        LLMResult += mc.ModelDescription & ":" & vbCrLf & vbCrLf & Await LLM(SysCommand & If(String.IsNullOrWhiteSpace(BubblesText), "", " " & SP_Add_BubblesExtract) & If(DoTPMarkup, " " & SP_Add_Revisions, "") & " " & If(SlideDeck = "", If(NoFormatting, "", If(KeepFormat, " " & SP_Add_KeepHTMLIntact, " " & SP_Add_KeepInlineIntact)), " " & SP_Add_Slides) & If(DoMyStyle, " " & MyStyleInsert, ""), If(NoSelectedText, If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>" & If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert & " " & BubblesText), "", "", 0, UseSecondAPI, False, OtherPrompt, FileObject) & vbCrLf
 
                     Next
 
                 End If
 
+
                 OtherPrompt = ""
 
                 LLMResult = LLMResult.Replace("<TEXTTOPROCESS>", "").Replace("</TEXTTOPROCESS>", "")
 
+
                 If Not String.IsNullOrEmpty(LLMResult) Then
                     LLMResult = Await PostCorrection(LLMResult, UseSecondAPI)
                 End If
+
+                Debug.WriteLine($"LLMResult 0 = '{LLMResult}'")
+
+                ' Remove horizontal whitespace (incl. NBSP) between real newline tokens (CRLF/CR/LF)
+                LLMResult = System.Text.RegularExpressions.Regex.Replace(LLMResult, "(\r\n|\r|\n)[^\S\r\n]+(\r\n|\r|\n)", "$1$2")
 
                 Debug.WriteLine($"LLMResult 1 = '{LLMResult}'")
 
@@ -6878,7 +7439,22 @@ Public Class ThisAddIn
                     Dim ClipText2 As String = "You can choose whether you want to have the original text put into the clipboard Or your text with any changes you have made (without formatting), Or you can directly insert the original text in your document. If you select Cancel, nothing will be put into the clipboard."
                     Dim PaneText2 As String = "Choose to put your edited Or original text in the clipboard, Or inserted the original with formatting; the pane will close. You can also copy & paste from the pane."
 
-                    If CreatePodcast AndAlso Not DoSilent Then
+                    If DoPushback Then
+
+                        Dim app As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
+                        If _uiContext IsNot Nothing Then
+                            _uiContext.Post(
+                                Sub(s)
+                                    Dim uiSel As Microsoft.Office.Interop.Word.Selection = app.Selection
+                                    ReplyBubbles(LLMResult, uiSel, DoSilent)
+                                End Sub, Nothing)
+                        Else
+                            ' Fallback – assume we are already on UI thread
+                            Dim uiSel As Microsoft.Office.Interop.Word.Selection = app.Selection
+                            ReplyBubbles(LLMResult, uiSel, DoSilent)
+                        End If
+
+                    ElseIf CreatePodcast AndAlso Not DoSilent Then
                         Dim TTSAvailable As Boolean = False
 
                         DetectTTSEngines()
@@ -7169,6 +7745,9 @@ Public Class ThisAddIn
                         Globals.ThisAddIn.Application.Selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
                     Else
+
+                        wordApp.ScreenUpdating = False
+
                         SelectedText = selection.Text
 
                         Debug.WriteLine($"7Range Start = {rng.Start} Selection Start = {selection.Start}")
@@ -7301,6 +7880,8 @@ Public Class ThisAddIn
                         ' End Extended Selection Mode
                         Globals.ThisAddIn.Application.Selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
+                        wordApp.ScreenUpdating = True
+
                     End If
 
                 Else
@@ -7320,7 +7901,6 @@ Public Class ThisAddIn
                         End Try
                     End If
 
-                    'XXXXX
                     'nextStartBm = currentdoc.Bookmarks.Add(
                     'Name:="NextStart",
                     'Range:=currentdoc.Range(Start:=selection.End, End:=selection.End))
@@ -7383,120 +7963,6 @@ Public Class ThisAddIn
     End Function
 
 
-    Public Sub oldsafeSetBubbles(LLMResult As String, Selection As Microsoft.Office.Interop.Word.Selection, DoSilent As Boolean)
-
-        Dim responseItems() As String = LLMResult.Split({"§§§"}, StringSplitOptions.RemoveEmptyEntries)
-        Dim wrongformatresponse As New List(Of String)
-        Dim notfoundresponse As New List(Of String)
-        Dim originalRange As Word.Range = Selection.Range.Duplicate ' Save the original selection range
-        Dim BubblecutHappened As Boolean = False
-        Dim BubbleCount As Integer = 0
-        Dim MaxBubbles As Integer = responseItems.Count
-
-        If MaxBubbles = 0 Then
-            If Not DoSilent Then ShowCustomMessageBox($"The bubble command did Not result in any comment(s) by the LLM.")
-        Else
-
-            Dim splash As SLib.SplashScreen = Nothing
-            Try
-                splash = New SLib.SplashScreen($"Adding {MaxBubbles} bubble(s) to your text... press 'Esc' to abort")
-                splash.Show()
-                splash.Refresh()
-
-                For Each item In responseItems
-
-                    splash.UpdateMessage($"Adding {MaxBubbles - BubbleCount} bubble(s) to your text... press 'Esc' to abort")
-
-                    System.Windows.Forms.Application.DoEvents()
-
-                    If (GetAsyncKeyState(VK_ESCAPE) And &H8000) <> 0 Then Exit For
-
-                    If (GetAsyncKeyState(VK_ESCAPE) And 1) <> 0 Then
-                        Exit For
-                    End If
-
-                    Dim parts() As String = item.Split({"@@"}, StringSplitOptions.None)
-                    If parts.Length = 2 Then
-
-                        Dim findText As String = parts(0).Trim().Trim("'"c).Trim(""""c)
-                        Dim commentText As String = parts(1).Trim()
-
-                        Try
-                            ' Use chunk-by-chunk search for > 255 characters
-                            If FindLongTextInChunks(findText, Selection) Then
-                                ' If found, selection now covers the entire matched text
-                                If INI_MarkdownBubbles Then
-                                    Dim cmt As Word.Comment = AddMarkdownComment(Selection, $"{AN5}: ", commentText)
-                                Else
-                                    Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Selection.Range, $"{AN5}: " & commentText)
-                                End If
-                                BubbleCount += 1
-                            Else
-                                notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}: " & commentText & vbCrLf & vbCrLf)
-                            End If
-
-                        Catch ex As Exception
-                            notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}: " & commentText & " [Error: " & ex.Message & "]" & vbCrLf & vbCrLf)
-                        End Try
-
-                    Else
-                        If Not String.IsNullOrWhiteSpace(item) Then
-                            wrongformatresponse.Add(item)
-                        End If
-                    End If
-
-                    Selection.SetRange(originalRange.Start, originalRange.End) ' Restore the original selection
-                Next
-
-            Finally
-                If splash IsNot Nothing Then
-                    Try : splash.Close() : Catch : End Try
-                End If
-            End Try
-
-            Dim ErrorList As String = ""
-
-            If notfoundresponse.Count > 0 Then
-                ErrorList += "The following comments could not be assigned to your text (they were not found, typically because of the LLM not acting as instructed, formatting or markup issues):" & vbCrLf & vbCrLf
-                For Each item In notfoundresponse
-                    If item.Trim() <> "" Then ErrorList += Trim("- " & item & vbCrLf)
-                Next
-                ErrorList += vbCrLf
-            End If
-
-            If wrongformatresponse.Count > 0 Then
-                ErrorList += "The following responses could not be identified as bubble comments (typically because the LLM did not act as instructed):" & vbCrLf & vbCrLf
-                For Each item In wrongformatresponse
-                    If item.Trim() <> "" Then ErrorList += Trim("- " & item & vbCrLf)
-                Next
-                ErrorList += vbCrLf
-            End If
-            If Not String.IsNullOrWhiteSpace(ErrorList) Then
-                If BubblecutHappened Then
-                    ErrorList = $"Some of the sections to which the bubble comments relate were too long for selecting. Only the initial part has been selected. This is indicated by '{BubbleCutText}' in the bubble comments, as applicable." & vbCrLf & vbCrLf & ErrorList
-                End If
-
-                If Not DoSilent Then
-                    ErrorList = ShowCustomWindow($"{BubbleCount} bubble comment(s) applied (Warning: complicated formatting and markups may cause misalignments of the commented portions of the text). The following errors occurred when implementing the 'bubbles' feedback of the LLM:", ErrorList, "The above error list will be included in a final comment at the end of your selection (it will also be included in the clipboard). You can have the original list included, or you can now make changes and have this version used. If you select Cancel, nothing will be put added to the document.", AN, True)
-                End If
-                If ErrorList <> "" And ErrorList.ToLower() <> "esc" Then
-                    SLib.PutInClipboard(ErrorList)
-                    Globals.ThisAddIn.Application.Selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
-                    If INI_MarkdownBubbles Then
-                        Dim cmt As Word.Comment = AddMarkdownComment(Selection, $"{AN5}: ", ErrorList)
-                    Else
-                        Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Selection.Range, $"{AN5}: " & ErrorList)
-                    End If
-                End If
-
-            Else
-
-                If Not DoSilent Then ShowCustomMessageBox($"{BubbleCount} bubble comment(s) provided by the LLM applied to to your text (Warning: complicated formatting and markups may cause misalignments of the commented portions of the text)." & If(BubblecutHappened, $"Some of the sections to which the bubble comments relate were too long for selecting. Only the initial part has been selected. This is indicated by '{BubbleCutText}' in the bubble comments, as applicable.", ""))
-            End If
-        End If
-
-    End Sub
-
 
     ' Adds a comment at the current selection and renders Markdown/HTML into its bubble.
     Private Shared Function AddMarkdownComment(sel As Microsoft.Office.Interop.Word.Selection, prefix As String, body As String) As Microsoft.Office.Interop.Word.Comment
@@ -7509,12 +7975,6 @@ Public Class ThisAddIn
         cr.Text = ""
         Dim startPos As Integer = cr.Start
         cr.InsertAfter(prefix)
-
-        'Dim rgPrefix As Microsoft.Office.Interop.Word.Range = cr.Duplicate
-        'rgPrefix.Start = startPos
-        'rgPrefix.End = startPos + prefix.Length
-        'rgPrefix.Font.Bold = True
-        'rgPrefix.Font.Color = Microsoft.Office.Interop.Word.WdColor.wdColorDarkRed
 
         ' Move insertion point to end of prefix and render the body
         Dim ins As Microsoft.Office.Interop.Word.Range = cmt.Range.Duplicate
@@ -7532,212 +7992,7 @@ Public Class ThisAddIn
     End Function
 
 
-
-    Public Sub xxxSetBubbles(LLMResult As System.String, Selection As Microsoft.Office.Interop.Word.Selection, DoSilent As System.Boolean)
-
-        Dim responseItems() As System.String = LLMResult.Split(New System.String() {"§§§"}, System.StringSplitOptions.RemoveEmptyEntries)
-        Dim wrongformatresponse As New System.Collections.Generic.List(Of System.String)
-        Dim notfoundresponse As New System.Collections.Generic.List(Of System.String)
-
-        ' Stable doc reference
-        Dim docRef As Microsoft.Office.Interop.Word.Document = Nothing
-        Try
-            If Selection IsNot Nothing AndAlso Selection.Range IsNot Nothing Then
-                docRef = Selection.Range.Document
-            End If
-            If docRef Is Nothing AndAlso Globals.ThisAddIn IsNot Nothing AndAlso
-           Globals.ThisAddIn.Application IsNot Nothing AndAlso
-           Globals.ThisAddIn.Application.Documents.Count > 0 Then
-                docRef = Globals.ThisAddIn.Application.ActiveDocument
-            End If
-        Catch ex As System.Exception
-        End Try
-        If docRef Is Nothing Then Exit Sub
-
-        Dim originalRange As Microsoft.Office.Interop.Word.Range = Selection.Range.Duplicate
-        Dim BubblecutHappened As System.Boolean = False
-        Dim BubbleCount As System.Int32 = 0
-        Dim MaxBubbles As System.Int32 = responseItems.Count
-
-        If MaxBubbles = 0 Then
-            If Not DoSilent Then ShowCustomMessageBox($"The bubble command did not result in any comment(s) by the LLM.")
-            Exit Sub
-        End If
-
-        Dim splash As New SLib.SplashScreen($"Adding {MaxBubbles} bubble(s) to your text... press 'Esc' to abort")
-        splash.Show()
-        splash.Refresh()
-
-        Dim app As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
-        Dim win As Microsoft.Office.Interop.Word.Window = app.ActiveWindow
-
-        Try
-
-            For Each item As System.String In responseItems
-
-                splash.UpdateMessage($"Adding {MaxBubbles - BubbleCount} bubble(s) to your text... press 'Esc' to abort")
-                System.Windows.Forms.Application.DoEvents()
-
-                If (GetAsyncKeyState(VK_ESCAPE) And &H8000) <> 0 Then Exit For
-                If (GetAsyncKeyState(VK_ESCAPE) And 1) <> 0 Then Exit For
-
-                Dim parts() As System.String = item.Split(New System.String() {"@@"}, System.StringSplitOptions.None)
-                If parts.Length = 2 Then
-
-                    Dim findText As System.String = parts(0).Trim().Trim("'"c).Trim(""""c)
-                    Dim commentText As System.String = parts(1).Trim()
-
-                    Try
-                        ' Ensure we start in MainText (best effort)
-                        Try
-                            If app.Selection IsNot Nothing AndAlso app.Selection.StoryType <> Microsoft.Office.Interop.Word.WdStoryType.wdMainTextStory Then
-                                app.Selection.SetRange(Start:=originalRange.Start, End:=originalRange.End)
-                            End If
-                        Catch exSet As System.Exception
-                        End Try
-
-                        ' === NO DoEvents between the finder and creating the stable range ===
-                        If FindLongTextInChunks(findText, Selection) Then
-                            Dim s As System.Int32 = -1, e As System.Int32 = -1
-                            Try
-                                s = Selection.Range.Start : e = Selection.Range.End
-                            Catch exGrab As System.Exception
-                                s = -1 : e = -1
-                            End Try
-
-                            If s >= 0 AndAlso e >= 0 Then
-                                Dim matchedRange As Microsoft.Office.Interop.Word.Range = Nothing
-                                Try
-                                    matchedRange = docRef.Range(Start:=s, End:=e)
-                                Catch exR As System.Exception
-                                    matchedRange = Nothing
-                                End Try
-
-                                If matchedRange IsNot Nothing AndAlso
-                                   matchedRange.StoryType = Microsoft.Office.Interop.Word.WdStoryType.wdMainTextStory Then
-
-                                    If INI_MarkdownBubbles Then
-                                        Dim cmt As Microsoft.Office.Interop.Word.Comment = Nothing
-                                        Try
-                                            cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:="")
-                                        Catch exAdd As System.Runtime.InteropServices.COMException
-                                            cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:=$"{AN5}: ")
-                                        Catch exAdd2 As System.Exception
-                                            cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:=$"{AN5}: ")
-                                        End Try
-
-                                        Try
-                                            If commentText.StartsWith("* ") Then
-                                                commentText = $"{AN5}:" & vbCrLf & commentText
-                                            Else
-                                                commentText = $"{AN5}: " & commentText
-                                            End If
-                                            Dim cRng As Microsoft.Office.Interop.Word.Range = cmt.Range
-                                            ' Ensure balloons visible during paste into comment text:
-                                            Dim prevShow As System.Boolean = win.View.ShowRevisionsAndComments
-                                            Try
-                                                win.View.ShowRevisionsAndComments = True
-                                                InsertMarkdownToComment(cRng, commentText) ' will not fight a hidden pane
-                                            Finally
-                                                win.View.ShowRevisionsAndComments = prevShow
-                                            End Try
-                                        Catch exMk As System.Exception
-                                            cmt.Range.Text = $"{AN5}: " & commentText
-                                        End Try
-                                    Else
-                                        Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(matchedRange, $"{AN5}: " & commentText)
-                                    End If
-
-                                    BubbleCount += 1
-                                Else
-                                    notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}: " & commentText & vbCrLf & vbCrLf)
-                                End If
-                            Else
-                                notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}: " & commentText & vbCrLf & vbCrLf)
-                            End If
-                        Else
-                            notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}: " & commentText & vbCrLf & vbCrLf)
-                        End If
-
-                    Catch ex As System.Exception
-                        notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}: " & commentText & " [Error: " & ex.Message & "]" & vbCrLf & vbCrLf)
-                    End Try
-
-                Else
-                    If Not System.String.IsNullOrWhiteSpace(item) Then
-                        wrongformatresponse.Add(item)
-                    End If
-                End If
-
-                ' Best-effort restore
-                Try
-                    Selection.SetRange(Start:=originalRange.Start, End:=originalRange.End)
-                Catch exRestore As System.Exception
-                End Try
-            Next
-
-        Finally
-            Try : splash.Close() : Catch : End Try
-            Try : splash.Dispose() : Catch : End Try
-            ' After you’re done with these (inside their try blocks or at the end of the loop):
-        End Try
-
-
-        ' (unchanged) build ErrorList and add final summary comment…
-        Dim ErrorList As System.String = ""
-
-        If notfoundresponse.Count > 0 Then
-            ErrorList += "The following comments could not be assigned to your text (they were not found, typically because of the LLM not acting as instructed, formatting or markup issues):" & vbCrLf & vbCrLf
-            For Each itemNF As System.String In notfoundresponse
-                If itemNF.Trim() <> "" Then ErrorList += Trim("- " & itemNF & vbCrLf)
-            Next
-            ErrorList += vbCrLf
-        End If
-
-        If wrongformatresponse.Count > 0 Then
-            ErrorList += "The following responses could not be identified as bubble comments (typically because the LLM did not act as instructed):" & vbCrLf & vbCrLf
-            For Each itemWF As System.String In wrongformatresponse
-                If itemWF.Trim() <> "" Then ErrorList += Trim("- " & itemWF & vbCrLf)
-            Next
-            ErrorList += vbCrLf
-        End If
-
-        If Not System.String.IsNullOrWhiteSpace(ErrorList) Then
-            If BubblecutHappened Then
-                ErrorList = $"Some of the sections to which the bubble comments relate were too long for selecting. Only the initial part has been selected. This is indicated by '{BubbleCutText}' in the bubble comments, as applicable." & vbCrLf & vbCrLf & ErrorList
-            End If
-            If Not DoSilent Then
-                ErrorList = ShowCustomWindow($"{BubbleCount} bubble comment(s) applied (Warning: complicated formatting and markups may cause misalignments of the commented portions of the text). The following errors occurred when implementing the 'bubbles' feedback of the LLM:", ErrorList, "The above error list will be included in a final comment at the end of your selection (it will also be included in the clipboard). You can have the original list included, or you can now make changes and have this version used. If you select Cancel, nothing will be put added to the document.", AN, True)
-            End If
-            If ErrorList <> "" AndAlso ErrorList.ToLower() <> "esc" Then
-                SLib.PutInClipboard(ErrorList)
-
-                Dim tailRange As Microsoft.Office.Interop.Word.Range = originalRange.Duplicate
-                tailRange.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-
-                If INI_MarkdownBubbles Then
-                    Try
-                        Dim cmt As Microsoft.Office.Interop.Word.Comment = docRef.Comments.Add(Range:=tailRange, Text:="")
-                        Dim cRng As Microsoft.Office.Interop.Word.Range = cmt.Range
-                        InsertMarkdownToComment(cRng, $"{AN5}:" & ErrorList)
-                    Catch exMkSum As System.Exception
-                        docRef.Comments.Add(Range:=tailRange, Text:=$"{AN5}: " & ErrorList)
-                    End Try
-                Else
-                    docRef.Comments.Add(Range:=tailRange, Text:=$"{AN5}: " & ErrorList)
-                End If
-            End If
-        Else
-            If Not DoSilent Then
-                ShowCustomMessageBox($"{BubbleCount} bubble comment(s) provided by the LLM applied to to your text (Warning: complicated formatting and markups may cause misalignments of the commented portions of the text)." &
-                                 If(BubblecutHappened, $"Some of the sections to which the bubble comments relate were too long for selecting. Only the initial part has been selected. This is indicated by '{BubbleCutText}' in the bubble comments, as applicable.", ""))
-            End If
-        End If
-
-    End Sub
-
-
-    Public Sub SetBubbles(LLMResult As System.String, Selection As Microsoft.Office.Interop.Word.Selection, DoSilent As System.Boolean)
+    Public Sub SetBubbles(LLMResult As System.String, Selection As Microsoft.Office.Interop.Word.Selection, DoSilent As System.Boolean, Optional Prefix As String = "")
 
         Dim responseItems() As System.String = LLMResult.Split(New System.String() {"§§§"}, System.StringSplitOptions.RemoveEmptyEntries)
         Dim wrongformatresponse As New System.Collections.Generic.List(Of System.String)
@@ -7865,16 +8120,16 @@ Public Class ThisAddIn
                                             Try
                                                 cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:="")
                                             Catch exAdd As System.Runtime.InteropServices.COMException
-                                                cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:=$"{AN5}: ")
+                                                cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:=$"{AN5}{Prefix}: ")
                                             Catch exAdd2 As System.Exception
-                                                cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:=$"{AN5}: ")
+                                                cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:=$"{AN5}{Prefix}: ")
                                             End Try
 
                                             Try
                                                 If commentText.StartsWith("* ") Then
-                                                    commentText = $"{AN5}:" & vbCrLf & commentText
+                                                    commentText = $"{AN5}{Prefix}:" & vbCrLf & commentText
                                                 Else
-                                                    commentText = $"{AN5}: " & commentText
+                                                    commentText = $"{AN5}{Prefix}: " & commentText
                                                 End If
                                                 Dim cRng As Microsoft.Office.Interop.Word.Range = cmt.Range
                                                 ' Ensure balloons visible during paste into comment text:
@@ -7886,25 +8141,25 @@ Public Class ThisAddIn
                                                     win.View.ShowRevisionsAndComments = prevShow
                                                 End Try
                                             Catch exMk As System.Exception
-                                                cmt.Range.Text = $"{AN5}: " & commentText
+                                                cmt.Range.Text = $"{AN5}{Prefix}: " & commentText
                                             End Try
                                         Else
-                                            Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(matchedRange, $"{AN5}: " & commentText)
+                                            Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(matchedRange, $"{AN5}{Prefix}: " & commentText)
                                         End If
 
                                         BubbleCount += 1
                                     Else
-                                        notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}: " & commentText & vbCrLf & vbCrLf)
+                                        notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}{Prefix}: " & commentText & vbCrLf & vbCrLf)
                                     End If
                                 Else
-                                    notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}: " & commentText & vbCrLf & vbCrLf)
+                                    notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}{Prefix}: " & commentText & vbCrLf & vbCrLf)
                                 End If
                             Else
-                                notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}: " & commentText & vbCrLf & vbCrLf)
+                                notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}{Prefix}: " & commentText & vbCrLf & vbCrLf)
                             End If
 
                         Catch ex As System.Exception
-                            notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}: " & commentText & " [Error: " & ex.Message & "]" & vbCrLf & vbCrLf)
+                            notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}{Prefix}: " & commentText & " [Error: " & ex.Message & "]" & vbCrLf & vbCrLf)
                         End Try
 
                     Else
@@ -7983,12 +8238,12 @@ Public Class ThisAddIn
                     Try
                         Dim cmt As Microsoft.Office.Interop.Word.Comment = docRef.Comments.Add(Range:=tailRange, Text:="")
                         Dim cRng As Microsoft.Office.Interop.Word.Range = cmt.Range
-                        InsertMarkdownToComment(cRng, $"{AN5}:" & ErrorList)
+                        InsertMarkdownToComment(cRng, $"{AN5}{Prefix}:" & ErrorList)
                     Catch exMkSum As System.Exception
-                        docRef.Comments.Add(Range:=tailRange, Text:=$"{AN5}: " & ErrorList)
+                        docRef.Comments.Add(Range:=tailRange, Text:=$"{AN5}{Prefix}: " & ErrorList)
                     End Try
                 Else
-                    docRef.Comments.Add(Range:=tailRange, Text:=$"{AN5}: " & ErrorList)
+                    docRef.Comments.Add(Range:=tailRange, Text:=$"{AN5}{Prefix}: " & ErrorList)
                 End If
             End If
         Else
@@ -8001,9 +8256,279 @@ Public Class ThisAddIn
     End Sub
 
 
+    ' Extracts multiple comment-replies from an LLM result and adds a threaded reply to each
+    ' Expected format per reply item:
+    '   "wid:123 ph:abcdef@@commentreply1§§§wid:123 ph:abcdef@@commentreply2..."
+    ' Supported ID token variants (same as in ExecuteReplyToCommentByIdToken inspiration):
+    '   - "1234|abcdef"                  (id|hash)
+    '   - "id=1234;hash=abcdef"          (labels; separators ; , | or whitespace)
+    '   - "wid:1234 ph:abcdef"           (labels with ':' and whitespace)
+    '   - "1234"                         (id only)
+    '   - "abcdef"                       (hash only)
+    Public Sub ReplyBubbles(ByVal LLMResult As String,
+                        ByVal Selection As Microsoft.Office.Interop.Word.Selection,
+                        ByVal DoSilent As Boolean, Optional Prefix As String = "")
+
+        If String.IsNullOrWhiteSpace(LLMResult) Then
+            If Not DoSilent Then ShowCustomMessageBox("No replies found in the LLM result.")
+            Exit Sub
+        End If
+
+        ' Stable doc reference
+        Dim app As Microsoft.Office.Interop.Word.Application = Nothing
+        Dim docRef As Microsoft.Office.Interop.Word.Document = Nothing
+        Dim win As Microsoft.Office.Interop.Word.Window = Nothing
+        Dim hwnd As IntPtr = IntPtr.Zero
+
+        Dim hadSel As Boolean = False
+        Dim origStart As Integer = -1
+        Dim origEnd As Integer = -1
+
+        Dim prevScreenUpdating As Boolean = True
+        Dim winWasEnabled As Boolean = True
+
+        ' Split into individual reply items
+        Dim items As String() = LLMResult.Split(New String() {"§§§"}, StringSplitOptions.RemoveEmptyEntries)
+        If items.Length = 0 Then
+            If Not DoSilent Then ShowCustomMessageBox("No replies found in the LLM result.")
+            Exit Sub
+        End If
+
+        ' Collect errors
+        Dim wrongformatresponse As New List(Of String)()
+        Dim notfoundresponse As New List(Of String)()
+
+        Try
+            app = Globals.ThisAddIn.Application
+            If app Is Nothing OrElse app.Documents Is Nothing OrElse app.Documents.Count = 0 Then
+                If Not DoSilent Then ShowCustomMessageBox("No active Word document.")
+                Exit Sub
+            End If
+
+            docRef = app.ActiveDocument
+            win = app.ActiveWindow
+
+            ' Capture original selection
+            Try
+                If Selection IsNot Nothing Then
+                    origStart = Selection.Start
+                    origEnd = Selection.End
+                    hadSel = True
+                Else
+                    ' Fall back to active selection
+                    If app.Selection IsNot Nothing Then
+                        origStart = app.Selection.Start
+                        origEnd = app.Selection.End
+                        hadSel = True
+                    End If
+                End If
+            Catch
+            End Try
+
+            ' Clamp selection to main story bounds
+            Dim safeStart As Integer = docRef.Content.Start
+            Dim safeEnd As Integer = docRef.Content.End
+            If hadSel Then
+                safeStart = System.Math.Max(docRef.Content.Start, System.Math.Min(origStart, docRef.Content.End))
+                safeEnd = System.Math.Max(docRef.Content.Start, System.Math.Min(origEnd, docRef.Content.End))
+                If safeEnd < safeStart Then safeEnd = safeStart
+            End If
+
+            ' Minimize UI interaction while processing
+            Try
+                prevScreenUpdating = app.ScreenUpdating
+                app.ScreenUpdating = False
+            Catch
+            End Try
+
+            If win IsNot Nothing Then
+                Try
+                    hwnd = CType(win.Hwnd, IntPtr)
+                    winWasEnabled = IsWindowEnabled(hwnd)
+                    EnableWindow(hwnd, False)
+                Catch
+                End Try
+            End If
+
+            ' Process each reply item
+            Dim addedCount As Integer = 0
+            For Each raw In items
+                ' ESC to abort
+                If (GetAsyncKeyState(VK_ESCAPE) And &H8000) <> 0 OrElse (GetAsyncKeyState(VK_ESCAPE) And 1) <> 0 Then Exit For
+
+                Dim item As String = If(raw, String.Empty).Trim()
+                If item.Length = 0 Then Continue For
+
+                ' Split into "token@@reply"
+                Dim sepIdx As Integer = item.IndexOf("@@")
+                If sepIdx <= 0 OrElse sepIdx >= item.Length - 2 Then
+                    wrongformatresponse.Add(item)
+                    Continue For
+                End If
+
+                Dim idToken As String = item.Substring(0, sepIdx).Trim()
+                Dim replyText As String = item.Substring(sepIdx + 2).Trim()
+
+                If idToken.Length = 0 OrElse replyText.Length = 0 Then
+                    wrongformatresponse.Add(item)
+                    Continue For
+                End If
+
+                ' Parse token into (wordId, hash)
+                Dim wordId As Integer? = Nothing
+                Dim pseudoHash As String = Nothing
+                If Not TryParseCommentIdToken(idToken, wordId, pseudoHash) Then
+                    wrongformatresponse.Add(item)
+                    Continue For
+                End If
+
+                ' Add reply using existing helper
+                Dim formatted As Boolean = INI_MarkdownBubbles ' follow same setting as SetBubbles
+                Dim ok As Boolean = False
+                Try
+                    ok = ReplyToWordComment(wordId, pseudoHash, replyText, formatted)
+                Catch ex As Exception
+                    ok = False
+                End Try
+
+                If ok Then
+                    addedCount += 1
+                Else
+                    notfoundresponse.Add($"'{idToken}'{vbCrLf}{ChrW(&H2192)} reply: {replyText}")
+                End If
+
+                ' Ensure focus stays on main story (avoid leaving caret in a comment card)
+                Try
+                    app.ActiveWindow.Activate()
+                    docRef.Range(safeStart, safeEnd).Select()
+                Catch
+                End Try
+            Next
+
+            ' Build and optionally show summary
+            Dim errList As String = ""
+            If notfoundresponse.Count > 0 Then
+                errList += "The following replies could not be added (target comment not found):" & vbCrLf & vbCrLf
+                For Each nf In notfoundresponse
+                    If nf.Trim() <> "" Then errList += "- " & nf & vbCrLf
+                Next
+                errList += vbCrLf
+            End If
+            If wrongformatresponse.Count > 0 Then
+                errList += "The following items did not match the expected 'token@@reply' format:" & vbCrLf & vbCrLf
+                For Each wf In wrongformatresponse
+                    If wf.Trim() <> "" Then errList += "- " & wf & vbCrLf
+                Next
+                errList += vbCrLf
+            End If
+
+            If String.IsNullOrWhiteSpace(errList) Then
+                If Not DoSilent Then
+                    ShowCustomMessageBox($"{addedCount} reply/replies added.")
+                End If
+            Else
+                If Not DoSilent Then
+                    Dim final As String = ShowCustomWindow($"{addedCount} reply/replies added. Some issues occurred:", errList, "You can edit the error list before it is inserted as a final comment at the end of your selection. Cancel to skip insertion.", AN, True)
+                    If final <> "" AndAlso final.ToLower() <> "esc" Then
+                        ' Insert summary comment at end of original selection (or at document end if none)
+                        Dim tail As Microsoft.Office.Interop.Word.Range =
+                        If(hadSel, docRef.Range(safeStart, safeEnd).Duplicate, docRef.Content.Duplicate)
+                        tail.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
+                        Try
+                            If INI_MarkdownBubbles Then
+                                Dim cmt As Microsoft.Office.Interop.Word.Comment = docRef.Comments.Add(Range:=tail, Text:="")
+                                InsertMarkdownToComment(cmt.Range, $"{AN5}{Prefix}: " & final)
+                            Else
+                                docRef.Comments.Add(Range:=tail, Text:=$"{AN5}{Prefix}: " & final)
+                            End If
+                        Catch
+                            docRef.Comments.Add(Range:=tail, Text:=$"{AN5}{Prefix}: " & final)
+                        End Try
+                    End If
+                End If
+            End If
+
+        Finally
+            ' Restore UI and selection
+            Try
+                If win IsNot Nothing AndAlso hwnd <> IntPtr.Zero Then
+                    EnableWindow(hwnd, winWasEnabled)
+                End If
+            Catch
+            End Try
+            Try
+                If app IsNot Nothing Then app.ScreenUpdating = prevScreenUpdating
+            Catch
+            End Try
+
+            ' Force selection back into main text story (avoid comment card focus)
+            Try
+                If docRef IsNot Nothing Then
+                    If hadSel Then
+                        Dim s As Integer = System.Math.Max(docRef.Content.Start, System.Math.Min(origStart, docRef.Content.End))
+                        Dim e As Integer = System.Math.Max(docRef.Content.Start, System.Math.Min(origEnd, docRef.Content.End))
+                        If e < s Then e = s
+                        docRef.Range(s, e).Select()
+                    Else
+                        docRef.Range(docRef.Content.End, docRef.Content.End).Select()
+                    End If
+                End If
+            Catch
+            End Try
+        End Try
+    End Sub
+
+    ' Local parser for comment id tokens (mirrors the inspiration function)
+    Private Function TryParseCommentIdToken(ByVal raw As String,
+                                              ByRef wordId As System.Nullable(Of Integer),
+                                              ByRef pseudoHash As String) As Boolean
+        wordId = Nothing
+        pseudoHash = Nothing
+        If String.IsNullOrWhiteSpace(raw) Then Return False
+
+        Dim s As String = raw.Trim()
+
+        ' 1) "id|hash"
+        Dim pipeParts = s.Split(New Char() {"|"c}, 2, StringSplitOptions.None)
+        If pipeParts.Length = 2 Then
+            Dim left = pipeParts(0).Trim()
+            Dim right = pipeParts(1).Trim()
+            Dim idVal As Integer
+            If Integer.TryParse(left, idVal) Then wordId = idVal
+            If Not String.IsNullOrWhiteSpace(right) Then pseudoHash = right
+            Return (wordId.HasValue OrElse Not String.IsNullOrWhiteSpace(pseudoHash))
+        End If
+
+        ' 2) labeled forms (wid/id and ph/hash/pseudohash)
+        Dim idMatch = System.Text.RegularExpressions.Regex.Match(s, "(?:\bwid|\bid|\bwordid)\s*[:=]\s*(?<id>-?\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        If idMatch.Success Then
+            Dim idVal As Integer
+            If Integer.TryParse(idMatch.Groups("id").Value, idVal) Then wordId = idVal
+        End If
+        Dim hashMatch = System.Text.RegularExpressions.Regex.Match(s, "(?:\bph|\bhash|\bpseudohash)\s*[:=]\s*(?<hash>[A-Za-z0-9_-]{6,})", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        If hashMatch.Success Then
+            pseudoHash = hashMatch.Groups("hash").Value.Trim()
+        End If
+        If wordId.HasValue OrElse Not String.IsNullOrWhiteSpace(pseudoHash) Then Return True
+
+        ' 3) single-token fallback
+        Dim onlyDigits As Boolean = s.All(Function(ch) Char.IsDigit(ch))
+        If onlyDigits Then
+            Dim idVal As Integer
+            If Integer.TryParse(s, idVal) Then wordId = idVal
+            Return True
+        Else
+            If s.Length >= 6 Then
+                pseudoHash = s
+                Return True
+            End If
+        End If
+
+        Return False
+    End Function
 
     ' Renders Markdown or HTML into a Word comment balloon.
-    Private Shared Sub InsertMarkdownToComment(ByRef rg As Word.Range,
+    Public Shared Sub InsertMarkdownToComment(ByRef rg As Word.Range,
                                                  ByVal src As String)
         Try
             ' Heuristic: is this HTML already?
@@ -8159,68 +8684,6 @@ Public Class ThisAddIn
             End With
         Next
     End Sub
-
-    Public Sub oldApplyParagraphFormat(ByRef rng As Word.Range)
-
-        Dim maxParaStylesCount As Integer = paragraphFormat.Length
-        Dim paraCount As Integer = rng.Paragraphs.Count
-
-        If paraCount = 0 Then Exit Sub
-
-        For i As Integer = 1 To paraCount
-            If i - 1 >= maxParaStylesCount Then Exit For
-
-            Dim pf As ParagraphFormatStructure = paragraphFormat(i - 1)
-            Dim pRange As Word.Range = rng.Paragraphs(i).Range
-
-            '--- 1. paragraph style ------------------------------------------------
-            If pf.Style IsNot Nothing Then
-                Try
-                    pRange.Style = pf.Style
-                Catch ex As System.Exception
-                    ' handle / log if necessary
-                End Try
-            End If
-
-            '--- 2. character-level attributes – use them *only when supplied* -----
-            With pRange.Font
-                If Not String.IsNullOrEmpty(pf.FontName) Then .Name = pf.FontName
-                If pf.FontSize.HasValue Then .Size = pf.FontSize.Value
-                If pf.FontBold.HasValue Then .Bold = pf.FontBold.Value
-                If pf.FontItalic.HasValue Then .Italic = pf.FontItalic.Value
-                If pf.FontUnderline.HasValue Then .Underline = pf.FontUnderline.Value
-                If pf.FontColor.HasValue Then .Color = pf.FontColor.Value
-            End With                           ' everything that stays Nothing is left untouched
-
-            '--- 3. list formatting -----------------------------------------------
-            If pf.HasListFormat AndAlso pf.ListTemplate IsNot Nothing Then
-                Try
-                    If pRange.ListFormat.ListType <> Word.WdListType.wdListNoNumbering Then
-                        pRange.ListFormat.RemoveNumbers()
-                    End If
-
-                    pRange.ListFormat.ApplyListTemplateWithLevel(
-                        ListTemplate:=pf.ListTemplate,
-                        ContinuePreviousList:=pf.ListLevel > 0,
-                        ApplyTo:=Word.WdListApplyTo.wdListApplyToWholeList,
-                        DefaultListBehavior:=Word.WdDefaultListBehavior.wdWord10ListBehavior)
-                    pRange.ListFormat.ListLevelNumber = pf.ListLevel
-                Catch ex As System.Exception
-                    ' handle / log if necessary
-                End Try
-            End If
-
-            '--- 4. paragraph-level attributes ------------------------------------
-            With pRange.ParagraphFormat
-                .Alignment = pf.Alignment
-                .LineSpacing = pf.LineSpacing
-                .SpaceBefore = pf.SpaceBefore
-                .SpaceAfter = pf.SpaceAfter
-            End With
-        Next
-    End Sub
-
-
 
 
     Public Function CorrectPFORMarkers(ByVal input As String) As String
@@ -12726,6 +13189,120 @@ ContinueLoop:
 
     ' Word Helper Functions
 
+
+    Public Sub RemoveContentControlsRespectSelection()
+        Try
+            Dim app As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
+            Dim sel As Microsoft.Office.Interop.Word.Selection = app.Selection
+
+            Dim hasSelection As Boolean = (sel IsNot Nothing AndAlso sel.Range IsNot Nothing AndAlso sel.Range.Start <> sel.Range.End)
+            Dim removedCount As Integer = 0
+
+            If hasSelection Then
+                removedCount = RemoveContentControlsInRangeKeepContents(sel.Range)
+            Else
+                Dim Answer As Integer = ShowCustomYesNoBox("No text selection detected. Do you want to remove ALL content controls in the entire document?", "Yes", "No, abort")
+                If Answer = 1 Then
+                    removedCount = RemoveAllContentControlsKeepContents(app)
+                Else
+                    ShowCustomMessageBox("Operation aborted.")
+                    Exit Sub
+                End If
+            End If
+
+            ShowCustomMessageBox("Successfully removed " & removedCount.ToString() & " content control(s). Text and formatting were preserved.")
+        Catch ex As System.Exception
+            ShowCustomMessageBox("Error while removing content controls: " & ex.Message)
+        End Try
+    End Sub
+
+    Public Function RemoveAllContentControlsKeepContents(app As Microsoft.Office.Interop.Word.Application) As System.Int32
+        Dim doc As Microsoft.Office.Interop.Word.Document = app.ActiveDocument
+        If doc Is Nothing Then Return 0
+
+        If doc.ProtectionType <> Microsoft.Office.Interop.Word.WdProtectionType.wdNoProtection Then
+            Throw New System.Exception("Document is protected; cannot remove content controls.")
+        End If
+
+        Dim beforeCount As Integer = doc.ContentControls.Count
+
+        ' Snapshot and sort inner-first
+        Dim list As New List(Of Microsoft.Office.Interop.Word.ContentControl)(beforeCount)
+        For i As Integer = 1 To beforeCount
+            list.Add(doc.ContentControls(i))
+        Next
+        list.Sort(Function(a, b) b.Range.Start.CompareTo(a.Range.Start))
+
+        Dim trackWasOn As Boolean = doc.TrackRevisions
+        doc.TrackRevisions = False
+        Try
+            For Each cc In list
+                Try
+                    If cc Is Nothing Then Continue For
+                    If cc.LockContentControl Then cc.LockContentControl = False
+                    If cc.LockContents Then cc.LockContents = False
+                    cc.Delete(False) ' keep contents/formatting
+                Catch
+                    ' continue with other controls
+                End Try
+            Next
+        Finally
+            doc.TrackRevisions = trackWasOn
+        End Try
+
+        Dim afterCount As Integer = doc.ContentControls.Count
+        Return System.Math.Max(0, beforeCount - afterCount)
+    End Function
+
+    Public Function RemoveContentControlsInRangeKeepContents(ByVal rng As Microsoft.Office.Interop.Word.Range) As System.Int32
+        If rng Is Nothing Then Throw New System.Exception("Selection range is not available.")
+        Dim doc As Microsoft.Office.Interop.Word.Document = rng.Document
+        If doc Is Nothing Then Return 0
+
+        If doc.ProtectionType <> Microsoft.Office.Interop.Word.WdProtectionType.wdNoProtection Then
+            Throw New System.Exception("Document is protected; cannot remove content controls.")
+        End If
+
+        ' Collect all controls overlapping the selection, same story only
+        Dim allCcs As Microsoft.Office.Interop.Word.ContentControls = doc.ContentControls
+        Dim list As New List(Of Microsoft.Office.Interop.Word.ContentControl)
+        For i As Integer = 1 To allCcs.Count
+            Dim cc = allCcs(i)
+            If cc.Range Is Nothing Then Continue For
+            If cc.Range.StoryType <> rng.StoryType Then Continue For
+            If cc.Range.Start < rng.End AndAlso cc.Range.End > rng.Start Then
+                list.Add(cc)
+            End If
+        Next
+
+        If list.Count = 0 Then Return 0
+
+        ' Sort inner-first
+        list.Sort(Function(a, b) b.Range.Start.CompareTo(a.Range.Start))
+
+        Dim removed As Integer = 0
+        Dim trackWasOn As Boolean = doc.TrackRevisions
+        doc.TrackRevisions = False
+        Try
+            For Each cc In list
+                Try
+                    If cc Is Nothing Then Continue For
+                    If cc.LockContentControl Then cc.LockContentControl = False
+                    If cc.LockContents Then cc.LockContents = False
+                    cc.Delete(False)
+                    removed += 1
+                Catch
+                    ' ignore and continue
+                End Try
+            Next
+        Finally
+            doc.TrackRevisions = trackWasOn
+        End Try
+
+        Return removed
+    End Function
+
+
     Public Async Sub ImportTextFile()
         Dim sel As Word.Range = Globals.ThisAddIn.Application.Selection.Range
         Dim Doc = Await GetFileContent(Nothing, False, Not String.IsNullOrWhiteSpace(INI_APICall_Object))
@@ -13410,6 +13987,8 @@ ContinueLoop:
 
     Public Async Sub ContextSearch()
 
+        Dim Prefix As String = "-CS"
+
         If INILoadFail() Then Return
 
         Dim EmbedModel As String = ""
@@ -13530,7 +14109,7 @@ ContinueLoop:
                     Dim findText As String = part.Trim()
                     If FindLongTextInChunks(findText, selection) And selection IsNot Nothing Then
                         'selection.Range.HighlightColorIndex = Word.WdColorIndex.wdYellow
-                        doc.Comments.Add(selection.Range, $"{AN5}: '{SearchContext}'")
+                        doc.Comments.Add(selection.Range, $"{AN5}{Prefix}: '{SearchContext}'")
                         selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
                         SuccessHits += 1
                     Else
@@ -13640,6 +14219,9 @@ ContinueLoop:
     End Sub
 
     Public Sub RunSearch_Embed(EmbedModel As String, EmbedVocab As String, SearchContext As String, DoNext As Boolean, DoRefresh As Boolean)
+
+        Dim Prefix = "-CSE"
+
         Try
 
             ' 1) Parameter
@@ -13733,7 +14315,7 @@ ContinueLoop:
                              Application.ActiveDocument,
                              Application.Documents.Open(r.DocId))
                     Dim rng = doc.Range(r.StartOffset, r.EndOffset)
-                    doc.Comments.Add(rng, $"{AN5}: '{SearchContext}' (Score {r.Score:F3})")
+                    doc.Comments.Add(rng, $"{AN5}{Prefix}: '{SearchContext}' (Score {r.Score:F3})")
                 Next
 
                 Application.ActiveDocument.TrackRevisions = trackChangesEnabled
@@ -13769,7 +14351,7 @@ ContinueLoop:
                              Application.ActiveDocument,
                              Application.Documents.Open(r.DocId))
                     Dim rng = doc.Range(r.StartOffset, r.EndOffset)
-                    doc.Comments.Add(rng, $"{AN5}: '{SearchContext}' (Score {r.Score:F3})")
+                    doc.Comments.Add(rng, $"{AN5}{Prefix}: '{SearchContext}' (Score {r.Score:F3})")
                 Next
 
                 Application.ActiveDocument.TrackRevisions = trackChangesEnabled
@@ -13842,6 +14424,9 @@ ContinueLoop:
     End Sub
 
     Public Sub RunSearch_bow(SearchContext As String, DoNext As Boolean, DoRefresh As Boolean)
+
+        Dim Prefix = "-CSB"
+
         Try
 
             ' 1) Parameter
@@ -13936,7 +14521,7 @@ ContinueLoop:
                                    Application.ActiveDocument,
                                    Application.Documents.Open(r.DocId))
                     Dim rng = docTarget.Range(r.StartOffset, r.EndOffset)
-                    docTarget.Comments.Add(rng, $"{AN5}: '{SearchContext}' (BoW score {r.Score:F3})")
+                    docTarget.Comments.Add(rng, $"{AN5}{Prefix}: '{SearchContext}' (BoW score {r.Score:F3})")
                 Next
 
                 Application.ActiveDocument.TrackRevisions = trackChangesEnabled
@@ -13971,7 +14556,7 @@ ContinueLoop:
                                    Application.ActiveDocument,
                                    Application.Documents.Open(r.DocId))
                     Dim rng = docTarget.Range(r.StartOffset, r.EndOffset)
-                    docTarget.Comments.Add(rng, $"{AN5}: '{SearchContext}' (BoW score {r.Score:F3})")
+                    docTarget.Comments.Add(rng, $"{AN5}{Prefix}: '{SearchContext}' (BoW score {r.Score:F3})")
                 Next
 
                 Application.ActiveDocument.TrackRevisions = trackChangesEnabled
@@ -13982,9 +14567,6 @@ ContinueLoop:
             MessageBox.Show("Error in RunSearch_BoW: " & ex.Message)
         End Try
     End Sub
-
-
-
 
 
     ' Other helper functions
@@ -14108,6 +14690,7 @@ ContinueLoop:
                 {"Language1", "Default translation language 1"},
                 {"Language2", "Default translation language 2"},
                 {"PromptLibPath", "Prompt library file"},
+                {"PromptLibPathLocal", "Prompt library file (local)"},
                 {"PromptLibPath_Transcript", "Transcript prompt library file"},
                 {"ShortcutsWordExcel", "Key shortcuts (for direct access)"},
                 {"ChatCap", "Chat conversation memory (chars)"},
@@ -14138,6 +14721,7 @@ ContinueLoop:
                 {"Language1", "The language (in English) that will be used for the first quick access button in the ribbon"},
                 {"Language2", "The language (in English) that will be used for the second quick access button in the ribbon"},
                 {"PromptLibPath", "The filename (including path, support environmental variables) for your prompt library (if any)"},
+                {"PromptLibPathLocal", "The filename (including path, support environmental variables) for your local prompt library (if any)"},
                 {"PromptLibPath_Transcript", "The filename (including path, support environmental variables) for your transcript prompt library (if any)"},
                 {"ShortcutsWordExcel", "You can add key shortcuts by giving the name of the context menu, e.g., 'Correct=Ctrl-Shift-C', separated by ';' (only works if context menus are enabled and the Word helper is installed)"},
                 {"ChatCap", "Use this to limit how many characters of your past chat discussion the chatbot will memorize (for saving costs and time)"},
@@ -14765,7 +15349,21 @@ ContinueLoop:
                                      Dim sel As Microsoft.Office.Interop.Word.Selection = wdApp.Selection
 
                                      wdApp.ScreenUpdating = False
-                                     sel.TypeText(textBody & " (" & sourceUrl & ")")
+
+                                     ' Sanitize inputs and insert without using TypeText
+                                     Dim safeBody As String = If(textBody, String.Empty).Replace(ChrW(0), String.Empty)
+                                     Dim safeUrl As String = If(sourceUrl, String.Empty).Replace(ChrW(0), String.Empty)
+                                     Dim finalText As String = safeBody & " (" & safeUrl & ")"
+
+                                     Dim rng As Word.Range = sel.Range.Duplicate
+                                     If rng.Start = rng.End Then
+                                         rng.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                                         rng.InsertAfter(finalText)
+                                     Else
+                                         rng.Text = finalText  ' replace selected content safely
+                                     End If
+
+                                     sel.SetRange(rng.End, rng.End) ' place caret after inserted text
                                      wdApp.ScreenUpdating = True
 
                                      ' Release COM objects explicitly (good hygiene)
@@ -24344,7 +24942,7 @@ ContinueLoop:
 
 
     ' Helper to add a zero-length comment at a specific position
-    Private Sub AddNoticeBubbleAt(doc As Word.Document, endPos As Integer, noticeText As String)
+    Private Sub AddNoticeBubbleAt(doc As Word.Document, endPos As Integer, noticeText As String, Optional Prefix As String = "")
         If Not INI_MarkdownBubbles Then
             LegacyAddNoticeBubbleAt(doc, endPos, noticeText)
             Return
@@ -24365,16 +24963,32 @@ ContinueLoop:
             Dim ins As Word.Range = cr.Duplicate
             ins.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-            InsertMarkdownToComment(ins, $"{AN5}: " & noticeText)
+            InsertMarkdownToComment(ins, $"{AN5}{Prefix}: " & noticeText)
         Catch
             ' Swallow – adding the notice must not break the main flow
         End Try
     End Sub
-    Private Sub LegacyAddNoticeBubbleAt(doc As Word.Document, endPos As Integer, noticeText As String)
+
+
+    Private Sub LegacyAddNoticeBubbleAt(doc As Word.Document, endPos As Integer, noticeText As String, Optional Prefix As String = "")
         Try
             If doc Is Nothing OrElse String.IsNullOrWhiteSpace(noticeText) Then Return
-            Dim rng As Word.Range = doc.Range(endPos, endPos) ' zero-length anchor
-            doc.Comments.Add(rng, $"{AN5}: " & noticeText)
+
+            ' Ensure we operate in the MAIN story, ignore endPos (may be from another story)
+            Dim win As Word.Window = doc.ActiveWindow
+            Dim prevSeek As Word.WdSeekView = win.View.SeekView
+            Try
+                win.View.SeekView = Word.WdSeekView.wdSeekMainDocument
+
+                Dim mainStory As Word.Range = doc.StoryRanges(Word.WdStoryType.wdMainTextStory)
+                Dim anchor As Word.Range = mainStory.Duplicate
+                anchor.Collapse(Word.WdCollapseDirection.wdCollapseEnd) ' zero-length in MAIN story
+
+                doc.Comments.Add(anchor, $"{AN5}{Prefix}: " & noticeText)
+            Finally
+                ' Restore previous seek view
+                win.View.SeekView = prevSeek
+            End Try
         Catch
             ' Swallow – adding the notice must not break the main flow
         End Try
@@ -24522,6 +25136,1479 @@ ContinueLoop:
         End While
         Return baseText & " [" & i & "]"
     End Function
+
+
+    ' Comment-Tools
+
+    Public Shared Function BubblesExtract(ByVal rng As Microsoft.Office.Interop.Word.Range,
+                                      Optional ByVal Silent As Boolean = False, Optional ByVal SortByDate As Boolean = False) As System.String
+
+        Dim app As Microsoft.Office.Interop.Word.Application = Nothing
+        Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
+
+        Try
+            ' Get Word Application
+            Try
+                Try
+                    app = CType(System.Runtime.InteropServices.Marshal.GetActiveObject("Word.Application"), Microsoft.Office.Interop.Word.Application)
+                Catch ex As System.Exception
+                    app = Globals.ThisAddIn.Application
+                End Try
+            Catch ex As System.Exception
+                If Not Silent Then ShowCustomMessageBox("Unable to access Word Application instance.")
+                Return ""
+            End Try
+
+            ' Get Active Document
+            Try
+                doc = app.ActiveDocument
+            Catch ex As System.Exception
+                If Not Silent Then ShowCustomMessageBox("No active document found.")
+                Return ""
+            End Try
+            If doc Is Nothing Then
+                If Not Silent Then ShowCustomMessageBox("No active document found.")
+                Return ""
+            End If
+
+            ' Rule 1: If range is Nothing or zero-length, use the whole document.
+            Dim effectiveRange As Microsoft.Office.Interop.Word.Range
+            If rng Is Nothing OrElse rng.Start = rng.End Then
+                effectiveRange = doc.Content
+            Else
+                effectiveRange = rng
+            End If
+
+            ' Collect comments fully within effectiveRange
+            Dim allInRange As System.Collections.Generic.List(Of Microsoft.Office.Interop.Word.Comment) =
+            New System.Collections.Generic.List(Of Microsoft.Office.Interop.Word.Comment)()
+
+            Try
+                For Each c As Microsoft.Office.Interop.Word.Comment In doc.Comments
+                    Dim cStart As System.Int32
+                    Dim cEnd As System.Int32
+                    Try
+                        cStart = c.Scope.Start
+                        cEnd = c.Scope.End
+                    Catch
+                        Try
+                            cStart = c.Reference.Start
+                            cEnd = c.Reference.End
+                        Catch
+                            Continue For
+                        End Try
+                    End Try
+                    If cStart >= effectiveRange.Start AndAlso cEnd <= effectiveRange.End Then
+                        allInRange.Add(c)
+                    End If
+                Next
+            Catch ex As System.Exception
+                If Not Silent Then ShowCustomMessageBox("Failed to collect comments from the document.")
+                Return ""
+            End Try
+
+            If allInRange.Count = 0 Then
+                'If Not Silent Then ShowCustomMessageBox("No comments found in the selected range (or document).")
+                Return ""
+            End If
+
+            ' Build author and date sets (date grouped by day)
+            Dim authors As New System.Collections.Generic.HashSet(Of System.String)(System.StringComparer.OrdinalIgnoreCase)
+            Dim dateSet As New System.Collections.Generic.HashSet(Of System.DateTime)()
+
+            For Each c In allInRange
+                Try
+                    Dim a As System.String = If(c.Author, System.String.Empty)
+                    If Not System.String.IsNullOrWhiteSpace(a) Then authors.Add(a)
+                Catch
+                End Try
+                Try
+                    Dim d As System.DateTime = c.Date.Date
+                    If d <> System.DateTime.MinValue Then dateSet.Add(d)
+                Catch
+                End Try
+            Next
+
+            ' Only prompt when not silent
+            Dim needPrompt As System.Boolean = (Not Silent AndAlso (authors.Count > 1 OrElse dateSet.Count > 1))
+
+            Dim selectedAuthor As System.String = "(All authors)"
+            Dim fromDateChoice As System.String = "(All dates)"
+            Dim toDateChoice As System.String = "(All dates)"
+
+            If needPrompt Then
+                ' Author options
+                Dim authorOptions As New System.Collections.Generic.List(Of System.String)()
+                authorOptions.Add("(All authors)")
+                For Each a In authors
+                    authorOptions.Add(a)
+                Next
+                authorOptions.Sort(System.StringComparer.CurrentCultureIgnoreCase)
+
+                ' Date options (descending by date)
+                Dim dateList As New System.Collections.Generic.List(Of System.DateTime)(dateSet)
+                dateList.Sort() : dateList.Reverse()
+                Dim dateOptions As New System.Collections.Generic.List(Of System.String)()
+                dateOptions.Add("(All dates)")
+                Dim now As System.DateTime = System.DateTime.Now
+                For Each d In dateList
+                    Dim daysAgo As System.Int32 = System.Math.Max(0, CInt((now.Date - d.Date).TotalDays))
+                    dateOptions.Add($"{d:yyyy-MM-dd} ({daysAgo} days ago)")
+                Next
+
+                Dim prmAuthor As New SLib.InputParameter() With {
+                .Name = "Author",
+                .Value = "(All authors)",
+                .Options = New System.Collections.Generic.List(Of System.String)(authorOptions)
+            }
+                Dim prmFrom As New SLib.InputParameter() With {
+                .Name = "From date",
+                .Value = "(All dates)",
+                .Options = New System.Collections.Generic.List(Of System.String)(dateOptions)
+            }
+                Dim prmTo As New SLib.InputParameter() With {
+                .Name = "To date",
+                .Value = "(All dates)",
+                .Options = New System.Collections.Generic.List(Of System.String)(dateOptions)
+            }
+
+                Dim parameters As SLib.InputParameter() = {prmAuthor, prmFrom, prmTo}
+
+                Dim ok As System.Boolean = False
+                Try
+                    ok = SLib.ShowCustomVariableInputForm(
+                    "Select an author (or keep 'All authors') and optional date range (From/To). If only 'To' is set, all comments up to and including that date will be selected. If only 'From' is set, all comments from that date onward will be selected.",
+                    $"{AN} Filter Word Comments",
+                    parameters
+                )
+                Catch ex As System.Exception
+                    If Not Silent Then ShowCustomMessageBox("Failed to open the filter dialog.")
+                    ok = False
+                End Try
+
+                If Not ok Then
+                    Dim proceed As Integer = SLib.ShowCustomYesNoBox("No selection made. Do you want to continue with all authors and all dates?", "Yes", "No")
+                    If proceed <> 1 Then
+                        Return ""
+                    End If
+                Else
+                    selectedAuthor = System.Convert.ToString(prmAuthor.Value)
+                    fromDateChoice = System.Convert.ToString(prmFrom.Value)
+                    toDateChoice = System.Convert.ToString(prmTo.Value)
+                    If System.String.IsNullOrWhiteSpace(selectedAuthor) Then selectedAuthor = "(All authors)"
+                    If System.String.IsNullOrWhiteSpace(fromDateChoice) Then fromDateChoice = "(All dates)"
+                    If System.String.IsNullOrWhiteSpace(toDateChoice) Then toDateChoice = "(All dates)"
+                End If
+            End If
+
+            ' Parse "yyyy-MM-dd (…)" labels
+            Dim parseDateFromLabel As System.Func(Of System.String, System.Nullable(Of System.DateTime)) =
+            Function(lbl As System.String) As System.Nullable(Of System.DateTime)
+                If System.String.Equals(lbl, "(All dates)", System.StringComparison.OrdinalIgnoreCase) Then Return Nothing
+                Dim spaceIdx As System.Int32 = lbl.IndexOf(" "c)
+                If spaceIdx <= 0 Then Return Nothing
+                Dim datePart As System.String = lbl.Substring(0, spaceIdx)
+                Dim d As System.DateTime
+                If System.DateTime.TryParseExact(datePart, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, d) Then
+                    Return d.Date
+                End If
+                Return Nothing
+            End Function
+
+            Dim fromDate As System.Nullable(Of System.DateTime) = parseDateFromLabel(fromDateChoice)
+            Dim toDate As System.Nullable(Of System.DateTime) = parseDateFromLabel(toDateChoice)
+
+            ' Apply filters
+            Dim filtered As System.Collections.Generic.IEnumerable(Of Microsoft.Office.Interop.Word.Comment) = allInRange
+
+            If Not System.String.Equals(selectedAuthor, "(All authors)", System.StringComparison.OrdinalIgnoreCase) Then
+                filtered = filtered.Where(Function(c)
+                                              Dim a As System.String = System.String.Empty
+                                              Try : a = If(c.Author, System.String.Empty) : Catch : End Try
+                                              Return System.String.Equals(a, selectedAuthor, System.StringComparison.OrdinalIgnoreCase)
+                                          End Function)
+            End If
+
+            If fromDate.HasValue OrElse toDate.HasValue Then
+                filtered = filtered.Where(Function(c)
+                                              Dim d As System.DateTime
+                                              Try : d = c.Date.Date : Catch : Return False : End Try
+                                              If fromDate.HasValue AndAlso toDate.HasValue Then
+                                                  Return d >= fromDate.Value.Date AndAlso d <= toDate.Value.Date
+                                              ElseIf fromDate.HasValue Then
+                                                  Return d >= fromDate.Value.Date
+                                              ElseIf toDate.HasValue Then
+                                                  Return d <= toDate.Value.Date
+                                              Else
+                                                  Return True
+                                              End If
+                                          End Function)
+            End If
+
+            Dim finalList As System.Collections.Generic.List(Of Microsoft.Office.Interop.Word.Comment)
+
+            If SortByDate Then
+
+                finalList =
+            filtered.OrderBy(Function(c)
+                                 Dim d As System.DateTime = System.DateTime.MinValue
+                                 Try : d = c.Date : Catch : End Try
+                                 Return d
+                             End Function).
+                     ThenBy(Function(c)
+                                Try
+                                    Return c.Scope.Start
+                                Catch
+                                    Return System.Int32.MaxValue
+                                End Try
+                            End Function).
+                     ToList()
+
+            Else
+                ' Sort strictly by order of appearance in the document
+                finalList = filtered.OrderBy(Function(c) CommentStartPos(c)).ThenBy(Function(c) CommentEndPos(c)).ToList()
+
+            End If
+
+
+            If finalList.Count = 0 Then
+                If Not Silent Then ShowCustomMessageBox("No comments matched the selected filters.")
+                Return ""
+            End If
+
+            ' Build XML
+            Dim sb As New System.Text.StringBuilder()
+            sb.AppendLine("<WORDBUBBLES>")
+            sb.Append("  <Summary ")
+            sb.Append($"documentName=""{xmlEscapeSafe(doc.Name)}"" ")
+            sb.Append($"rangeStart=""{effectiveRange.Start}"" ")
+            sb.Append($"rangeEnd=""{effectiveRange.End}"" ")
+            If selectedAuthor <> "" Then sb.Append($"authorFilter=""{xmlEscapeSafe(selectedAuthor)}"" ")
+            If fromDateChoice <> "" Then sb.Append($"fromFilter=""{xmlEscapeSafe(fromDateChoice)}"" ")
+            If toDateChoice <> "" Then sb.Append($"toFilter=""{xmlEscapeSafe(toDateChoice)}"" ")
+            sb.AppendLine($"/>")
+
+            For Each c In finalList
+                Dim author As System.String = System.String.Empty
+                Dim initials As System.String = System.String.Empty
+                Dim dateStr As System.String = System.String.Empty
+                Dim text As System.String = System.String.Empty
+                Dim referencedText As System.String = System.String.Empty
+                Dim commentIndex As System.Int32 = -1
+
+                Try : author = If(c.Author, System.String.Empty) : Catch : End Try
+                Try : initials = If(c.Initial, System.String.Empty) : Catch : End Try
+                Try : dateStr = c.Date.ToString("yyyy-MM-ddTHH:mm:ssK", System.Globalization.CultureInfo.InvariantCulture) : Catch : End Try
+                Try : text = If(c.Range.Text, System.String.Empty) : Catch : End Try
+                Try : referencedText = If(c.Scope.Text, System.String.Empty) : Catch : End Try
+                Try : commentIndex = c.Index : Catch : End Try
+
+                ' Pseudo-stable ID based on contents (position independent)
+                Dim idMaterial As System.String = author & "|" & initials & "|" & dateStr & "|" & referencedText & "|" & text
+                Dim stableId As System.String = ComputeSha256Hex(idMaterial)
+
+                sb.AppendLine("  <Comment " &
+                          $"id=""{xmlEscapeSafe(stableId)}"" " &
+                          $"wordIndex=""{commentIndex}"" " &
+                          $"author=""{xmlEscapeSafe(author)}"" " &
+                          $"initials=""{xmlEscapeSafe(initials)}"" " &
+                          $"date=""{xmlEscapeSafe(dateStr)}"">")
+                sb.AppendLine($"    <ScopeText>{xmlEscapeSafe(referencedText)}</ScopeText>")
+                sb.AppendLine($"    <Content>{xmlEscapeSafe(text)}</Content>")
+                sb.AppendLine("  </Comment>")
+            Next
+
+            sb.AppendLine("</WORDBUBBLES>")
+            Return sb.ToString()
+
+        Catch ex As System.Exception
+            If Not Silent Then ShowCustomMessageBox($"Unexpected error: {ex.Message}")
+            Return ""
+        End Try
+    End Function
+
+    ' Helper: safe start/end for a comment’s anchor in the document
+    Private Shared Function CommentStartPos(c As Microsoft.Office.Interop.Word.Comment) As Integer
+        Try
+            Return c.Scope.Start
+        Catch
+            Try
+                Return c.Reference.Start
+            Catch
+                Return Integer.MaxValue
+            End Try
+        End Try
+    End Function
+
+    Private Shared Function CommentEndPos(c As Microsoft.Office.Interop.Word.Comment) As Integer
+        Try
+            Return c.Scope.End
+        Catch
+            Try
+                Return c.Reference.End
+            Catch
+                Return Integer.MaxValue
+            End Try
+        End Try
+    End Function
+
+
+    ' : ReplyToWordComment (by Word-ID, fallback by PseudoHashID)
+    ' Replies to an existing Word comment. First tries by Word-ID (c.Index), then (if not found) by pseudo hash id (same as in BubblesExtract).
+    ' If formatted = True, calls InsertMarkdownToComment to write the reply content; otherwise inserts as plain text.
+    ' Returns True on success, False otherwise (with user-facing messages via ShowCustomMessageBox).
+
+    Public Shared Function ReplyToWordComment(ByVal wordId As System.Nullable(Of System.Int32),
+                                              ByVal pseudoHashId As System.String,
+                                              ByVal replyText As System.String,
+                                              ByVal formatted As System.Boolean) As System.Boolean
+        Dim app As Microsoft.Office.Interop.Word.Application = Nothing
+        Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
+
+        Try
+            Try
+                app = CType(System.Runtime.InteropServices.Marshal.GetActiveObject("Word.Application"), Microsoft.Office.Interop.Word.Application)
+            Catch ex As System.Exception
+                app = Globals.ThisAddIn.Application
+            End Try
+        Catch ex As System.Exception
+            Debug.WriteLine("ReplyToComment: Unable to access Word Application instance.")
+            Return False
+        End Try
+
+        Try
+            doc = app.ActiveDocument
+        Catch ex As System.Exception
+            Debug.WriteLine("ReplyToComment: No active document found.")
+            Return False
+        End Try
+        If doc Is Nothing Then
+            ShowCustomMessageBox("ReplyToComment: No active document found.")
+            Return False
+        End If
+
+        If System.String.IsNullOrEmpty(replyText) Then
+            Debug.WriteLine("Reply text is empty.")
+            Return False
+        End If
+
+        ' 1) Try locate by Word-ID (Index)
+        Dim target As Microsoft.Office.Interop.Word.Comment = Nothing
+        If wordId.HasValue Then
+            For Each c As Microsoft.Office.Interop.Word.Comment In doc.Comments
+                Try
+                    If c.Index = wordId.Value Then
+                        target = c
+                        Exit For
+                    End If
+                Catch
+                End Try
+            Next
+        End If
+
+        ' 2) Fallback: locate by pseudo hash id (content-based)
+        If target Is Nothing AndAlso Not System.String.IsNullOrWhiteSpace(pseudoHashId) Then
+            For Each c As Microsoft.Office.Interop.Word.Comment In doc.Comments
+                Try
+                    Dim author As System.String = If(c.Author, System.String.Empty)
+                    Dim initials As System.String = If(c.Initial, System.String.Empty)
+                    Dim dateStr As System.String = c.Date.ToString("yyyy-MM-ddTHH:mm:ssK", System.Globalization.CultureInfo.InvariantCulture)
+                    Dim text As System.String = If(c.Range.Text, System.String.Empty)
+                    Dim referencedText As System.String = System.String.Empty
+                    Try : referencedText = If(c.Scope.Text, System.String.Empty) : Catch : referencedText = System.String.Empty : End Try
+
+                    Dim idMaterial As System.String = author & "|" & initials & "|" & dateStr & "|" & referencedText & "|" & text
+                    Dim stableId As System.String = ComputeSha256Hex(idMaterial)
+
+                    If System.String.Equals(stableId, pseudoHashId, System.StringComparison.OrdinalIgnoreCase) Then
+                        target = c
+                        Exit For
+                    End If
+                Catch
+                End Try
+            Next
+        End If
+
+        If target Is Nothing Then
+            Debug.WriteLine("ReplyToComment: Target comment not found by Word-ID or pseudo hash id.")
+            Return False
+        End If
+
+        ' 3) Try to create a threaded reply if available, else fall back to appending inside the original comment range.
+        Try
+            ' Preferred path: threaded reply (Word 2013+)
+            Dim newReply As Microsoft.Office.Interop.Word.Comment = Nothing
+            Try
+                ' Use the same anchor scope for the reply; text will be set via Range below.
+                newReply = target.Replies.Add(target.Scope, System.String.Empty)
+            Catch
+                ' Some versions may require a reference range; try Reference
+                Try
+                    newReply = target.Replies.Add(target.Reference, System.String.Empty)
+                Catch
+                    newReply = Nothing
+                End Try
+            End Try
+
+            If newReply IsNot Nothing Then
+                If formatted Then
+                    ' Use provided formatter
+                    InsertMarkdownToComment(newReply.Range, replyText)
+                Else
+                    newReply.Range.Text = replyText
+                End If
+                Return True
+            End If
+        Catch ex As System.Exception
+            ' fall through to non-threaded fallback
+        End Try
+
+        ' 4) Fallback: append "reply" inside the original comment content (non-threaded Word)
+        Try
+            Dim sep As System.String = System.Environment.NewLine & System.Environment.NewLine & "--- Reply ---" & System.Environment.NewLine
+            If formatted Then
+                ' Insert separator as plain, then formatted content after it
+                target.Range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                target.Range.Text &= sep
+                target.Range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                InsertMarkdownToComment(target.Range, replyText)
+            Else
+                target.Range.Text = (If(target.Range.Text, System.String.Empty)) & sep & replyText
+            End If
+            Return True
+        Catch ex As System.Exception
+            ShowCustomMessageBox($"ReplyToComment failed to add the reply: {ex.Message}")
+            Return False
+        End Try
+    End Function
+
+
+    ' Helper: XML escape
+    Private Shared Function xmlEscapeSafe(ByVal s As System.String) As System.String
+        If s Is Nothing Then Return System.String.Empty
+        Dim r As System.String = s.Replace("&", "&amp;").
+                                  Replace("<", "&lt;").
+                                  Replace(">", "&gt;").
+                                  Replace("""", "&quot;").
+                                  Replace("'", "&apos;")
+        Return r
+    End Function
+
+
+    ' Helper: Compute SHA-256 hex for pseudo ID
+    Private Shared Function ComputeSha256Hex(ByVal input As System.String) As System.String
+        If input Is Nothing Then input = System.String.Empty
+        Dim bytes As System.Byte() = System.Text.Encoding.UTF8.GetBytes(input)
+        Using sha As System.Security.Cryptography.SHA256 = System.Security.Cryptography.SHA256.Create()
+            Dim hash As System.Byte() = sha.ComputeHash(bytes)
+            Dim sbHex As New System.Text.StringBuilder(hash.Length * 2)
+            For Each b As System.Byte In hash
+                sbHex.Append(b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture))
+            Next
+            Return sbHex.ToString()
+        End Using
+    End Function
+
+
+
+    Public Async Function FindHiddenPrompts() As System.Threading.Tasks.Task
+
+        Dim Prefix As String = "-FHP"
+
+        Try
+            Dim app As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
+            Dim sel As Microsoft.Office.Interop.Word.Selection = app.Selection
+
+            Dim JumpRoundA As Boolean = False
+            Dim CheckAll As Boolean = False
+
+            ' Cache the exact selection to reuse later (non-CheckAll path)
+            Dim doc As Microsoft.Office.Interop.Word.Document = app.ActiveDocument
+            If doc Is Nothing Then
+                ShowCustomMessageBox("No active document found.")
+                Return
+            End If
+
+            If sel.Type = WdSelectionType.wdSelectionIP Then
+                Dim answer As Integer = ShowCustomYesNoBox("You have not selected any text. Check the all text (including foot- and endnotes) or instead check a file?", "Check all text", "Check file")
+                If answer = 0 Then Return
+                If answer = 1 Then
+                    app.Selection.WholeStory()
+                    sel = app.Selection
+                    CheckAll = True
+                Else
+                    DragDropFormLabel = "Document files (.txt, .docx, .pdf) or Powerpoint (.pptx)."
+                    DragDropFormFilter = "Supported Files|*.txt;*.rtf;*.doc;*.docx;*.pdf;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm)|*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm;*.pptx||" &
+                                     "Text Files (*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm)|*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm|" &
+                                     "Rich Text Files (*.rtf)|*.rtf|" &
+                                     "Word Documents (*.doc;*.docx)|*.doc;*.docx|" &
+                                     "PDF Files (*.pdf)|*.pdf" &
+                                     "Powerpoint Files (*.pptx)|*.pptx"
+
+                    Dim FilePath As String = GetFileName()
+                    DragDropFormLabel = ""
+                    DragDropFormFilter = ""
+                    If String.IsNullOrWhiteSpace(FilePath) Then
+                        ShowCustomMessageBox("No file has been selected - will abort.")
+                        Return
+                    End If
+
+                    Dim ext As String = IO.Path.GetExtension(FilePath).ToLowerInvariant()
+
+                    Dim FromFile As String = ""
+                    Select Case ext
+                        Case ".txt", ".ini", ".csv", ".log", ".json", ".xml", ".html", ".htm"
+                            FromFile = ReadTextFile(FilePath, True)
+                        Case ".rtf"
+                            FromFile = ReadRtfAsText(FilePath, True)
+                        Case ".doc", ".docx"
+                            FromFile = ReadWordDocument(FilePath, True)
+                        Case ".pdf"
+                            Dim OCRAnswer As Integer = ShowCustomYesNoBox("Do you want to enable OCR for scanned PDFs? This may take longer and not find invisible text (you will be asked to confirm).", "No, proceed without", "Yes, do OCR if needed")
+                            If OCRAnswer = 0 Then
+                                ShowCustomMessageBox("Aborted by you.")
+                                Return
+                            End If
+                            FromFile = Await ReadPdfAsText(FilePath, True, OCRAnswer = 2, True, _context)
+                        Case ".pptx"
+                            FromFile = GetPresentationJson(FilePath)
+                        Case Else
+                            FromFile = "Error: File type not supported."
+                    End Select
+                    If FromFile.StartsWith("Error:") Then
+                        ShowCustomMessageBox(FromFile)
+                        Return
+                    End If
+                    If String.IsNullOrWhiteSpace(FromFile) Then
+                        ShowCustomMessageBox("The file you provided did not contain any text - will abort.")
+                        Return
+                    End If
+
+                    Dim newDoc As Word.Document = Globals.ThisAddIn.Application.Documents.Add()
+                    newDoc.Activate()
+
+                    Dim rng As Word.Range = newDoc.Content
+                    rng.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                    Dim safeText As String = FromFile.Replace(ChrW(0), String.Empty)
+                    rng.InsertAfter(safeText)
+
+                    newDoc.Content.Select()
+
+                    sel = app.Selection
+                    JumpRoundA = True
+                End If
+            End If
+
+            ' If user chose "Check all text" (no special file flow), iterate all stories.
+            If CheckAll AndAlso Not JumpRoundA Then
+                Dim originalStart As Integer = sel.Start
+                Dim originalEnd As Integer = sel.End
+
+                ' Build a flat list of all story ranges (including linked instances)
+                Dim storyList As New List(Of (rng As Word.Range, st As Word.WdStoryType))()
+                For Each firstStory As Word.Range In doc.StoryRanges
+                    Dim cur As Word.Range = firstStory
+                    Do While cur IsNot Nothing
+                        If cur.StoryLength > 0 Then
+                            storyList.Add((cur.Duplicate, cur.StoryType))
+                        End If
+                        cur = cur.NextStoryRange
+                    Loop
+                Next
+
+                ' Aggregate findings for non-commentable stories we must not use SetBubbles on.
+                Dim footnoteLines As New List(Of String)()  ' For footnotes
+                Dim endnoteLines As New List(Of String)()   ' For endnotes
+
+                ' Pass 1: Deterministic checks (Round A) across ALL stories
+                For Each s In storyList
+                    Dim tr As Word.Range = s.rng
+                    Dim st As Word.WdStoryType = s.st
+                    If tr Is Nothing OrElse String.IsNullOrWhiteSpace(tr.Text) Then Continue For
+
+                    Dim roundA As String = BuildSuspicionBubbleString(tr)
+                    Debug.WriteLine($"FindHiddenPrompts[RoundA][{st}]: {roundA}")
+
+                    If Not String.IsNullOrEmpty(roundA) Then
+                        If IsFootnoteOrEndnote(st) Then
+                            If st = Word.WdStoryType.wdFootnotesStory Then
+                                footnoteLines.AddRange(ConvertSetBubblesToLines(roundA))
+                            ElseIf st = Word.WdStoryType.wdEndnotesStory Then
+                                endnoteLines.AddRange(ConvertSetBubblesToLines(roundA))
+                            End If
+                        ElseIf IsCommentableStory(st) Then
+                            Try
+                                tr.Select()
+                                SetBubbles(roundA, app.Selection, True, prefix)
+                            Catch
+                                ' Silently skip if comments fail for this story
+                            End Try
+                        End If
+                    End If
+                Next
+
+                ' Pass 2: LLM checks (Round B) across ALL stories
+                ShowCustomMessageBox("Now having your LLM check the document (including foot- and endnotes) for potentially malicious content...", autoCloseSeconds:=5, Defaulttext:="")
+                Dim systemPrompt As String = InterpolateAtRuntime(SP_FindPrompts & " " & SP_Add_Bubbles)
+
+                For Each s In storyList
+                    Dim tr As Word.Range = s.rng
+                    Dim st As Word.WdStoryType = s.st
+                    If tr Is Nothing OrElse String.IsNullOrWhiteSpace(tr.Text) Then Continue For
+
+                    Dim userPrompt As String = "<TEXTTOPROCESS>" & tr.Text & "</TEXTTOPROCESS>"
+                    Dim llmResult As String = Await LLM(systemPrompt, userPrompt, "", "", 0, False)
+                    llmResult = If(llmResult, "").Trim()
+
+                    If Not String.IsNullOrEmpty(llmResult) Then
+                        If IsFootnoteOrEndnote(st) Then
+                            If st = Word.WdStoryType.wdFootnotesStory Then
+                                footnoteLines.AddRange(ConvertSetBubblesToLines(llmResult))
+                            ElseIf st = Word.WdStoryType.wdEndnotesStory Then
+                                endnoteLines.AddRange(ConvertSetBubblesToLines(llmResult))
+                            End If
+                        ElseIf IsCommentableStory(st) Then
+                            Try
+                                tr.Select()
+                                SetBubbles(llmResult, app.Selection, True, prefix)
+                            Catch
+                                ' Silently skip if comments fail for this story
+                            End Try
+                        End If
+                    End If
+                Next
+
+                ' Add a single summary comment at the very end of the MAIN story for footnote/endnote findings.
+                Dim mainEnd As Integer = doc.StoryRanges(Word.WdStoryType.wdMainTextStory).End
+
+                If footnoteLines.Count > 0 Then
+                    Dim notice As String = BuildNoticeText("Footnote", footnoteLines)
+                    Debug.WriteLine("Footnote Notice: " & notice)
+                    LegacyAddNoticeBubbleAt(doc, mainEnd, notice, prefix)
+                End If
+
+                If endnoteLines.Count > 0 Then
+                    Dim notice As String = BuildNoticeText("Endnote", endnoteLines)
+                    Debug.WriteLine("Endnote Notice: " & notice)
+                    LegacyAddNoticeBubbleAt(doc, mainEnd, notice, prefix)
+                End If
+
+                ' Restore original selection
+                Try
+                    app.Selection.SetRange(originalStart, originalEnd)
+                Catch
+                End Try
+
+                ShowCustomMessageBox("Analysis completed. See bubble comments and the final notice for footnote/endnote results.")
+                Return
+            End If
+
+            ' ===== Original behavior (selection-based OR JumpRoundA flow) =====
+
+            Dim selStart As System.Int32 = sel.Start
+            Dim selEnd As System.Int32 = sel.End
+            Dim sameSel As Microsoft.Office.Interop.Word.Selection = Nothing
+
+            If Not JumpRoundA Then
+                Dim roundA As System.String = BuildSuspicionBubbleString(sel.Range)
+                Debug.WriteLine("FindHiddenPrompts: Formatting-based findings: " & roundA)
+
+                If Not System.String.IsNullOrEmpty(roundA) Then
+                    ' Apply first-round bubbles
+                    SetBubbles(roundA, sel, True, prefix)
+                End If
+
+                ' Reselect the ORIGINAL span before (b)
+                app.Selection.SetRange(selStart, selEnd)
+                sameSel = app.Selection
+                If sameSel Is Nothing OrElse sameSel.Range Is Nothing OrElse sameSel.Range.Text Is Nothing _
+               OrElse sameSel.Range.Text.Length = 0 Then
+                    Return
+                End If
+
+                ShowCustomMessageBox("Now having your LLM check the selected text for potentially malicious content...", autoCloseSeconds:=5, Defaulttext:="")
+            Else
+                sameSel = sel
+            End If
+
+            ' LLM check on the SAME selection as before
+            Dim systemPrompt2 As String = InterpolateAtRuntime(SP_FindPrompts & " " & SP_Add_Bubbles)
+            Dim userPrompt2 As String = "<TEXTTOPROCESS>" & sameSel.Range.Text & "</TEXTTOPROCESS>"
+
+            Dim llmResult2 As String = Await LLM(systemPrompt2, userPrompt2, "", "", 0, False)
+            llmResult2 = If(llmResult2, "").Trim()
+            If llmResult2 Is Nothing OrElse llmResult2.Length = 0 Then
+                If JumpRoundA Then
+                    ShowCustomMessageBox("No potentially malicious text found.")
+                    Return
+                End If
+            End If
+
+            SetBubbles(llmResult2, sameSel, True, prefix)
+            ShowCustomMessageBox("Analysis completed. See bubble comments for the results.")
+
+        Catch ex As System.Exception
+            ShowCustomMessageBox("An error occurred in FindHiddenPrompts: " & ex.Message)
+        End Try
+    End Function
+
+    Private Function IsFootnoteOrEndnote(st As Word.WdStoryType) As Boolean
+        Return st = Word.WdStoryType.wdFootnotesStory OrElse st = Word.WdStoryType.wdEndnotesStory
+    End Function
+
+    Private Function IsCommentableStory(st As Word.WdStoryType) As Boolean
+        ' Comments (and thus SetBubbles) are allowed in main body and usually text frames.
+        ' They are not allowed in headers/footers/footnotes/endnotes.
+        Return st = Word.WdStoryType.wdMainTextStory OrElse st = Word.WdStoryType.wdTextFrameStory
+    End Function
+
+    Private Function ConvertSetBubblesToLines(raw As String) As List(Of String)
+        Dim lines As New List(Of String)()
+        If String.IsNullOrWhiteSpace(raw) Then Return lines
+
+        Dim recs = raw.Split(New String() {"§§§"}, StringSplitOptions.RemoveEmptyEntries)
+        For Each rec In recs
+            Dim parts = rec.Split(New String() {"@@"}, 2, StringSplitOptions.None)
+            Dim txt As String = If(parts.Length > 0, parts(0), String.Empty)
+            Dim cmt As String = If(parts.Length > 1, parts(1), String.Empty)
+            If Not String.IsNullOrWhiteSpace(txt) OrElse Not String.IsNullOrWhiteSpace(cmt) Then
+                lines.Add($"""{txt}"": {cmt}")
+            End If
+        Next
+        Return lines
+    End Function
+
+    Private Function BuildNoticeText(scope As String, lines As List(Of String)) As String
+        Dim sb As New System.Text.StringBuilder()
+        ' Heading required: "Suspicious Footnote text:" or "Suspicious Endnote text:"
+        sb.AppendLine($"Suspicious {scope} text:")
+        For Each l In lines
+            sb.AppendLine(l)
+        Next
+        Return sb.ToString().TrimEnd()
+    End Function
+
+    ' ===== (a) Build: text@@comment§§§text@@comment... =====
+    Private Function BuildSuspicionBubbleString(ByVal rng As Microsoft.Office.Interop.Word.Range) As System.String
+        Try
+            Dim findings As List(Of SuspiciousSpan) = AnalyzeFormattingSuspicion(rng)
+            If findings Is Nothing OrElse findings.Count = 0 Then Return String.Empty
+
+            Dim sb As New System.Text.StringBuilder()
+
+            For Each f In findings
+                Dim snippet As String = f.Snippet
+                If String.IsNullOrEmpty(snippet) AndAlso f.Length > 0 Then
+                    ' Reconstruct snippet from SAME story using relative offsets
+                    Try
+                        snippet = SliceByRel(rng, f.StartIndex, f.Length).Text
+                    Catch
+                        snippet = String.Empty
+                    End Try
+                End If
+
+                sb.Append(snippet).Append("@@").Append(f.Reason).Append("§§§")
+            Next
+
+            If sb.Length >= 3 AndAlso sb.ToString().EndsWith("§§§", StringComparison.Ordinal) Then
+                sb.Length -= 3
+            End If
+            Return sb.ToString()
+        Catch
+            Return String.Empty
+        End Try
+    End Function
+
+
+    ' ===== Formatting heuristics (includes Word Hidden text) =====
+
+    Private Function AnalyzeFormattingSuspicion(ByVal rng As Microsoft.Office.Interop.Word.Range) As System.Collections.Generic.List(Of SuspiciousSpan)
+        Dim findings As New System.Collections.Generic.List(Of SuspiciousSpan)()
+
+        ' Initialize progress/cancel
+        Try
+            ProgressBarModule.CancelOperation = False
+        Catch
+            ' ignore
+        End Try
+
+        Dim baseStart As Integer = rng.Start
+        Const TinyFontPt As Single = 3.0F
+        Const MinFindingLen As Integer = 3 ' strictly > 2
+
+        ' Pre-compute total work units for progress:
+        Dim charCount As Integer = 0
+        Dim wordCount As Integer = 0
+        Try : charCount = If(rng IsNot Nothing AndAlso rng.Characters IsNot Nothing, rng.Characters.Count, 0) : Catch : charCount = 0 : End Try
+        Try : wordCount = If(rng IsNot Nothing AndAlso rng.Words IsNot Nothing, rng.Words.Count, 0) : Catch : wordCount = 0 : End Try
+
+        ' Heuristic passes that iterate words below (keep in sync with AddRuns calls)
+        Const HeuristicPasses As Integer = 10
+        Dim totalUnits As Integer = charCount + (wordCount * HeuristicPasses)
+        If totalUnits <= 0 Then totalUnits = 1
+
+        ' Start progress window
+        Try
+            ProgressBarModule.GlobalProgressMax = totalUnits
+            ProgressBarModule.GlobalProgressValue = 0
+            ProgressBarModule.GlobalProgressLabel = "Scanning hidden text…"
+            ProgressBarModule.ShowProgressBarInSeparateThread("Analyzing hidden/obfuscated text", "Preparing…")
+        Catch
+            ' ignore UI issues
+        End Try
+
+        ' 1) Robust Hidden text spans (Ausgeblendet) — only if there is any hidden text (True or wdUndefined)
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        Dim hiddenState As Integer = 0
+        Try : hiddenState = CInt(rng.Font.Hidden) : Catch : hiddenState = 0 : End Try
+        If hiddenState <> 0 Then
+            AddHiddenRunsByFind(rng, baseStart, MinFindingLen, findings)
+        End If
+
+        ' Helper: token has visible (non-whitespace) chars
+        Dim isVisibleToken As Func(Of Microsoft.Office.Interop.Word.Range, Boolean) =
+    Function(w As Microsoft.Office.Interop.Word.Range)
+        Dim t = w.Text
+        Return Not String.IsNullOrEmpty(t) AndAlso t.Trim().Length > 0
+    End Function
+
+        ' 2) Aggregate additional heuristics into contiguous runs (emit only if span >= MinFindingLen)
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        ProgressBarModule.GlobalProgressLabel = "Checking very small font size…"
+        AddRuns(rng,
+        Function(w)
+            If Not isVisibleToken(w) Then Return False
+            Return SafePt(w.Font.Size, 11.0F) < TinyFontPt
+        End Function,
+        "Very small font size",
+        baseStart, MinFindingLen, findings)
+
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        ProgressBarModule.GlobalProgressLabel = "Checking font vs paragraph shading…"
+        AddRuns(rng,
+        Function(w)
+            If Not isVisibleToken(w) Then Return False
+            Return HasMeaningfulShading(w) AndAlso FontEqualsShadingColorIndex(w)
+        End Function,
+        "Font color equals background shading color",
+        baseStart, MinFindingLen, findings)
+
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        ProgressBarModule.GlobalProgressLabel = "Checking white-on-white…"
+        AddRuns(rng,
+        Function(w)
+            If Not isVisibleToken(w) Then Return False
+            Return IsWhiteOnWhite(w)
+        End Function,
+        "Likely white-on-white (near-invisible) text",
+        baseStart, MinFindingLen, findings)
+
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        ProgressBarModule.GlobalProgressLabel = "Checking font vs highlight color…"
+        AddRuns(rng,
+        Function(w)
+            If Not isVisibleToken(w) Then Return False
+            Return HasMeaningfulHighlight(w) AndAlso FontEqualsHighlightColorIndex(w)
+        End Function,
+        "Font color equals highlight color (camouflage)",
+        baseStart, MinFindingLen, findings)
+
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        ProgressBarModule.GlobalProgressLabel = "Checking extreme font scaling…"
+        AddRuns(rng,
+        Function(w)
+            If Not isVisibleToken(w) Then Return False
+            Return SafePercent(w.Font.Scaling, 100) <= 10
+        End Function,
+        "Extreme font scaling (condensed)",
+        baseStart, MinFindingLen, findings)
+
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        ProgressBarModule.GlobalProgressLabel = "Checking negative character spacing…"
+        AddRuns(rng,
+        Function(w)
+            If Not isVisibleToken(w) Then Return False
+            Return SafePercent(w.Font.Spacing, 0) < -2
+        End Function,
+        "Very negative character spacing",
+        baseStart, MinFindingLen, findings)
+
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        ProgressBarModule.GlobalProgressLabel = "Checking font vs table cell shading…"
+        AddRuns(rng,
+        Function(w)
+            Dim t = w.Text : If String.IsNullOrEmpty(t) OrElse t.Trim().Length = 0 Then Return False
+            Return HasMeaningfulCellShading(w) AndAlso FontEqualsCellShadingColorIndex(w)
+        End Function,
+        "Font color equals table cell background color",
+        baseStart, MinFindingLen, findings)
+
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        ProgressBarModule.GlobalProgressLabel = "Checking white-on-white in table cells…"
+        AddRuns(rng,
+        Function(w)
+            Dim t = w.Text : If String.IsNullOrEmpty(t) OrElse t.Trim().Length = 0 Then Return False
+            If Not HasMeaningfulCellShading(w) Then Return False
+            Dim fontIsWhite As Boolean =
+                (w.Font.ColorIndex = Microsoft.Office.Interop.Word.WdColorIndex.wdWhite) OrElse
+                IsLikelyInvisibleOnWhite(SafeWdColorToRgb(w.Font.Color))
+            Return fontIsWhite AndAlso w.Cells(1).Shading.BackgroundPatternColorIndex = Microsoft.Office.Interop.Word.WdColorIndex.wdWhite
+        End Function,
+        "Likely white-on-white text in table cell",
+        baseStart, MinFindingLen, findings)
+
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        ProgressBarModule.GlobalProgressLabel = "Checking zero-width/Bidi controls…"
+        AddRuns(rng,
+        Function(w)
+            Dim raw As String = w.Text
+            If String.IsNullOrEmpty(raw) Then Return False
+            Return ContainsZeroWidthOrBidi(raw) AndAlso raw.Trim().Length > 0
+        End Function,
+        "Zero-width/Bidi control characters present",
+        baseStart, MinFindingLen, findings)
+
+        If ProgressBarModule.CancelOperation Then
+            Return findings
+        End If
+        ProgressBarModule.GlobalProgressLabel = "Checking field code formatting switches…"
+        AddRuns(rng,
+        Function(w)
+            Try
+                If w.Fields Is Nothing OrElse w.Fields.Count = 0 Then Return False
+                For Each f As Microsoft.Office.Interop.Word.Field In w.Fields
+                    If f Is Nothing OrElse f.Code Is Nothing OrElse f.Code.Text Is Nothing Then Continue For
+                    Dim code As String = f.Code.Text
+                    If code.IndexOf("\* MERGEFORMAT", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
+                       code.IndexOf("\* CHARFORMAT", StringComparison.OrdinalIgnoreCase) >= 0 Then
+                        Return True
+                    End If
+                Next
+                Return False
+            Catch
+                Return False
+            End Try
+        End Function,
+        "Field code with formatting switches (may hide text)",
+        baseStart, MinFindingLen, findings)
+
+        Dim result = DeduplicateFindings(findings)
+
+        ' Complete & close progress (both normal/early exit handled)
+        Try
+            ProgressBarModule.GlobalProgressLabel = "Completed"
+            ProgressBarModule.GlobalProgressValue = ProgressBarModule.GlobalProgressMax
+            System.Threading.Tasks.Task.Delay(500)
+            ProgressBarModule.CancelOperation = True
+        Catch
+        End Try
+
+        Return result
+    End Function
+
+
+    ' Helper: slice a Range inside the SAME story as rng using absolute story coordinates
+    Private Function SliceInSameStory(rng As Word.Range, absStart As Integer, absEnd As Integer) As Word.Range
+        Dim slice As Word.Range = rng.Duplicate
+        slice.Start = absStart
+        slice.End = absEnd
+        Return slice
+    End Function
+
+    ' Helper: slice by relative offsets from rng.Start inside the SAME story
+    Private Function SliceByRel(rng As Word.Range, relStart As Integer, length As Integer) As Word.Range
+        Dim absStart As Integer = rng.Start + System.Math.Max(0, relStart)
+        Dim absEnd As Integer = absStart + System.Math.Max(0, length)
+        Return SliceInSameStory(rng, absStart, absEnd)
+    End Function
+
+    ' Robust hidden-run detection by scanning characters and merging runs
+    ' Also reveals hidden runs (unhide + red) when flushed.
+    ' Progress: increments per character; cancellation honored.
+    Private Sub AddHiddenRunsByFind(
+    ByVal rng As Microsoft.Office.Interop.Word.Range,
+    ByVal baseStart As Integer,
+    ByVal minLen As Integer,
+    ByVal findings As System.Collections.Generic.List(Of SuspiciousSpan)
+)
+        ' Fast skip: only proceed if range actually has any hidden formatting (True or wdUndefined)
+        Dim hiddenState As Integer = 0
+        Try : hiddenState = CInt(rng.Font.Hidden) : Catch : hiddenState = 0 : End Try
+        If hiddenState = 0 Then Exit Sub
+
+        Try
+            Dim chars = rng.Characters
+            If chars Is Nothing OrElse chars.Count = 0 Then Exit Sub
+
+            Dim inRun As Boolean = False
+            Dim runStartAbs As Integer = -1
+            Dim lastEndAbs As Integer = -1
+            Dim stepCounter As Integer = 0
+
+            For i As Integer = 1 To chars.Count
+                If ProgressBarModule.CancelOperation Then Exit Sub
+
+                Dim ch As Microsoft.Office.Interop.Word.Range = Nothing
+                Dim isHidden As Boolean = False
+                Try
+                    ch = chars(i)
+                    Dim hiddenVal As Integer = 0
+                    Try
+                        hiddenVal = CInt(ch.Font.Hidden)
+                    Catch
+                        hiddenVal = 0
+                    End Try
+                    isHidden = (hiddenVal <> 0)
+                Catch
+                    isHidden = False
+                End Try
+
+                If isHidden Then
+                    If Not inRun Then
+                        inRun = True
+                        runStartAbs = ch.Start
+                        lastEndAbs = ch.End
+                    Else
+                        If ch.Start = lastEndAbs Then
+                            lastEndAbs = ch.End
+                        Else
+                            Dim runLen As Integer = System.Math.Max(0, lastEndAbs - runStartAbs)
+                            If runLen >= minLen Then
+                                ' Reveal & record
+                                RevealHiddenRun(rng, runStartAbs, lastEndAbs)
+                                AddRunFinding(findings, "Hidden text span (revealed in red)", runStartAbs, lastEndAbs, baseStart, rng)
+                            End If
+                            runStartAbs = ch.Start
+                            lastEndAbs = ch.End
+                        End If
+                    End If
+                ElseIf inRun Then
+                    Dim runLen As Integer = System.Math.Max(0, lastEndAbs - runStartAbs)
+                    If runLen >= minLen Then
+                        RevealHiddenRun(rng, runStartAbs, lastEndAbs)
+                        AddRunFinding(findings, "Hidden text span (revealed in red)", runStartAbs, lastEndAbs, baseStart, rng)
+                    End If
+                    inRun = False
+                    runStartAbs = -1
+                    lastEndAbs = -1
+                End If
+
+                ' progress tick per character
+                stepCounter += 1
+                Try
+                    ProgressBarModule.GlobalProgressValue = System.Math.Min(ProgressBarModule.GlobalProgressValue + 1, ProgressBarModule.GlobalProgressMax)
+                    If (stepCounter Mod 500) = 0 Then
+                        ProgressBarModule.GlobalProgressLabel = $"Scanning hidden text… ({stepCounter}/{System.Math.Max(1, chars.Count)})"
+                    End If
+                Catch
+                End Try
+            Next
+
+            ' flush trailing run
+            If inRun AndAlso runStartAbs >= 0 AndAlso lastEndAbs > runStartAbs Then
+                Dim runLen As Integer = System.Math.Max(0, lastEndAbs - runStartAbs)
+                If runLen >= minLen Then
+                    RevealHiddenRun(rng, runStartAbs, lastEndAbs)
+                    AddRunFinding(findings, "Hidden text span (revealed in red)", runStartAbs, lastEndAbs, baseStart, rng)
+                End If
+            End If
+        Catch
+            ' best effort
+        End Try
+    End Sub
+
+    ' Unhide and color a hidden span in red without altering text content/positions
+    Private Sub RevealHiddenRun(ByVal selectionRange As Microsoft.Office.Interop.Word.Range,
+                            ByVal startAbs As Integer,
+                            ByVal endAbs As Integer)
+        Try
+            Dim dr As Microsoft.Office.Interop.Word.Range = SliceInSameStory(selectionRange, startAbs, endAbs)
+            dr.Font.Hidden = 0
+            dr.Font.ColorIndex = Microsoft.Office.Interop.Word.WdColorIndex.wdRed
+        Catch
+            ' ignore formatting failures
+        End Try
+    End Sub
+
+    ' Aggregates contiguous Word ranges satisfying predicate into a single finding per run
+    ' Progress: increments per word; cancellation honored.
+    Private Sub AddRuns(
+    ByVal rng As Microsoft.Office.Interop.Word.Range,
+    ByVal predicate As Func(Of Microsoft.Office.Interop.Word.Range, Boolean),
+    ByVal reason As String,
+    ByVal baseStart As Integer,
+    ByVal minLen As Integer,
+    ByVal findings As System.Collections.Generic.List(Of SuspiciousSpan)
+)
+        Dim words = rng.Words
+        If words Is Nothing OrElse words.Count = 0 Then Exit Sub
+
+        Dim inRun As Boolean = False
+        Dim runStartAbs As Integer = -1
+        Dim runEndAbs As Integer = -1
+
+        For i As Integer = 1 To words.Count
+            If ProgressBarModule.CancelOperation Then Exit Sub
+
+            Dim w As Microsoft.Office.Interop.Word.Range = words(i)
+            Dim ok As Boolean = False
+            Try
+                ok = predicate(w)
+            Catch
+                ok = False
+            End Try
+
+            If ok Then
+                If Not inRun Then
+                    inRun = True
+                    runStartAbs = w.Start
+                End If
+                runEndAbs = w.End
+            ElseIf inRun Then
+                Dim runLen As Integer = System.Math.Max(0, runEndAbs - runStartAbs)
+                If runLen >= minLen Then
+                    AddRunFinding(findings, reason, runStartAbs, runEndAbs, baseStart, rng)
+                End If
+                inRun = False
+                runStartAbs = -1
+                runEndAbs = -1
+            End If
+
+            ' progress tick per word
+            Try
+                ProgressBarModule.GlobalProgressValue = System.Math.Min(ProgressBarModule.GlobalProgressValue + 1, ProgressBarModule.GlobalProgressMax)
+            Catch
+            End Try
+        Next
+
+        If inRun Then
+            Dim runLen As Integer = System.Math.Max(0, runEndAbs - runStartAbs)
+            If runLen >= minLen Then
+                AddRunFinding(findings, reason, runStartAbs, runEndAbs, baseStart, rng)
+            End If
+        End If
+    End Sub
+
+    ' ===== Extend camouflage detection =====
+
+    ' Detect white-on-white also when Font.ColorIndex is Auto but resolved RGB is near-white
+    ' (keeps your existing logic; additional AddRuns not needed as IsWhiteOnWhite already used)
+    Private Function IsWhiteOnWhite(w As Microsoft.Office.Interop.Word.Range) As Boolean
+        Try
+            Dim fci = w.Font.ColorIndex
+            Dim fontIsWhiteIdx As Boolean = (fci = Microsoft.Office.Interop.Word.WdColorIndex.wdWhite)
+
+            ' If Auto/ByAuthor, fall back to explicit RGB check
+            Dim rgb As Integer = SafeWdColorToRgb(w.Font.Color)
+            Dim nearWhite As Boolean = IsLikelyInvisibleOnWhite(rgb)
+
+            Dim hasShade As Boolean = HasMeaningfulShading(w)
+            Dim hasHl As Boolean = HasMeaningfulHighlight(w)
+
+            If fontIsWhiteIdx Then
+                If Not hasShade AndAlso Not hasHl Then Return True
+                If hasHl AndAlso w.HighlightColorIndex = Microsoft.Office.Interop.Word.WdColorIndex.wdWhite Then Return True
+                If hasShade AndAlso w.Shading.BackgroundPatternColorIndex = Microsoft.Office.Interop.Word.WdColorIndex.wdWhite Then Return True
+            End If
+
+            If (fci = Microsoft.Office.Interop.Word.WdColorIndex.wdAuto OrElse
+                fci = Microsoft.Office.Interop.Word.WdColorIndex.wdByAuthor) AndAlso nearWhite Then
+                If Not hasShade AndAlso Not hasHl Then Return True
+                If hasHl AndAlso w.HighlightColorIndex = Microsoft.Office.Interop.Word.WdColorIndex.wdWhite Then Return True
+                If hasShade AndAlso w.Shading.BackgroundPatternColorIndex = Microsoft.Office.Interop.Word.WdColorIndex.wdWhite Then Return True
+            End If
+
+            Return False
+        Catch
+            Return False
+        End Try
+    End Function
+
+    ' Consider table-cell shading too (camouflage inside tables)
+    Private Function HasMeaningfulCellShading(w As Microsoft.Office.Interop.Word.Range) As Boolean
+        Try
+            If w.Cells Is Nothing OrElse w.Cells.Count = 0 Then Return False
+            Dim sh = w.Cells(1).Shading
+            Return sh IsNot Nothing AndAlso
+                   sh.BackgroundPatternColorIndex <> Microsoft.Office.Interop.Word.WdColorIndex.wdAuto AndAlso
+                   sh.BackgroundPatternColorIndex <> Microsoft.Office.Interop.Word.WdColorIndex.wdByAuthor AndAlso
+                   sh.BackgroundPatternColorIndex <> Microsoft.Office.Interop.Word.WdColorIndex.wdNoHighlight
+        Catch
+            Return False
+        End Try
+    End Function
+
+    Private Function FontEqualsCellShadingColorIndex(w As Microsoft.Office.Interop.Word.Range) As Boolean
+        Try
+            If w.Cells Is Nothing OrElse w.Cells.Count = 0 Then Return False
+            Dim fci = w.Font.ColorIndex
+            If fci = Microsoft.Office.Interop.Word.WdColorIndex.wdAuto OrElse
+               fci = Microsoft.Office.Interop.Word.WdColorIndex.wdByAuthor Then
+                Return False
+            End If
+            Return CInt(fci) = CInt(w.Cells(1).Shading.BackgroundPatternColorIndex)
+        Catch
+            Return False
+        End Try
+    End Function
+
+
+    ' Build finding using SAME-story slice to avoid main-story misalignment
+    Private Sub AddRunFinding(
+    ByVal findings As System.Collections.Generic.List(Of SuspiciousSpan),
+    ByVal reason As String,
+    ByVal runStartAbs As Integer,
+    ByVal runEndAbs As Integer,
+    ByVal baseStart As Integer,
+    ByVal selectionRange As Microsoft.Office.Interop.Word.Range
+)
+        Dim relStart As Integer = System.Math.Max(0, runStartAbs - baseStart)
+        Dim length As Integer = System.Math.Max(0, runEndAbs - runStartAbs)
+        Dim snippet As String = SliceInSameStory(selectionRange, runStartAbs, runEndAbs).Text
+
+        findings.Add(New SuspiciousSpan With {
+        .Reason = reason,
+        .StartIndex = relStart,
+        .Length = length,
+        .Snippet = snippet
+    })
+    End Sub
+
+    ' Build finding using Word's Range slice to avoid index misalignment (hidden/control chars)
+    Private Sub AddRunFinding(
+    ByVal findings As System.Collections.Generic.List(Of SuspiciousSpan),
+    ByVal reason As String,
+    ByVal runStartAbs As Integer,
+    ByVal runEndAbs As Integer,
+    ByVal baseStart As Integer,
+    ByVal fullText As String,
+    ByVal selectionRange As Microsoft.Office.Interop.Word.Range
+)
+        Dim relStart As Integer = System.Math.Max(0, runStartAbs - baseStart)
+        Dim length As Integer = System.Math.Max(0, runEndAbs - runStartAbs)
+
+        Dim snippet As String
+        Try
+            ' Use SAME-story slice for correctness across stories
+            snippet = SliceInSameStory(selectionRange, runStartAbs, runEndAbs).Text
+        Catch
+            ' Fallback to substring if slice fails
+            If length > 0 AndAlso relStart + length <= fullText.Length Then
+                snippet = fullText.Substring(relStart, length)
+            Else
+                snippet = String.Empty
+            End If
+        End Try
+
+        findings.Add(New SuspiciousSpan With {
+        .Reason = reason,
+        .StartIndex = relStart,
+        .Length = length,
+        .Snippet = snippet
+    })
+    End Sub
+
+    ' Only consider shading if it's explicitly set (not Auto/None/ByAuthor), then compare ColorIndex
+    Private Function HasMeaningfulShading(w As Microsoft.Office.Interop.Word.Range) As Boolean
+        Try
+            Return (w.Shading IsNot Nothing) AndAlso
+                   (w.Shading.Texture <> Microsoft.Office.Interop.Word.WdTextureIndex.wdTextureNone) AndAlso
+                   (w.Shading.BackgroundPatternColorIndex <> Microsoft.Office.Interop.Word.WdColorIndex.wdAuto) AndAlso
+                   (w.Shading.BackgroundPatternColorIndex <> Microsoft.Office.Interop.Word.WdColorIndex.wdByAuthor) AndAlso
+                   (w.Shading.BackgroundPatternColorIndex <> Microsoft.Office.Interop.Word.WdColorIndex.wdNoHighlight)
+        Catch
+            Return False
+        End Try
+    End Function
+
+    Private Function FontEqualsShadingColorIndex(w As Microsoft.Office.Interop.Word.Range) As Boolean
+        Try
+            Dim fci = w.Font.ColorIndex
+            If fci = Microsoft.Office.Interop.Word.WdColorIndex.wdAuto OrElse
+               fci = Microsoft.Office.Interop.Word.WdColorIndex.wdByAuthor Then
+                Return False
+            End If
+            Return CInt(fci) = CInt(w.Shading.BackgroundPatternColorIndex)
+        Catch
+            Return False
+        End Try
+    End Function
+
+    Private Function HasMeaningfulHighlight(w As Microsoft.Office.Interop.Word.Range) As Boolean
+        Try
+            Dim hi = w.HighlightColorIndex
+            Return hi <> Microsoft.Office.Interop.Word.WdColorIndex.wdNoHighlight AndAlso
+                   hi <> Microsoft.Office.Interop.Word.WdColorIndex.wdByAuthor
+        Catch
+            Return False
+        End Try
+    End Function
+
+    Private Function FontEqualsHighlightColorIndex(w As Microsoft.Office.Interop.Word.Range) As Boolean
+        Try
+            Dim hi = w.HighlightColorIndex
+            Dim fci = w.Font.ColorIndex
+            If hi = Microsoft.Office.Interop.Word.WdColorIndex.wdNoHighlight OrElse
+               hi = Microsoft.Office.Interop.Word.WdColorIndex.wdByAuthor OrElse
+               fci = Microsoft.Office.Interop.Word.WdColorIndex.wdAuto OrElse
+               fci = Microsoft.Office.Interop.Word.WdColorIndex.wdByAuthor Then
+                Return False
+            End If
+            Return CInt(hi) = CInt(fci)
+        Catch
+            Return False
+        End Try
+    End Function
+
+
+
+    ' Aggregates contiguous Word ranges satisfying predicate into a single finding per run
+    Private Sub AddRuns(
+        ByVal rng As Microsoft.Office.Interop.Word.Range,
+        ByVal predicate As Func(Of Microsoft.Office.Interop.Word.Range, Boolean),
+        ByVal reason As String,
+        ByVal baseStart As Integer,
+        ByVal fullText As String,
+        ByVal minLen As Integer,
+        ByVal findings As System.Collections.Generic.List(Of SuspiciousSpan)
+    )
+        Dim words = rng.Words
+        If words Is Nothing OrElse words.Count = 0 Then Exit Sub
+
+        Dim inRun As Boolean = False
+        Dim runStartAbs As Integer = -1
+        Dim runEndAbs As Integer = -1
+
+        For i As Integer = 1 To words.Count
+            Dim w As Microsoft.Office.Interop.Word.Range = words(i)
+            Dim ok As Boolean = False
+            Try
+                ok = predicate(w)
+            Catch
+                ok = False
+            End Try
+
+            If ok Then
+                If Not inRun Then
+                    inRun = True
+                    runStartAbs = w.Start
+                End If
+                runEndAbs = w.End
+            ElseIf inRun Then
+                Dim runLen As Integer = System.Math.Max(0, runEndAbs - runStartAbs)
+                If runLen >= minLen Then
+                    AddRunFinding(findings, reason, runStartAbs, runEndAbs, baseStart, fullText, rng)
+                End If
+                inRun = False
+                runStartAbs = -1
+                runEndAbs = -1
+            End If
+        Next
+
+        If inRun Then
+            Dim runLen As Integer = System.Math.Max(0, runEndAbs - runStartAbs)
+            If runLen >= minLen Then
+                AddRunFinding(findings, reason, runStartAbs, runEndAbs, baseStart, fullText, rng)
+            End If
+        End If
+    End Sub
+
+
+    Private Function IsLikelyInvisibleOnWhite(ByVal rgb As System.Int32) As System.Boolean
+            If rgb = -1 Then Return False
+            Dim r As System.Int32 = (rgb And &HFF)
+            Dim g As System.Int32 = ((rgb >> 8) And &HFF)
+            Dim b As System.Int32 = ((rgb >> 16) And &HFF)
+            Dim avg As System.Int32 = (r + g + b) \ 3
+            Return avg >= 245
+        End Function
+
+        Private Function SafeWdColorToRgb(ByVal wdColor As System.Object) As System.Int32
+            Try
+                Dim bgr As System.Int32 = System.Convert.ToInt32(wdColor, Globalization.CultureInfo.InvariantCulture)
+                Dim rr As System.Int32 = (bgr And &HFF)
+                Dim gg As System.Int32 = ((bgr >> 8) And &HFF)
+                Dim bb As System.Int32 = ((bgr >> 16) And &HFF)
+                Dim rgb As System.Int32 = (rr << 16) Or (gg << 8) Or bb
+                Return rgb
+            Catch
+                Return -1
+            End Try
+        End Function
+
+
+
+    Private Function SafePt(ByVal size As System.Object, ByVal fallbackPt As System.Single) As System.Single
+            Try
+                Return System.Convert.ToSingle(size, Globalization.CultureInfo.InvariantCulture)
+            Catch
+                Return fallbackPt
+            End Try
+        End Function
+
+        Private Function SafePercent(ByVal val As System.Object, ByVal fallback As System.Int32) As System.Int32
+            Try
+                Return System.Convert.ToInt32(val, Globalization.CultureInfo.InvariantCulture)
+            Catch
+                Return fallback
+            End Try
+        End Function
+
+        Private Function ContainsZeroWidthOrBidi(ByVal s As System.String) As System.Boolean
+            If s Is Nothing OrElse s.Length = 0 Then Return False
+            For Each ch As System.Char In s
+                Dim code As System.Int32 = System.Convert.ToInt32(ch)
+                If code = &H200B OrElse code = &H200C OrElse code = &H200D OrElse
+               code = &H2066 OrElse code = &H2067 OrElse code = &H2068 OrElse code = &H2069 OrElse
+               code = &H202A OrElse code = &H202B OrElse code = &H202D OrElse code = &H202E OrElse code = &H202C Then
+                    Return True
+                End If
+            Next
+            Return False
+        End Function
+
+        Private Function DeduplicateFindings(ByVal input As System.Collections.Generic.List(Of SuspiciousSpan)) As System.Collections.Generic.List(Of SuspiciousSpan)
+            Dim seen As System.Collections.Generic.HashSet(Of System.String) = New System.Collections.Generic.HashSet(Of System.String)(System.StringComparer.Ordinal)
+            Dim result As System.Collections.Generic.List(Of SuspiciousSpan) = New System.Collections.Generic.List(Of SuspiciousSpan)()
+            For Each f As SuspiciousSpan In input
+                Dim key As System.String = f.Reason & "|" & f.StartIndex.ToString(Globalization.CultureInfo.InvariantCulture) & "|" & f.Length.ToString(Globalization.CultureInfo.InvariantCulture) & "|" & f.Snippet
+                If Not seen.Contains(key) Then
+                    seen.Add(key)
+                    result.Add(f)
+                End If
+            Next
+            Return result
+        End Function
+
+
+    Private NotInheritable Class SuspiciousSpan
+            Public Property Reason As System.String
+            Public Property StartIndex As System.Int32
+            Public Property Length As System.Int32
+            Public Property Snippet As System.String
+        End Class
+
+
 
 
     '=================WebAgent=============================
