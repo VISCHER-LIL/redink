@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 2.11.2025
+' 5.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -109,6 +109,7 @@ Namespace SharedLibrary
             Property INI_TokenCount As String
             Property INI_DoubleS As Boolean
             Property INI_Clean As Boolean
+            Property INI_NoDash As Boolean
             Property INI_MarkdownBubbles As Boolean
             Property INI_PreCorrection As String
             Property INI_PostCorrection As String
@@ -309,6 +310,7 @@ Namespace SharedLibrary
         Public Property INI_TokenCount As String Implements ISharedContext.INI_TokenCount
         Public Property INI_DoubleS As Boolean Implements ISharedContext.INI_DoubleS
         Public Property INI_Clean As Boolean Implements ISharedContext.INI_Clean
+        Public Property INI_NoDash As Boolean Implements ISharedContext.INI_NoDash
         Public Property INI_MarkdownBubbles As Boolean Implements ISharedContext.INI_MarkdownBubbles
         Public Property INI_PreCorrection As String Implements ISharedContext.INI_PreCorrection
         Public Property INI_PostCorrection As String Implements ISharedContext.INI_PostCorrection
@@ -1585,7 +1587,8 @@ Namespace SharedLibrary
         Const Default_SP_MailSumup2 As String = "You are a highly skilled and very diligent personal assistant who strictly follows instructions step by step. You want to save my team by handling my e-mails. You will be provided with a number of e-mail-chains that I have received. Analyze the latest e-mail in every e-mail-chain, not more. Determine whether this latest mail is either very important or needs urgent attention. Once you have done so, provide me a list of important or urgent e-mails only (no other mails), sorted by urgency and important, and provide me on each such important or urgent e-mail a short, but concise and easy to read substantive update including mandatory follow-ups, if any. Provide this in a bulleted list. Do not add any other comments. Take into account that the present date and time, which is {DateTimeNow}. Each e-mail will be provided to you between the tags <MAILnnnn> and <MAILnnnn>, whereas 'nnnn' represents the number of the e-mail. Provide your response in the main language of the mails. Be short and concise. Use bold face to indicate important elements of your response. Do not include the date and time of the e-mails, just the Sender, if necessary a word about the topic. {INI_PreCorrection}"
         Const Default_SP_SwitchParty As String = "You are a legal professional And editor with excellent language, logical And rhetorical skills that precisely complies with its instructions step by step. Your task is to swap parties in a text and adapt the text to still read correctly. To do so, rewrite the text that is provided to you and is marked as 'TEXTTOPROCESS' as if '{OldParty}' were '{NewParty}' preserving all other information, but ensure that in particular all pronouns, titles, possessive forms and the use of plural and singular are appropriately adjusted. If {OldParty} or {NewParty} is not a name, treat it based on its meaning, even if it starts with a capital letter. \n {INI_PreCorrection}"
         Const Default_SP_Anonymize As String = "You are very careful editor And legal professional that precisely complies with its instructions step by step. Fully anonymize the text that Is provided to you And Is marked as 'TEXTTOPROCESS'. Do so only by replacing any names, companies, businesses, parties, organizations, proprietary product names, unknown abbreviations, personal addresses, e-mail accounts, phone numbers, IDs, credit card information, account numbers and other identifying information by the expression '[redacted]' and before providing the result, check whether there is no information left that could directly or indirectly identify any person, company, business, party or organization, including information that could link to them by doing an Internet search, and if so, redact it as well. {INI_PreCorrection}"
-        Const Default_SP_RangeOfCells As String = "You are an expert in analyzing and explaining Excel files to non-experts And in drafting Excel formulas for use within Excel. You precisely comply With your instructions. Perform the instruction '{OtherPrompt}' using the range of cells provided You between the tags <RANGEOFCELLS> ... </RANGEOFCELLS>. When providing your advice, follow this exact format for each suggestion: \n 1. Use the delimiter ""[Cell: X]"" for each cell reference (e.g., [Cell: A1]). 2. For formulas, use '[Formula: =expression]' (e.g., [Formula: =SUM(A1:A10)]). 3. For values, use ""[Value: 'text']"" (e.g., [Value: 'New value']). 4. Each instruction should start with the ""[Cell: X]"" marker followed by a [Formula: ...] or [Value: ...] in the next line. 5. Ensure that each instruction is on a new line. 6. If a formula or value is not required for a cell, leave that part out or indicate it as empty. {INI_PreCorrection}"
+        'Const Default_SP_RangeOfCells As String = "You are an expert in analyzing and explaining Excel files to non-experts And in drafting Excel formulas for use within Excel. You precisely comply With your instructions. Perform the instruction '{OtherPrompt}' using the range of cells provided You between the tags <RANGEOFCELLS> ... </RANGEOFCELLS>. When providing your advice, follow this exact format for each suggestion: \n 1. Use the delimiter ""[Cell: X]"" for each cell reference (e.g., [Cell: A1]). 2. For formulas, use '[Formula: =expression]' (e.g., [Formula: =SUM(A1:A10)]). 3. For values, use ""[Value: 'text']"" (e.g., [Value: 'New value']). 4. Each instruction should start with the ""[Cell: X]"" marker followed by a [Formula: ...] or [Value: ...] in the next line. 5. Ensure that each instruction is on a new line. 6. If a formula or value is not required for a cell, leave that part out or indicate it as empty. {INI_PreCorrection}"
+        Const Default_SP_RangeOfCells As String = "You are an expert in analyzing and explaining Excel files to non-experts And in drafting Excel formulas for use within Excel. You precisely comply With your instructions. Perform the instruction '{OtherPrompt}' using the range of cells provided You between the tags <RANGEOFCELLS> ... </RANGEOFCELLS>. When providing your advice, follow this exact format for each suggestion: \n 1. Use the delimiter ""[Cell: X]"" for each cell reference (e.g., [Cell: A1]). 2. For formulas, use '[Formula: =expression]' (e.g., [Formula: =SUM(A1:A10)]). 3. For values, use ""[Value: 'text']"" (e.g., [Value: 'New value']). 4. Each instruction should start with the ""[Cell: X]"" marker followed by a ""[Formula: ...]"" or ""[Value: ...]"" in the next line. 5. Ensure IN ANY EVENT that Value: starts and ends with Square brackets even if you insert multiline text (""[Value: 'This is text']"" is correct; ""Value: 'This is text']"" is wrong, because the initial bracket is missing). It is crucial that any cell reference, value or formula starts and ends with [ and ]. 6. Ensure that each instruction is on a new line. 7. If a formula or value is not required for a cell, leave that part out or indicate it as empty. {INI_PreCorrection}"
         Const Default_SP_ParseFile As String = "You are a precise, deterministic CSV analyzer. The user will provide intent and a data block wrapped in <LINESTOPROCESS>…</LINESTOPROCESS>. Inside that block, the first row is a header where the first column is 'LineInFile' (absolute file line number) and subsequent columns are the CSV headers; each subsequent row is data. The delimiter between columns is the user-specified separator, which is '{Separator}' (i.e. do not assume it is a comma). Task: apply the user’s intent to each data row; output only positive hits as a flat string in this exact format: lineNumber@@result§§§lineNumber@@result… (two fields per record via @@; records separated by §§§). Rules: (1) Ignore the header row for the actual analyzes, use it only to understand the structure of the lines of data contained in LINESTOPROCESS, i.e. the sequences and name of the fields/columns/segments provided and divided by the separator; (2) Use the provided separator only to parse, not in the output; (3) Do not echo inputs, prose, JSON, or code; output only the specified flat format; (4) If no rows match, return exactly [NORESULT]; (5) Keep result concise, single-line, and free of '@@' or '§§§' (replace such characters with spaces if present); (6) Never fabricate data; preserve LineInFile as given; (7) Trim spaces around delimiters; (8) Process only rows within the provided block; (9) follow these rules strictly and very carefully, as your output will otherwise be void. {INI_PreCorrection} \n The user's intent and instruction to follow is: {OtherPrompt} \n\n"
         Const Default_SP_WriteNeatly As String = "You are a legal professional with very good language skills that precisely complies with its instructions step by step. Amend the text that is provided to you, in its original language, and is marked as 'Texttoprocess' to be a coherent, concise and easy to understand text based the text and keywords in the provided text, without changing or adding any meaning or information to it, but taking into account the following context, if any: '{Context}' {INI_PreCorrection}"
         Const Default_SP_Add_KeepFormulasIntact As String = "Beware, the text contains an Excel formula. Unless expressly instructed otherwise, make sure that the formula still works as intended."
@@ -4050,6 +4053,13 @@ Namespace SharedLibrary
                 If DoubleS Then
                     Returnvalue = Returnvalue.Replace(ChrW(223), "ss") ' Replace German sharp-S if needed
                 End If
+                If context.INI_NoDash Then
+                    Returnvalue = System.Text.RegularExpressions.Regex.Replace(
+                                        Returnvalue,
+                                        "([A-Za-z0-9,])\s*—\s*([A-Za-z0-9])",
+                                        "$1 – $2"
+                                    )
+                End If
                 If context.INI_Clean Then
                     'Returnvalue = Returnvalue.Replace("  ", " ").Replace("  ", " ")
                     Returnvalue = System.Text.RegularExpressions.Regex.Replace(
@@ -5756,6 +5766,7 @@ Namespace SharedLibrary
                 ' Boolean parameters
                 context.INI_DoubleS = ParseBoolean(configDict, "DoubleS")
                 context.INI_Clean = ParseBoolean(configDict, "Clean")
+                context.INI_NoDash = ParseBoolean(configDict, "NoDash")
                 context.INI_MarkdownBubbles = ParseBoolean(configDict, "MarkdownBubbles")
                 context.INI_KeepFormat1 = ParseBoolean(configDict, "KeepFormat1")
                 context.INI_ReplaceText1 = ParseBoolean(configDict, "ReplaceText1", True)
@@ -12057,7 +12068,7 @@ Namespace SharedLibrary
         Public Shared Function IsBooleanSetting(settingKey As String) As Boolean
             ' Determine if a setting is a Boolean based on its key
             Dim booleanSettings As New List(Of String) From {
-        "DoubleS", "Clean", "MarkdownBubbles", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
+        "DoubleS", "NoDash", "Clean", "MarkdownBubbles", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
         "KeepFormat2", "KeepParaFormatInline", "ReplaceText2", "DoMarkupOutlook", "DoMarkupWord",
         "APIDebug", "ISearch_Approve", "ISearch", "Lib"
             }
@@ -12134,6 +12145,8 @@ Namespace SharedLibrary
                     Return context.INI_DoubleS.ToString()
                 Case "Clean"
                     Return context.INI_Clean.ToString()
+                Case "NoDash"
+                    Return context.INI_NoDash.ToString()
                 Case "MarkdownBubbles"
                     Return context.INI_MarkdownBubbles.ToString()
                 Case "KeepFormat1"
@@ -12330,6 +12343,8 @@ Namespace SharedLibrary
                     context.INI_DoubleS = Boolean.Parse(value)
                 Case "Clean"
                     context.INI_Clean = Boolean.Parse(value)
+                Case "NoDash"
+                    context.INI_NoDash = Boolean.Parse(value)
                 Case "MarkdownBubbles"
                     context.INI_MarkdownBubbles = Boolean.Parse(value)
                 Case "KeepFormat1"
@@ -12618,6 +12633,7 @@ Namespace SharedLibrary
                     {"Language2", context.INI_Language2},
                     {"DoubleS", context.INI_DoubleS.ToString()},
                     {"Clean", context.INI_Clean.ToString()},
+                    {"NoDash", context.INI_NoDash.ToString()},
                     {"MarkdownBubbles", context.INI_MarkdownBubbles.ToString()},
                     {"KeepFormat1", context.INI_KeepFormat1.ToString()},
                     {"MarkdownConvert", context.INI_MarkdownConvert.ToString()},
@@ -13432,6 +13448,7 @@ Namespace SharedLibrary
             variableValues.Add("TokenCount", context.INI_TokenCount)
             variableValues.Add("DoubleS", context.INI_DoubleS)
             variableValues.Add("Clean", context.INI_Clean)
+            variableValues.Add("NoDash", context.INI_NoDash)
             variableValues.Add("MarkdownBubbles", context.INI_MarkdownBubbles)
             variableValues.Add("PreCorrection", context.INI_PreCorrection)
             variableValues.Add("PostCorrection", context.INI_PostCorrection)
@@ -13600,6 +13617,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("TokenCount") Then context.INI_TokenCount = updatedValues("TokenCount")
                 If updatedValues.ContainsKey("DoubleS") Then context.INI_DoubleS = CBool(updatedValues("DoubleS"))
                 If updatedValues.ContainsKey("Clean") Then context.INI_Clean = CBool(updatedValues("Clean"))
+                If updatedValues.ContainsKey("NoDash") Then context.INI_NoDash = CBool(updatedValues("NoDash"))
                 If updatedValues.ContainsKey("MarkdownBubbles") Then context.INI_MarkdownBubbles = CBool(updatedValues("MarkdownBubbles"))
                 If updatedValues.ContainsKey("PreCorrection") Then context.INI_PreCorrection = updatedValues("PreCorrection")
                 If updatedValues.ContainsKey("PostCorrection") Then context.INI_PostCorrection = updatedValues("PostCorrection")
@@ -19068,6 +19086,8 @@ Namespace SharedLibrary
 
         Public Sub New(ByVal iniFilePath As String, ByVal context As ISharedContext, ByVal Title As String, ByVal ListType As String, ByVal OptionText As String, Optional UseCase As Integer = 1)
 
+            ' UseCase 1 = Model Selection (with Default) UseCase 2 = Model Selection (without Default)
+
             OptionChecked = True
 
             ' --- DPI- und Font-Skalierung aktivieren ---
@@ -19106,6 +19126,7 @@ Namespace SharedLibrary
                                     }
             tlpMain.Controls.Add(lstModels, 0, 1)
 
+
             ' Zeile 3: Checkbox (grows but not shrink, 20px Padding)
             chkReset = New System.Windows.Forms.CheckBox() With {
                                         .Text = OptionText,
@@ -19114,7 +19135,10 @@ Namespace SharedLibrary
                                         .Dock = System.Windows.Forms.DockStyle.Fill,
                                         .Margin = New System.Windows.Forms.Padding(20, 0, 20, 0)
                                     }
-            tlpMain.Controls.Add(chkReset, 0, 2)
+
+            If OptionText <> "" Then
+                tlpMain.Controls.Add(chkReset, 0, 2)
+            End If
 
             ' Zeile 4: Buttons (links-nach-rechts, grows but not shrink, 20px Padding)
             Dim flpButtons As New System.Windows.Forms.FlowLayoutPanel() With {
@@ -19198,11 +19222,17 @@ Namespace SharedLibrary
                 End If
 
                 ' If the checkbox is unchecked and a non-default model is selected, set OriginalConfigurationLoaded to False.
-                If Not chkReset.Checked AndAlso Not UseDefault Then
-                    originalConfigLoaded = False
+                If chkReset IsNot Nothing Then
+                    If Not chkReset.Checked AndAlso Not UseDefault Then
+                        originalConfigLoaded = False
+                    End If
+                    OptionChecked = chkReset.Checked
+                Else
+                    OptionChecked = True
+                    If Not UseDefault Then
+                        originalConfigLoaded = False
+                    End If
                 End If
-
-                OptionChecked = chkReset.Checked
 
                 Me.DialogResult = DialogResult.OK
                 Me.Close()

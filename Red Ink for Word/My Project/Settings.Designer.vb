@@ -544,6 +544,18 @@ Namespace My
                 Me("ConvertMarkdownInChat") = value
             End Set
         End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property LastChatHistoryHtml() As String
+            Get
+                Return CType(Me("LastChatHistoryHtml"),String)
+            End Get
+            Set
+                Me("LastChatHistoryHtml") = value
+            End Set
+        End Property
     End Class
 End Namespace
 

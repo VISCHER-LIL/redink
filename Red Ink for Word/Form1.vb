@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
 '
-' 29.10.2025
+' 5.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -23,6 +23,7 @@
 ' Includes also various Microsoft libraries copyrighted by Microsoft Corporation and available, among others, under the Microsoft EULA and the MIT License; Copyright (c) 2016- Microsoft Corp.
 
 
+Imports System.ComponentModel
 Imports System.Diagnostics
 Imports System.Drawing
 Imports System.Runtime.InteropServices
@@ -52,6 +53,11 @@ Public Class frmAIChat
     Private OldChat As String = ""
     Private UserLanguage As String = Globals.ThisAddIn.GetWordDefaultInterfaceLanguage()
     Private SystemPrompt As String = ""
+
+    ' Tracks a user-chosen alternate model for temporary use per-call.
+    Private _alternateModelSelected As Boolean = False
+    Private _alternateModelConfig As ModelConfig = Nothing
+    Private _alternateModelDisplayName As String = Nothing
 
     Private WithEvents btnCopy As New Button() With {.Text = "Copy All", .AutoSize = True}
     Private WithEvents btnCopyLastAnswer As New Button() With {.Text = "Copy Last Answer", .AutoSize = True}
@@ -89,6 +95,7 @@ Public Class frmAIChat
 
     ' We keep the entire conversation in a List of (role, content).
     Private _chatHistory As New List(Of (Role As String, Content As String))
+
 
 
     Public Sub New(context As ISharedContext)
@@ -136,12 +143,15 @@ Public Class frmAIChat
         mainLayout.Controls.Add(pnlCheckboxes, 0, 3)
         mainLayout.Controls.Add(pnlButtons, 0, 4)
 
+        InitChatHtmlUI(mainLayout)
+
         ' 7) Form neu befüllen
         Me.Controls.Clear()
         Me.Controls.Add(mainLayout)
 
         _context = context
     End Sub
+
 
 
     ' Runs once when form loads.
@@ -158,14 +168,23 @@ Public Class frmAIChat
             PreceedingNewline = Environment.NewLine
         End If
 
-        ' Set the form's title and custom icon
-        Me.Text = $"Chat (using " & If(_useSecondApi, _context.INI_Model_2, _context.INI_Model) & ")"
-        Me.Font = New System.Drawing.Font("Segoe UI", 9)
-        Me.FormBorderStyle = FormBorderStyle.Sizable ' Ensure border supports icons
-        Me.Icon = Icon.FromHandle(New Bitmap(My.Resources.Red_Ink_Logo).GetHicon())
-        Me.TopMost = True ' Always on top
+        ' Initialize the HTML chat view and (optionally) show previous transcript as preformatted text
+        InitializeChatHtml()
 
-        ' Set the initial and minimum size of the form
+        ' Prefer restoring from stored HTML; otherwise fallback to plain transcript.
+        Dim previousChatHtml As String = My.Settings.LastChatHistoryHtml
+        If Not String.IsNullOrEmpty(previousChatHtml) Then
+            ' Append as one fragment so wireLinks runs and events attach
+            AppendHtml(previousChatHtml)
+        ElseIf Not String.IsNullOrEmpty(previousChat) Then
+            AppendTranscriptToHtml(previousChat)
+        End If
+
+        ' Set basic form props
+        Me.Font = New System.Drawing.Font("Segoe UI", 9)
+        Me.FormBorderStyle = FormBorderStyle.Sizable
+        Me.Icon = Icon.FromHandle(New Bitmap(My.Resources.Red_Ink_Logo).GetHicon())
+        Me.TopMost = True
         Me.MinimumSize = New Size(830, 521)
 
         If My.Settings.FormLocation <> System.Drawing.Point.Empty AndAlso My.Settings.FormSize <> Size.Empty Then
@@ -177,21 +196,25 @@ Public Class frmAIChat
 
         AddHandler txtUserInput.KeyDown, AddressOf UserInput_KeyDown
 
-        ' Set up instructions label
-        lblInstructions.Text = $"Enter your question and click 'Send' or Ctrl-Enter. You can allow the chatbot to perform actions on your document (search, replace, delete, insert)."
+        lblInstructions.Text = $"Enter your question and click 'Send' or Ctrl-Enter. You can allow the chatbot to perform actions on your document (search, replace, delete, insert text and add or reply to comments)."
         lblInstructions.AutoSize = True
         lblInstructions.Height = 50
         lblInstructions.Anchor = AnchorStyles.Top Or AnchorStyles.Left Or AnchorStyles.Right
         lblInstructions.TextAlign = ContentAlignment.MiddleLeft
 
         ' FlowLayoutPanel for buttons
-
         pnlButtons.Padding = New Padding(0, 2, 8, 12)
         pnlButtons.Controls.Add(btnSend)
         pnlButtons.Controls.Add(btnCopyLastAnswer)
         pnlButtons.Controls.Add(btnCopy)
         pnlButtons.Controls.Add(btnClear)
-        If _context.INI_SecondAPI Then pnlButtons.Controls.Add(btnSwitchModel)
+
+        ' Show the model button if either second API is configured or an alternate INI exists
+        If _context.INI_SecondAPI OrElse Not String.IsNullOrWhiteSpace(_context.INI_AlternateModelPath) Then
+            UpdateModelButtonText()
+            pnlButtons.Controls.Add(btnSwitchModel)
+        End If
+
         pnlButtons.Controls.Add(btnExit)
 
         pnlCheckboxes.Padding = New Padding(0, 1, 8, 1)
@@ -214,16 +237,61 @@ Public Class frmAIChat
         AddHandler chkStayOnTop.Click, AddressOf chkStayontop_Click
         AddHandler chkConvertMarkdown.Click, AddressOf chkConvertMarkdown_Click
 
+
+        ' Set the window title after all fields are ready
+        UpdateTitle()
+
         If String.IsNullOrWhiteSpace(txtChatHistory.Text) Then
             Dim result = Await WelcomeMessage()
         Else
             txtChatHistory.SelectionStart = txtChatHistory.Text.Length
             txtChatHistory.ScrollToCaret()
-
         End If
         If String.IsNullOrEmpty(txtUserInput.Text) Then txtUserInput.Focus()
-
     End Sub
+
+
+    ' Centralized title updater: shows primary/second/alternate model name.
+    Private Sub UpdateTitle()
+        Dim titleModel As String
+        If Not String.IsNullOrWhiteSpace(_context.INI_AlternateModelPath) AndAlso _alternateModelSelected AndAlso Not String.IsNullOrWhiteSpace(_alternateModelDisplayName) Then
+            titleModel = _alternateModelDisplayName
+        Else
+            titleModel = If(_useSecondApi, _context.INI_Model_2, _context.INI_Model)
+        End If
+        Me.Text = $"Chat (using {titleModel})"
+    End Sub
+
+    ' Executes an LLM call while temporarily applying any selected alternate model.
+    ' Always restores the original config afterwards.
+    Private Async Function CallLlmWithSelectedModelAsync(systemPrompt As String, fullPrompt As String) As Task(Of String)
+        Dim backupConfig As ModelConfig = Nothing
+        Dim appliedAlternate As Boolean = False
+
+        Try
+            ' If the user selected an alternate model, apply it to the context as the "second model" just for this call.
+            If _alternateModelSelected AndAlso _alternateModelConfig IsNot Nothing Then
+                ' Back up current config (the "original state at rest")
+                backupConfig = SharedMethods.GetCurrentConfig(_context)
+
+                ' Apply the selected alternate config
+                SharedMethods.ApplyModelConfig(_context, _alternateModelConfig)
+                appliedAlternate = True
+
+                ' Enforce second API usage for alternate models
+                _useSecondApi = True
+            End If
+
+            ' Execute the LLM call
+            Return Await SharedMethods.LLM(_context, systemPrompt, fullPrompt, "", "", 0, _useSecondApi, True)
+
+        Finally
+            ' Always restore the original config after the call so the rest of the add-in sees the original state.
+            If appliedAlternate AndAlso backupConfig IsNot Nothing Then
+                SharedMethods.RestoreDefaults(_context, backupConfig)
+            End If
+        End Try
+    End Function
 
     ' When the user clicks Send, we call the LLM with context.
     ' Then append the AI response to the conversation.
@@ -279,6 +347,10 @@ Public Class frmAIChat
                                     PreceedingNewline = Environment.NewLine
                                 End Sub)
 
+            Await UpdateUIAsync(Sub()
+                                    AppendUserHtml(userPrompt.TrimEnd())
+                                End Sub)
+
             _chatHistory.Add(("user", userPrompt.TrimEnd()))
 
             ' Add a placeholder for AI response while waiting
@@ -286,28 +358,46 @@ Public Class frmAIChat
                                     AppendToChatHistory($"{AN5}: Thinking...")
                                 End Sub)
 
+            Await UpdateUIAsync(Sub()
+                                    ShowAssistantThinking()
+                                End Sub)
 
             ' Call the LLM function asynchronously
-            Dim aiResponse As String = Await SharedMethods.LLM(_context, SystemPrompt, fullPrompt.ToString(), "", "", 0, _useSecondApi, True)
+            Dim aiResponseOriginal As String = Await CallLlmWithSelectedModelAsync(SystemPrompt, fullPrompt.ToString())
 
-            aiResponse = aiResponse.TrimEnd()
-            aiResponse = aiResponse.Replace($"{vbCrLf}* ", vbCrLf & ChrW(8226) & " ").Replace($"{vbCr}* ", vbCr & ChrW(8226) & " ").Replace($"{vbLf}* ", vbLf & ChrW(8226) & " ")
-            aiResponse = aiResponse.Replace($"  *  ", "  " & ChrW(8226) & "  ")
-            aiResponse = RemoveMarkdownFormatting(aiResponse)
+            ' Keep original Markdown for HTML rendering
+            Dim aiResponseMd As String = (If(aiResponseOriginal, "")).TrimEnd()
+
+            ' Maintain your existing plain-text pipeline for persistence/commands
+            Dim aiResponsePlain As String = aiResponseMd
+            aiResponsePlain = aiResponsePlain.Replace($"{vbCrLf}* ", vbCrLf & ChrW(8226) & " ").Replace($"{vbCr}* ", vbCr & ChrW(8226) & " ").Replace($"{vbLf}* ", vbLf & ChrW(8226) & " ")
+            aiResponsePlain = aiResponsePlain.Replace($"  *  ", "  " & ChrW(8226) & "  ")
+            aiResponsePlain = RemoveMarkdownFormatting(aiResponsePlain)
 
             Dim CommandsString As String = ""
             If My.Settings.DoCommands And (chkIncludeselection.Checked Or chkIncludeDocText.Checked) Then
-                CommandsString = aiResponse
-                aiResponse = RemoveCommands(aiResponse)
-                aiResponse = Regex.Replace(aiResponse, "[\r\n\s]+$", "")
+                CommandsString = aiResponsePlain
+                aiResponsePlain = RemoveCommands(aiResponsePlain)
+                aiResponsePlain = Regex.Replace(aiResponsePlain, "[\r\n\s]+$", "")
             End If
+
+            ' Remove commands from the Markdown we display to the user (HTML)
+            Dim aiResponseMdDisplay As String = RemoveCommands(aiResponseMd)
+            aiResponseMdDisplay = Regex.Replace(aiResponseMdDisplay, "[\r\n\s]+$", "")
 
             Debug.WriteLine("AI response: " & CommandsString)
 
-            ' Remove the "Thinking..." placeholder and update AI response on the UI thread
             Await UpdateUIAsync(Sub()
+                                    ' Remove "Thinking..." in text and HTML
                                     RemoveLastLineFromChatHistory()
-                                    AppendToChatHistory(Environment.NewLine & $"{AN5}: " & aiResponse.TrimEnd().Replace(vbCrLf, Environment.NewLine).Replace(vbLf, Environment.NewLine) & Environment.NewLine)
+                                    RemoveAssistantThinking()
+
+                                    ' Append assistant answer to text transcript (plain)
+                                    AppendToChatHistory(Environment.NewLine & $"{AN5}: " & aiResponsePlain.TrimEnd().Replace(vbCrLf, Environment.NewLine).Replace(vbLf, Environment.NewLine) & Environment.NewLine)
+
+                                    ' Append assistant answer as Markdown-rendered HTML (commands filtered)
+                                    AppendAssistantMarkdown(aiResponseMdDisplay)
+
                                     If My.Settings.DoCommands And Not String.IsNullOrWhiteSpace(CommandsString) Then
                                         ExecuteAnyCommands(CommandsString, chkIncludeselection.Checked)
                                     End If
@@ -315,7 +405,7 @@ Public Class frmAIChat
                                     If String.IsNullOrEmpty(txtUserInput.Text) Then txtUserInput.Focus()
                                 End Sub)
 
-            _chatHistory.Add(("assistant", aiResponse.TrimEnd()))
+            _chatHistory.Add(("assistant", aiResponsePlain.TrimEnd()))
 
         Catch ex As System.Exception
             MsgBox("Error in btnSend_Click: " & ex.Message, MsgBoxStyle.Critical)
@@ -331,25 +421,29 @@ Public Class frmAIChat
             txtUserInput.Text = ""
 
             ' Call the LLM function asynchronously
-            Dim aiResponse As String = Await SharedMethods.LLM(_context, SystemPrompt, $"Welcome the user in {UserLanguage} by (1) referring to the time of day based on the current time in {UserLanguage} , such as in 'good morning', and (2) asking in {UserLanguage} what you can do, but do not say your name.", "", "", 0, _useSecondApi, True)
+            Dim aiResponseRaw As String = Await CallLlmWithSelectedModelAsync(SystemPrompt, $"Welcome the user in {UserLanguage} by (1) referring to the time of day based on the current time in {UserLanguage} , such as in 'good morning', and (2) asking in {UserLanguage} what you can do, but do not say your name.")
 
-            aiResponse = aiResponse.Replace(vbLf, "").Replace(vbCr, "").Replace(vbCrLf, "") & vbCrLf
+            ' Keep Markdown for HTML display (filter bot-commands if any)
+            Dim aiDisplayMd As String = RemoveCommands(If(aiResponseRaw, ""))
 
-            aiResponse = aiResponse.Replace("**", "").Replace("_", "").Replace("`", "")
+            ' Maintain your existing plain text behavior for the transcript
+            Dim aiResponseTxt As String = If(aiResponseRaw, "")
+            aiResponseTxt = aiResponseTxt.Replace(vbLf, "").Replace(vbCr, "").Replace(vbCrLf, "") & vbCrLf
+            aiResponseTxt = aiResponseTxt.Replace("**", "").Replace("_", "").Replace("`", "")
 
-            ' Remove the "Thinking..." placeholder and update AI response on the UI thread
             Await UpdateUIAsync(Sub()
-                                    AppendToChatHistory(Environment.NewLine & $"{AN5}: " & aiResponse.Replace(vbCrLf, Environment.NewLine).Replace(vbLf, Environment.NewLine))
+                                    AppendToChatHistory(Environment.NewLine & $"{AN5}: " & aiResponseTxt.Replace(vbCrLf, Environment.NewLine).Replace(vbLf, Environment.NewLine))
+                                    ' Also show the formatted version in the HTML chat
+                                    AppendAssistantMarkdown(aiDisplayMd)
                                 End Sub)
 
-            _chatHistory.Add(("assistant", aiResponse))
+            _chatHistory.Add(("assistant", aiResponseTxt))
 
             PreceedingNewline = Environment.NewLine
 
             Return ""
 
         Catch ex As System.Exception
-            'MsgBox("Error in WelcomeMessage: " & ex.Message, MsgBoxStyle.Critical)
             Return ""
         End Try
     End Function
@@ -470,14 +564,83 @@ Public Class frmAIChat
 
     ' Switches the model from model1 to model2 and vice versa.
 
+    ' Select/toggle model. When Alternate INI exists, capture the alternate config and
+    ' immediately restore the original config to keep globals pristine between calls.
     Private Sub btnSwitchModel_Click(sender As Object, e As EventArgs)
-        _useSecondApi = Not _useSecondApi
-        Me.Text = $"Chat (using " & If(_useSecondApi, _context.INI_Model_2, _context.INI_Model) & ")"
+        If Not String.IsNullOrWhiteSpace(_context.INI_AlternateModelPath) Then
+            ' If an alternate is already active -> switch back to primary without dialog
+            If _alternateModelSelected Then
+                _alternateModelSelected = False
+                _alternateModelConfig = Nothing
+                _alternateModelDisplayName = Nothing
+                _useSecondApi = False
+                UpdateModelButtonText()
+                UpdateTitle()
+                Return
+            End If
+
+            ' Selecting an alternate
+            SharedMethods.LastAlternateModel = "" ' sentinel
+            Dim ok As Boolean = SharedMethods.ShowModelSelection(
+            _context,
+            _context.INI_AlternateModelPath,
+            "Alternate Model",
+            "Select the alternate model you want to use:",
+            "",
+            2
+        )
+            If Not ok Then
+                ' User cancelled
+                Return
+            End If
+
+            ' The selector applies the chosen model to the context at this point.
+            ' Snapshot it, then restore the original immediately so globals remain clean.
+            Dim justApplied As ModelConfig = SharedMethods.GetCurrentConfig(_context)
+
+            If SharedMethods.originalConfigLoaded Then
+                SharedMethods.RestoreDefaults(_context, SharedMethods.originalConfig)
+            End If
+            SharedMethods.originalConfigLoaded = False
+
+            Dim userChoseAlternate As Boolean = Not String.IsNullOrWhiteSpace(SharedMethods.LastAlternateModel)
+
+            If userChoseAlternate Then
+                _alternateModelSelected = True
+                _alternateModelConfig = justApplied
+                _alternateModelDisplayName = SharedMethods.LastAlternateModel
+                _useSecondApi = True
+            Else
+                _alternateModelSelected = False
+                _alternateModelConfig = Nothing
+                _alternateModelDisplayName = Nothing
+                _useSecondApi = False
+            End If
+
+            UpdateModelButtonText()
+            UpdateTitle()
+        Else
+            ' Legacy behavior: simple toggle between primary and configured second model
+            _useSecondApi = Not _useSecondApi
+            _alternateModelSelected = False
+            _alternateModelConfig = Nothing
+            _alternateModelDisplayName = Nothing
+            UpdateModelButtonText()
+            UpdateTitle()
+        End If
+    End Sub
+
+    ' Sets the model button text depending on the current state and availability of alternates.
+    Private Sub UpdateModelButtonText()
+        If Not String.IsNullOrWhiteSpace(_context.INI_AlternateModelPath) Then
+            btnSwitchModel.Text = If(_alternateModelSelected, "Primary model", "Alternate Model")
+        Else
+            btnSwitchModel.Text = "Switch Model"
+        End If
     End Sub
 
 
     ' Clears the conversation from both the UI and saved settings.
-
     Private Sub btnClear_Click(sender As Object, e As EventArgs)
 
         _chatHistory.Clear()
@@ -485,10 +648,13 @@ Public Class frmAIChat
         OldChat = ""
         PreceedingNewline = ""
         My.Settings.LastChatHistory = ""
+        My.Settings.LastChatHistoryHtml = ""
         My.Settings.Save()
+
+        ClearChatHtml()
+
         Dim result = WelcomeMessage()
     End Sub
-
 
     ' Press Escape to close. Also button-based exit.
 
@@ -499,6 +665,7 @@ Public Class frmAIChat
                 conversation = conversation.Substring(conversation.Length - _context.INI_ChatCap)
             End If
             My.Settings.LastChatHistory = conversation
+            PersistChatHtml()
             My.Settings.Save()
             Close()
         End If
@@ -510,6 +677,7 @@ Public Class frmAIChat
             conversation = conversation.Substring(conversation.Length - _context.INI_ChatCap)
         End If
         My.Settings.LastChatHistory = conversation
+        PersistChatHtml()
         My.Settings.Save()
         Close()
     End Sub
@@ -531,6 +699,7 @@ Public Class frmAIChat
             My.Settings.FormLocation = Me.RestoreBounds.Location
             My.Settings.FormSize = Me.RestoreBounds.Size
         End If
+        PersistChatHtml()
         My.Settings.Save()
 
     End Sub
@@ -602,39 +771,6 @@ Public Class frmAIChat
     End Function
 
 
-    ' Reads the entire document's text.
-
-    Private Function OldGetActiveDocumentText() As String
-        Try
-            Dim doc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
-            Return doc.Content.Text
-        Catch ex As Exception
-            Return ""
-        End Try
-    End Function
-
-
-    ' Reads the current selection's text.
-
-    Private Function OldGetCurrentSelectionText() As String
-        Try
-            ' Get the active document
-            Dim activeDoc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
-
-            ' Get the selection from the active window
-            Dim sel As Microsoft.Office.Interop.Word.Selection = activeDoc.Application.Selection
-
-            If String.IsNullOrEmpty(sel.Text) Then
-                chkIncludeselection.Checked = False
-                Return ""
-            Else
-                Return sel.Text
-            End If
-        Catch ex As Exception
-            Return ""
-        End Try
-    End Function
-
 
     ' Builds the conversation history as a single string.
 
@@ -670,10 +806,6 @@ Public Class frmAIChat
         Return sb.ToString()
     End Function
 
-    Private Function ConvertMarkdownToHtml(markdown As String) As String
-        Dim pipeline = New MarkdownPipelineBuilder().UseAdvancedExtensions().Build()
-        Return Markdig.Markdown.ToHtml(markdown, pipeline)
-    End Function
 
     Private Sub pnlCheckboxes_Paint(sender As Object, e As PaintEventArgs)
 
@@ -1530,5 +1662,405 @@ Public Class frmAIChat
         End Try
     End Sub
 
+
+End Class
+
+Partial Public Class frmAIChat
+
+    ' Add a field
+    Private _docClickHooked As Boolean = False
+
+    ' Wire the document-level click handler (call this when the document is ready)
+    Private Sub WireDocumentClick()
+        If wbChat Is Nothing OrElse wbChat.Document Is Nothing Then Return
+        Try
+            ' Remove before add to avoid duplicates on re-init
+            RemoveHandler wbChat.Document.Click, AddressOf Doc_Click
+        Catch
+        End Try
+        AddHandler wbChat.Document.Click, AddressOf Doc_Click
+        _docClickHooked = True
+    End Sub
+
+    ' Global click handler for the HTML document; finds nearest <a> and opens externally
+    Private Sub Doc_Click(sender As Object, e As HtmlElementEventArgs)
+        Try
+            Dim el As HtmlElement = wbChat.Document.ActiveElement
+            ' Walk up to the nearest anchor
+            While el IsNot Nothing AndAlso Not String.Equals(el.TagName, "A", StringComparison.OrdinalIgnoreCase)
+                el = el.Parent
+            End While
+
+            If el Is Nothing Then Return
+
+            Dim href As String = el.GetAttribute("href")
+            If String.IsNullOrWhiteSpace(href) Then Return
+
+            ' Only handle external links
+            Dim lower = href.Trim().ToLowerInvariant()
+            If lower.StartsWith("http://") OrElse lower.StartsWith("https://") OrElse lower.StartsWith("mailto:") Then
+                Process.Start(New ProcessStartInfo(href) With {.UseShellExecute = True})
+                ' Prevent the WebBrowser from navigating internally
+                If e IsNot Nothing Then
+                    e.ReturnValue = False
+                    e.BubbleEvent = False
+                End If
+            End If
+        Catch
+            ' ignore
+        End Try
+    End Sub
+
+
+    ' HTML renderer for the chat history: an overlay WebBrowser on top of the hidden txtChatHistory.
+    Private ReadOnly wbChat As New WebBrowser() With {
+        .Dock = DockStyle.Fill,
+        .AllowWebBrowserDrop = False,
+        .IsWebBrowserContextMenuEnabled = False,
+        .WebBrowserShortcutsEnabled = False,
+        .ScriptErrorsSuppressed = True
+    }
+
+    ' Queue + readiness flag so we can append even if the WebBrowser is not yet ready.
+    Private _htmlReady As Boolean = False
+    Private ReadOnly _htmlQueue As New List(Of String)()
+
+    ' Extended Markdown pipeline for chat (advanced features + emoji + soft line breaks).
+    Private ReadOnly _mdPipeline As MarkdownPipeline =
+        New MarkdownPipelineBuilder().
+            UseAdvancedExtensions().
+            UseEmojiAndSmiley().
+            UseSoftlineBreakAsHardlineBreak().
+            Build()
+
+    Private _lastThinkingId As String = Nothing
+
+    ' Bridge to open links in the default browser from inside the WebBrowser control
+    <System.Runtime.InteropServices.ComVisible(True)>
+    Public Class BrowserBridge
+        Public Sub OpenLink(url As String)
+            Try
+                If String.IsNullOrEmpty(url) Then Return
+                Process.Start(New ProcessStartInfo(url) With {.UseShellExecute = True})
+            Catch
+                ' ignore
+            End Try
+        End Sub
+    End Class
+
+    ' Persist the inner HTML of the chat container (#chat) into My.Settings.
+    Private Sub PersistChatHtml()
+        Try
+            If wbChat Is Nothing OrElse wbChat.Document Is Nothing Then Return
+            Dim chat = wbChat.Document.GetElementById("chat")
+            If chat Is Nothing Then Return
+            My.Settings.LastChatHistoryHtml = chat.InnerHtml
+            My.Settings.Save()
+        Catch
+            ' best-effort
+        End Try
+    End Sub
+
+    ' Call from constructor, right after placing txtChatHistory in the TableLayoutPanel.
+    Public Sub InitChatHtmlUI(host As TableLayoutPanel)
+        If host Is Nothing Then Return
+
+        txtChatHistory.Visible = False
+        host.Controls.Add(wbChat, 0, 1)
+        wbChat.BringToFront()
+
+        wbChat.ObjectForScripting = New BrowserBridge()
+
+        AddHandler wbChat.DocumentCompleted, AddressOf WbChat_DocumentCompleted
+        AddHandler wbChat.Navigating, AddressOf WbChat_Navigating
+        AddHandler wbChat.NewWindow, AddressOf WbChat_NewWindow
+    End Sub
+
+    Private Sub WbChat_Navigating(sender As Object, e As WebBrowserNavigatingEventArgs)
+        Try
+            If e.Url IsNot Nothing Then
+                Dim scheme = e.Url.Scheme.ToLowerInvariant()
+                If scheme = "http" OrElse scheme = "https" OrElse scheme = "mailto" Then
+                    e.Cancel = True
+                    Process.Start(New ProcessStartInfo(e.Url.ToString()) With {.UseShellExecute = True})
+                End If
+            End If
+        Catch
+            ' ignore
+        End Try
+    End Sub
+
+    Private Sub WbChat_NewWindow(sender As Object, e As CancelEventArgs)
+        e.Cancel = True
+        Try
+            Dim doc = wbChat.Document
+            If doc IsNot Nothing AndAlso doc.ActiveElement IsNot Nothing Then
+                Dim href = doc.ActiveElement.GetAttribute("href")
+                If Not String.IsNullOrWhiteSpace(href) Then
+                    Process.Start(New ProcessStartInfo(href) With {.UseShellExecute = True})
+                End If
+            End If
+        Catch
+            ' ignore
+        End Try
+    End Sub
+
+    ' Call once in Load after controls are set up.
+    Public Sub InitializeChatHtml()
+        Dim baseSize As Single = If(Me IsNot Nothing AndAlso Me.Font IsNot Nothing, Me.Font.SizeInPoints, 9.0F)
+        Dim fontPt As Single = System.Math.Max(baseSize + 1.0F, 10.0F)
+
+        Dim css As String =
+$"html,body{{height:100%;margin:0;padding:0;background:#fff;color:#000;}}
+body{{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:{fontPt}pt;line-height:1.45;}}
+#chat{{padding:6px 8px;}}
+.msg{{margin:6px 0;word-wrap:break-word;}}
+.msg .who{{font-weight:600;margin-right:4px;}}
+.msg.user .who{{color:#333;}}
+.msg.assistant .who{{color:#003366;}}
+.msg.thinking .content{{opacity:.75;font-style:italic;}}
+/* No top gap when content is block-rendered */
+.msg .content > *:first-child{{margin-top:0;}}
+a{{color:#0068c9;text-decoration:underline;cursor:pointer;}}
+a:visited{{color:#5a3694;}}
+ul,ol{{margin:6px 0 6px 22px;}}
+pre,code,kbd,samp{{font-family:Consolas,'Courier New',monospace;}}
+pre{{white-space:pre-wrap;background:#f6f8fa;border:1px solid #e1e4e8;border-radius:4px;padding:6px;}}
+blockquote{{border-left:4px solid #e1e4e8;margin:6px 0;padding:6px 10px;background:#fafbfc;color:#333;}}
+table{{border-collapse:collapse;margin:6px 0;}}
+td,th{{border:1px solid #ddd;padding:4px 6px;}}"
+
+        Dim html As String =
+$"<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv=""X-UA-Compatible"" content=""IE=edge"" />
+<meta charset=""utf-8"">
+<style>{css}</style>
+<script type=""text/javascript"">
+function wireLinks(root) {{
+  var links = root.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {{
+    (function(a) {{
+      a.setAttribute('target', '_self');    // avoid NewWindow for old IE
+      a.setAttribute('rel', 'noopener');
+      a.onclick = function() {{
+        try {{ if (window.external && window.external.OpenLink) window.external.OpenLink(a.href); }} catch (e) {{}}
+        if (window.event) window.event.returnValue = false; // IE8-
+        return false;
+      }};
+    }})(links[i]);
+  }}
+}}
+function appendMessage(html) {{
+  var c = document.getElementById('chat');
+  if (!c) return;
+  var temp = document.createElement('div');
+  temp.innerHTML = html;
+  wireLinks(temp);
+  while (temp.firstChild) {{
+    c.appendChild(temp.firstChild);
+  }}
+  window.scrollTo(0, document.body.scrollHeight);
+}}
+function removeById(id) {{
+  var el = document.getElementById(id);
+  if (!el || !el.parentNode) return;
+  el.parentNode.removeChild(el);
+}}
+</script>
+</head>
+<body>
+  <div id=""chat""></div>
+</body>
+</html>"
+        _htmlReady = False
+        wbChat.DocumentText = html
+    End Sub
+
+    ' Clear the HTML chat entirely
+    Public Sub ClearChatHtml()
+        _htmlQueue.Clear()
+        _htmlReady = False
+        InitializeChatHtml()
+    End Sub
+
+    ' Safe HTML encode for plain text parts.
+    Private Shared Function HtmlEncode(s As String) As String
+        If s Is Nothing Then Return ""
+        Return s.Replace("&", "&amp;").
+                 Replace("<", "&lt;").
+                 Replace(">", "&gt;").
+                 Replace("""", "&quot;")
+    End Function
+
+    Private Shared Function InstrumentLinks(html As String) As String
+        If String.IsNullOrEmpty(html) Then Return html
+        Try
+            Return System.Text.RegularExpressions.Regex.Replace(
+                html,
+                "(?is)<a\s+([^>]*?)\bhref\s*=\s*(?:'([^']*)'|""([^""]*)""|([^\s>]+))([^>]*)>",
+                Function(m As System.Text.RegularExpressions.Match)
+                    Dim pre = m.Groups(1).Value
+                    Dim href = If(m.Groups(2).Success, m.Groups(2).Value, If(m.Groups(3).Success, m.Groups(3).Value, m.Groups(4).Value))
+                    Dim post = m.Groups(5).Value
+                    If String.IsNullOrWhiteSpace(href) Then Return m.Value
+                    ' Already wired?
+                    If m.Value.IndexOf("OpenLink", StringComparison.OrdinalIgnoreCase) >= 0 Then Return m.Value
+                    Dim safeHref = href.Replace("""", "&quot;")
+                    Dim onclickAttr = " onclick=""try{if(window.external&&window.external.OpenLink)window.external.OpenLink(this.href);}catch(e){};return false;"""
+                    ' Force target=_self to avoid popup in old IE
+                    Dim targetAttr = If(m.Value.IndexOf("target=", StringComparison.OrdinalIgnoreCase) >= 0, "", " target=""_self""")
+                    Return $"<a {pre} href=""{safeHref}""{targetAttr}{onclickAttr}{post}>"
+                End Function)
+        Catch
+            Return html
+        End Try
+    End Function
+
+
+    ' Append a restored transcript as HTML:
+    ' - "You:" messages are plain, HTML-encoded.
+    ' - Assistant messages (AN5) are rendered from Markdown with commands removed.
+    Public Sub AppendTranscriptToHtml(transcript As String)
+        If String.IsNullOrEmpty(transcript) Then Return
+
+        Dim lines = transcript.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf).Split(New String() {vbLf}, StringSplitOptions.None)
+        Dim currentRole As String = Nothing
+        Dim content As New System.Text.StringBuilder()
+
+        Dim SubFlush As System.Action =
+            Sub()
+                If content.Length = 0 OrElse String.IsNullOrEmpty(currentRole) Then
+                    content.Clear() : currentRole = Nothing : Return
+                End If
+                Dim htmlFrag As String
+                If currentRole = "user" Then
+                    Dim encoded = HtmlEncode(content.ToString()).Replace(vbLf, "<br>")
+                    htmlFrag = $"<div class='msg user'><span class='who'>You:</span><span class='content'>{encoded}</span></div>"
+                Else
+                    ' Assistant: convert markdown and inline single <p> when possible.
+                    Dim md = RemoveCommands(content.ToString())
+                    Dim body = Markdown.ToHtml(md, _mdPipeline)
+                    body = InstrumentLinks(body)
+                    Dim t = If(body, "").Trim()
+                    Dim isSingleParagraph As Boolean =
+                        System.Text.RegularExpressions.Regex.IsMatch(t, "^\s*<p>[\s\S]*?</p>\s*$", RegexOptions.IgnoreCase) AndAlso
+                        Not System.Text.RegularExpressions.Regex.IsMatch(t, "<(ul|ol|pre|table|h[1-6]|blockquote|hr|div)\b", RegexOptions.IgnoreCase)
+                    If isSingleParagraph Then
+                        Dim inlineHtml As String = System.Text.RegularExpressions.Regex.Replace(t, "^\s*<p>|</p>\s*$", "", RegexOptions.IgnoreCase)
+                        htmlFrag = $"<div class='msg assistant'><span class='who'>{HtmlEncode(AN5)}:</span><span class='content'>{inlineHtml}</span></div>"
+                    Else
+                        htmlFrag = $"<div class='msg assistant'><span class='who'>{HtmlEncode(AN5)}:</span><div class='content'>{body}</div></div>"
+                    End If
+                End If
+                AppendHtml(htmlFrag)
+                content.Clear()
+                currentRole = Nothing
+            End Sub
+
+        For Each ln In lines
+            If ln.StartsWith("You:", StringComparison.OrdinalIgnoreCase) Then
+                SubFlush()
+                currentRole = "user"
+                content.Append(ln.Substring(4).TrimStart())
+            ElseIf ln.StartsWith(AN5 & ":", StringComparison.OrdinalIgnoreCase) Then
+                SubFlush()
+                currentRole = "assistant"
+                content.Append(ln.Substring((AN5 & ":").Length).TrimStart())
+            Else
+                If content.Length > 0 Then content.AppendLine()
+                content.Append(ln)
+            End If
+        Next
+        SubFlush()
+        PersistChatHtml()
+    End Sub
+
+    ' Append a user message as HTML-encoded text (no Markdown for user input).
+    Public Sub AppendUserHtml(text As String)
+        Dim encoded = HtmlEncode(text).
+                      Replace(vbCrLf, "<br>").
+                      Replace(vbLf, "<br>").
+                      Replace(vbCr, "<br>")
+        AppendHtml($"<div class='msg user'><span class='who'>You:</span><span class='content'>{encoded}</span></div>")
+        PersistChatHtml()
+    End Sub
+
+    ' Show "Thinking..." placeholder and remember its DOM id.
+    Public Sub ShowAssistantThinking()
+        _lastThinkingId = "thinking-" & Guid.NewGuid().ToString("N")
+        AppendHtml($"<div id=""{_lastThinkingId}"" class='msg assistant thinking'><span class='who'>{HtmlEncode(AN5)}:</span><span class='content'>Thinking...</span></div>")
+    End Sub
+
+    ' Remove the last "Thinking..." placeholder if present.
+    Public Sub RemoveAssistantThinking()
+        If String.IsNullOrEmpty(_lastThinkingId) Then Return
+        Try
+            If wbChat.Document IsNot Nothing Then
+                wbChat.Document.InvokeScript("removeById", New Object() {_lastThinkingId})
+            End If
+        Catch
+            ' Best effort; ignore.
+        Finally
+            _lastThinkingId = Nothing
+        End Try
+    End Sub
+
+    ' Append an assistant message by converting Markdown -> HTML using Markdig.
+    Public Sub AppendAssistantMarkdown(md As String)
+        If md Is Nothing Then md = ""
+        Dim body As String = Markdown.ToHtml(md, _mdPipeline)
+        body = InstrumentLinks(body)
+        Dim t As String = If(body, "").Trim()
+
+        Dim isSingleParagraph As Boolean =
+            System.Text.RegularExpressions.Regex.IsMatch(t, "^\s*<p>[\s\S]*?</p>\s*$", RegexOptions.IgnoreCase) AndAlso
+            Not System.Text.RegularExpressions.Regex.IsMatch(t, "<(ul|ol|pre|table|h[1-6]|blockquote|hr|div)\b", RegexOptions.IgnoreCase)
+
+        If isSingleParagraph Then
+            Dim inlineHtml As String = System.Text.RegularExpressions.Regex.Replace(t, "^\s*<p>|</p>\s*$", "", RegexOptions.IgnoreCase)
+            AppendHtml($"<div class='msg assistant'><span class='who'>{HtmlEncode(AN5)}:</span><span class='content'>{inlineHtml}</span></div>")
+        Else
+            AppendHtml($"<div class='msg assistant'><span class='who'>{HtmlEncode(AN5)}:</span><div class='content'>{body}</div></div>")
+        End If
+
+        PersistChatHtml()
+    End Sub
+
+    Private Sub AppendHtml(fragment As String)
+        If String.IsNullOrEmpty(fragment) Then Return
+
+        ' If the WebBrowser isn't ready, buffer messages.
+        If Not _htmlReady OrElse wbChat.Document Is Nothing Then
+            _htmlQueue.Add(fragment)
+            Return
+        End If
+
+        Try
+            wbChat.Document.InvokeScript("appendMessage", New Object() {fragment})
+        Catch
+            ' If we hit a timing edge, queue and wait for next ready cycle.
+            _htmlQueue.Add(fragment)
+        End Try
+    End Sub
+
+    ' When the HTML document is ready, flush any queued fragments.
+    Private Sub WbChat_DocumentCompleted(sender As Object, e As WebBrowserDocumentCompletedEventArgs)
+        _htmlReady = True
+
+        WireDocumentClick()
+
+        If _htmlQueue.Count > 0 Then
+            Try
+                For Each frag In _htmlQueue
+                    wbChat.Document.InvokeScript("appendMessage", New Object() {frag})
+                Next
+            Catch
+            Finally
+                _htmlQueue.Clear()
+            End Try
+        End If
+    End Sub
 
 End Class
