@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 5.11.2025
+' 9.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -206,7 +206,7 @@ Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.051125 Gen2 Beta Test"
+    Public Const Version As String = "V.091125 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -1244,6 +1244,15 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_HelpMe As String
+        Get
+            Return _context.SP_HelpMe
+        End Get
+        Set(value As String)
+            _context.SP_HelpMe = value
+        End Set
+    End Property
+
     Public Shared Property SP_Add_ChatWord_Commands As String
         Get
             Return _context.SP_Add_ChatWord_Commands
@@ -1568,6 +1577,16 @@ Public Class ThisAddIn
             _context.INI_UpdatePath = value
         End Set
     End Property
+
+    Public Shared Property INI_HelpMeInkyPath As String
+        Get
+            Return _context.INI_HelpMeInkyPath
+        End Get
+        Set(value As String)
+            _context.INI_HelpMeInkyPath = value
+        End Set
+    End Property
+
     Public Shared Property INI_SpeechModelPath As String
         Get
             Return _context.INI_SpeechModelPath
@@ -3041,6 +3060,8 @@ Public Class ThisAddIn
                     Dim instructions As New List(Of String)
                     instructions = ParseLLMResponse(LLMResult)
 
+                    'Debug.WriteLine("LLMResult 1: " & LLMResult)
+
                     If instructions.Count > 0 Then
 
                         If DoPane Then
@@ -3055,6 +3076,7 @@ Public Class ThisAddIn
                                 ShowPaneAsync("The LLM has provided the following result (you can edit it):", LLMResult, $"You can let {AN} insert the square brackets into your worksheet, where possible", AN, False, True, True)
                             ElseIf Not String.IsNullOrWhiteSpace(FinalText) Then
                                 instructions = ParseLLMResponse(FinalText)
+                                'Debug.WriteLine("FinalText: " & FinalText)
                                 ApplyLLMInstructions(instructions, DoBubbles)
                                 PutInClipboard(FinalText)
                                 ShowCustomMessageBox("Implementation of the instructions completed (to the extent possible). They are also in the clipboard.")
@@ -3868,6 +3890,22 @@ Public Class ThisAddIn
     End Function
 
 
+    Private Function GetActiveWorksheetSafe(app As Excel.Application) As Worksheet
+        ' Try the currently active sheet
+        Dim ws = TryCast(app.ActiveSheet, Worksheet)
+        If ws IsNot Nothing Then Return ws
+
+        ' Fallback: first worksheet of first open workbook
+        For Each wb As Workbook In app.Workbooks
+            If wb IsNot Nothing AndAlso wb.Worksheets.Count > 0 Then
+                Return CType(wb.Worksheets(1), Worksheet)
+            End If
+        Next
+
+        Return Nothing
+    End Function
+
+
     Sub ApplyLLMInstructions(ByVal instructions As List(Of String), DoAlsoBubbles As Boolean)
 
         Dim instruction As String
@@ -3878,8 +3916,13 @@ Public Class ThisAddIn
         Dim ii As Integer
 
         ' Get the active Excel application and sheet
-        Dim excelApp As Excel.Application = CType(Runtime.InteropServices.Marshal.GetActiveObject("Excel.Application"), Excel.Application)
-        Dim activeSheet As Worksheet = CType(excelApp.ActiveSheet, Worksheet)
+        Dim excelApp As Excel.Application = Globals.ThisAddIn.Application
+        Dim activeSheet As Worksheet = GetActiveWorksheetSafe(excelApp)
+
+        If activeSheet Is Nothing Then
+            ShowCustomMessageBox("No worksheet available to apply instructions.")
+            Exit Sub
+        End If
 
         ii = 0
 
@@ -3977,6 +4020,7 @@ Public Class ThisAddIn
                                             cleanedValue = CStr(formulaOrValue).Trim("'"c)
                                             cleanedValue = DecodeTextLiterals(cleanedValue)
                                             targetRange.NumberFormat = "@"
+                                            Debug.WriteLine($"Set cleaned text value in {cellAddress}: '{cleanedValue}'")
                                             targetRange.Value = cleanedValue
                                         End If
 
@@ -3986,9 +4030,9 @@ Public Class ThisAddIn
                                 End If
                             Catch ex As Exception
                                 If ex.Message.Contains("HRESULT: 0x800A03EC") Then
-                                    ShowCustomMessageBox($"Error: Excel rejected the formula '{formulaOrValue}' that {AN} tried to assign to the cell {cellAddress}.")
+                                    ShowCustomMessageBox($"Error: Excel rejected the formula or value '{formulaOrValue}' that {AN} tried to assign to the cell {cellAddress}.")
                                 Else
-                                    ShowCustomMessageBox($"An error occurred when trying to insert the formula '{formulaOrValue}' in cell {cellAddress}: {ex.Message}")
+                                    ShowCustomMessageBox($"An error occurred when trying to insert the formula or value '{formulaOrValue}' in cell {cellAddress}: {ex.Message}")
                                 End If
                             End Try
                         Else
@@ -4016,6 +4060,33 @@ Public Class ThisAddIn
     End Sub
 
 
+    Private Function PreSanitizeNonJson(raw As String) As String
+        If String.IsNullOrWhiteSpace(raw) Then Return raw
+
+        ' 1. Convert RTF unicode escapes: \u####?  (decimal to hex → actual char)
+        raw = Regex.Replace(raw, "\\u(-?\d+)\?", Function(m)
+                                                     Dim dec = Integer.Parse(m.Groups(1).Value)
+                                                     Return ChrW(dec)
+                                                 End Function)
+
+        ' 2. Replace RTF line markers
+        raw = Regex.Replace(raw, "(?i)\\line", vbCrLf)
+
+        ' 3. Collapse excessive backslashes that are not valid JSON escapes (optional)
+        ' Leave valid JSON escapes (\n, \r, \t, \") alone
+        raw = Regex.Replace(raw, "\\\\(?![nrt""\\/u])", "\")
+
+        ' 4. Strip leading / trailing single quotes the LLM sometimes wraps around payload
+        raw = raw.Trim()
+        If raw.StartsWith("'") AndAlso raw.EndsWith("'") AndAlso raw.Length > 2 Then
+            raw = raw.Substring(1, raw.Length - 2).Trim()
+        End If
+
+        ' 5. Remove zero-width or control chars except CR/LF/TAB
+        raw = New String(raw.Where(Function(c) AscW(c) >= 32 OrElse c = vbCr OrElse c = vbLf OrElse c = vbTab).ToArray())
+
+        Return raw
+    End Function
 
 
     Public Sub SetFormulaSafe(cell As Excel.Range, formulaOrValue As String, excelApp As Excel.Application)
@@ -4983,6 +5054,17 @@ Public Class ThisAddIn
     End Function
 
 
+    Private _win As frmHelpMeInky = Nothing
+
+    Public Sub HelpMeInky()
+        If _win Is Nothing OrElse _win.IsDisposed Then
+            _win = New frmHelpMeInky(_context, RDV)
+        End If
+        ' No owner needed
+        _win.ShowRaised()
+    End Sub
+
+
     Public Sub ShowSettings()
 
         Dim Settings As New Dictionary(Of String, String) From {
@@ -4991,7 +5073,7 @@ Public Class ThisAddIn
                 {"Temperature_2", "Temperature of {model2}"},
                 {"Timeout_2", "Timeout of {model2}"},
                 {"DoubleS", "Convert '" & ChrW(223) & "' to 'ss'"},
-                {"NoDash", "Replace LLM type dashes"},
+                {"NoDash", "Convert em to en dash"},
                 {"PreCorrection", "Additional instruction for prompts"},
                 {"PostCorrection", "Prompt to apply after queries"},
                 {"Language1", "Default translation language 1"},
@@ -5006,7 +5088,7 @@ Public Class ThisAddIn
                 {"Temperature_2", "The higher, the more creative the LLM will be (0.0-2.0)"},
                 {"Timeout_2", "In milliseconds"},
                 {"DoubleS", "For Switzerland"},
-                {"NoDash", "This will convert dashes typically generated by LLMs but that are not commonly used (indicating AI generation)"},
+                {"NoDash", "This will convert long dashes typically generated by LLMs but that are not commonly used (thus suggesting that the text has been AI generated)"},
                 {"PreCorrection", "Add prompting text that will be added to all basic requests (e.g., for special language tasks)"},
                 {"PostCorrection", "Add a prompt that will be applied to each result before it is further processed (slow!)"},
                 {"Language1", "The language (in English) that will be used for the first quick access button in the ribbon"},

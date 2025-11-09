@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
 '
-' 31.10.2025
+' 8.11.2025
 
 Imports Microsoft.Office.Tools.Ribbon
 Imports Microsoft.Win32
@@ -85,8 +85,6 @@ Public Class Ribbon1
         Return True
     End Function
 
-    'Private ReadOnly RedDragonCodeInstance As New RedDragonCode()
-
     Public Sub RI_Correct_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Correct.Click
         Globals.ThisAddIn.MainMenu("Correct")
     End Sub
@@ -160,6 +158,9 @@ Public Class Ribbon1
 
     Private Sub RI_DefineMyStyle_Click_1(sender As Object, e As RibbonControlEventArgs) Handles RI_DefineMyStyle.Click
         Globals.ThisAddIn.DefineMyStyle()
+    End Sub
+    Private Sub RI_HelpMe_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_HelpMe.Click
+        Globals.ThisAddIn.HelpMeInky()
     End Sub
 
 End Class
@@ -243,8 +244,6 @@ Public Class Ribbon2
         Return True
     End Function
 
-    'Private ReadOnly RedDragonCodeInstance As New RedDragonCode()
-
     Public Sub RI_Correct_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Correct.Click
         Globals.ThisAddIn.MainMenu("Correct")
     End Sub
@@ -322,5 +321,8 @@ Public Class Ribbon2
         Globals.ThisAddIn.DefineMyStyle()
     End Sub
 
+    Private Sub RI_HelpMe_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_HelpMe.Click
+        Globals.ThisAddIn.HelpMeInky()
+    End Sub
 
 End Class

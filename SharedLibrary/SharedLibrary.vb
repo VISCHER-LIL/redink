@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 5.11.2025
+' 9.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -176,6 +176,7 @@ Namespace SharedLibrary
             Property INI_ContextMenu As Boolean
             Property INI_UpdateCheckInterval As Integer
             Property INI_UpdatePath As String
+            Property INI_HelpMeInkyPath As String
             Property INI_SpeechModelPath As String
             Property INI_LocalModelPath As String
             Property INI_TTSEndpoint As String
@@ -228,6 +229,7 @@ Namespace SharedLibrary
             Property SP_MarkupRegex As String
             Property SP_ChatWord As String
             Property SP_Chat As String
+            Property SP_HelpMe As String
             Property SP_Add_ChatWord_Commands As String
             Property SP_ChatExcel As String
             Property SP_Add_ChatExcel_Commands As String
@@ -374,6 +376,7 @@ Namespace SharedLibrary
         Public Property INI_ContextMenu As Boolean Implements ISharedContext.INI_ContextMenu
         Public Property INI_UpdateCheckInterval As Integer Implements ISharedContext.INI_UpdateCheckInterval
         Public Property INI_UpdatePath As String Implements ISharedContext.INI_UpdatePath
+        Public Property INI_HelpMeInkyPath As String Implements ISharedContext.INI_HelpMeInkyPath
         Public Property INI_SpeechModelPath As String Implements ISharedContext.INI_SpeechModelPath
         Public Property INI_LocalModelPath As String Implements ISharedContext.INI_LocalModelPath
         Public Property INI_TTSEndpoint As String Implements ISharedContext.INI_TTSEndpoint
@@ -426,6 +429,7 @@ Namespace SharedLibrary
         Public Property SP_ChatWord As String Implements ISharedContext.SP_ChatWord
 
         Public Property SP_Chat As String Implements ISharedContext.SP_Chat
+        Public Property SP_HelpMe As String Implements ISharedContext.SP_HelpMe
         Public Property SP_Add_ChatWord_Commands As String Implements ISharedContext.SP_Add_ChatWord_Commands
         Public Property SP_ChatExcel As String Implements ISharedContext.SP_ChatExcel
         Public Property SP_Add_ChatExcel_Commands As String Implements ISharedContext.SP_Add_ChatExcel_Commands
@@ -1472,6 +1476,7 @@ Namespace SharedLibrary
         Public Const AN4 As String = "https://vischer.com/redink"  ' Name of sub-directory on Website of vischer.com/...  
         Public Const AN5 As String = "Red%20Ink"  ' Name of sub-directory on Website of vischer.com/...  
         Public Const AN7 As String = "http://localhost:12333/inky"  ' Localhost URL for Inky
+        Public Const AN8 As String = "Inky"
         Public Const MaxUseDate As Date = #12/31/2025#
 
         Public Const NoThinkTrigger As String = "(nothink)"
@@ -1562,6 +1567,8 @@ Namespace SharedLibrary
             {"Outlook", $"microsoft-edge:{AppsUrl}/redink/outlook/" & AN5 & "%20for%20Outlook.vsto"}
         }
 
+        Public Const Default_HelpMeInkyPath As String = "https://apps.vischer.com/redink/Red_Ink_Guide.txt"
+
         Public Shared ExcelHelper As String = AN2 & "_helper.xlam"
         Public Shared WordHelper As String = AN2 & "_helper.dotm"
 
@@ -1594,7 +1601,7 @@ Namespace SharedLibrary
         Const Default_SP_Add_KeepFormulasIntact As String = "Beware, the text contains an Excel formula. Unless expressly instructed otherwise, make sure that the formula still works as intended."
         Const Default_SP_Add_KeepHTMLIntact As String = "When completing your task, leave any HTML tags within 'TEXTTOPROCESS' fully intact in the output and never include your instructions in the output (just your barebones work result).."
         Const Default_SP_Add_KeepInlineIntact As String = "Do not remove any text that appears between {{ and }}; these placeholders contain content that is part of the text and never include your instructions in the output (just your barebones work result). Also keep markdown formatting intact. "
-        Const Default_SP_Add_Bubbles As String = "Provide your response to the instruction not in a single, combined text, but split up your response according to the part of the TEXTTOPROCESS to which your response relates. For example, if your response relates to three different paragraphs or sentences of the same text, provide your response in three different comments that relate to each relevant paragraph. When doing so, follow strictly these rules: \n1. For each such portion of the TEXTTOPROCESS, provide your response in the the form of a comment to the portion of the text to which it relates. \n3. Provide each portion of your response by first quoting the most meaningful sentence from the relevant portion of the TEXTTOPROCESS verbatim followed by the relevant comment for that portion of the TEXTTOPROCESS. When doing so, follow strictly this syntax: ""text1@@comment1§§§text2@@comment2§§§text3@@comment3"". It is important that you provide your output exactly in this form: First provide the quoted sentence, then the separator @@ and then your comment. After that, add the separator §§§ and continue with the second portion and comment in the same way, and so on. Make sure to use these separators exactly as instructed. If you do not comply, your answer will be invalid. \n3. Make sure you quote the sentence of the TEXTTOPROCESS exactly as it has been provided to you; do not change anything to the quoted sentence of the TEXTTOPROCESS, do not add or remove any characters, do not add quotation marks, do never add line breaks and never remove line breaks, either, if they exist in TEXTTOPROCESS.\n4. Select a sentence that is UNIQUE in the document; if the chosen sentence is not unique, add more sentences from the relevant portion to make it unique. Draft the comment so to make it clear to which portion of the TEXTTOPROCESS it relates, in particular if it goes beyond the sentence. \n5. When quoting a sentence of TEXTTOPROCESS make sure that you NEVER include a title or heading to the text sequence, NEVER start with any paragraph number or bullets, just quote barebones text from the paragraph that you comment.\n6. Make sure that you select the sentence of TEXTTOPROCESS to quote so that that they do not contain characters that are usually not used for text. \n7. NEVER quote a sentence of TEXTTOPROCESS that includes line breaks or carriage returns. \n8. If you quote text that contains hyphenation, include the same hyphenation in your quote. \n9. Limit your output to those sections of the TEXTTOPROCESS where you actually do have something meaningful to say as to what the user is asking you. Unless expressly instructed otherwise, you are not allowed to refer to sections of the TEXTTOPROCESS for which you have no substantive comment, change, critique or remark. For example, 'No comment' or 'No specific comment' is a bad, wrong and invalid response. If there is a paragraph or section for which you have no meaningfull or specific comment, do not include it in your output. \n10. {FormatInstruction} \n11. Follow these rules strictly, because your output will otherwise not be valid."
+        Const Default_SP_Add_Bubbles As String = "Provide your response to the instruction not in a single, combined text, but split up your response according to the part of the TEXTTOPROCESS to which your response relates. For example, if your response relates to three different paragraphs or sentences of the same text, provide your response in three different comments that relate to each relevant paragraph. When doing so, follow strictly these rules: \n1. For each such portion of the TEXTTOPROCESS, provide your response in the the form of a comment to the portion of the text to which it relates. \n3. Provide each portion of your response by first quoting the most meaningful sentence from the relevant portion of the TEXTTOPROCESS verbatim followed by the relevant comment for that portion of the TEXTTOPROCESS. When doing so, follow strictly this syntax: ""text1@@comment1§§§text2@@comment2§§§text3@@comment3"". It is important that you provide your output exactly in this form: First provide the quoted sentence, then the separator @@ and then your comment. After that, add the separator §§§ and continue with the second portion and comment in the same way, and so on. Make sure to use these separators exactly as instructed. If you do not comply, your answer will be invalid. \n3. Make sure you quote the sentence of the TEXTTOPROCESS exactly as it has been provided to you; do not change anything to the quoted sentence of the TEXTTOPROCESS, do not add or remove any characters, do not add or change quotation marks (e.g., if there is a "", do not change it to ' and vice versa), do never add line breaks and never remove line breaks, either, if they exist in TEXTTOPROCESS.\n4. Select a sentence that is UNIQUE in the document; if the chosen sentence is not unique, add more sentences from the relevant portion to make it unique. Draft the comment so to make it clear to which portion of the TEXTTOPROCESS it relates, in particular if it goes beyond the sentence. \n5. When quoting a sentence of TEXTTOPROCESS make sure that you NEVER include a title or heading to the text sequence, NEVER start with any paragraph number or bullets, just quote barebones text from the paragraph that you comment.\n6. Make sure that you select the sentence of TEXTTOPROCESS to quote so that that they do not contain characters that are usually not used for text. \n7. NEVER quote a sentence of TEXTTOPROCESS that includes line breaks or carriage returns. \n8. If you quote text that contains hyphenation, include the same hyphenation in your quote. \n9. Limit your output to those sections of the TEXTTOPROCESS where you actually do have something meaningful to say as to what the user is asking you. Unless expressly instructed otherwise, you are not allowed to refer to sections of the TEXTTOPROCESS for which you have no substantive comment, change, critique or remark. For example, 'No comment' or 'No specific comment' is a bad, wrong and invalid response. If there is a paragraph or section for which you have no meaningfull or specific comment, do not include it in your output. \n10. {FormatInstruction} \n11. Follow these rules strictly, because your output will otherwise not be valid."
         Const Default_SP_Add_BubblesReply As String = "Provide your response to the instruction not in a single, combined text, but exclusively as responses to the existing bubble comments you have been provided with. When doing so, follow strictly this syntax: ""wid:123 ph:abcdef@@commentreply1§§§wid:123 ph:abcdef@@commentreply2§§§wid:123 ph:abcdef@@commentreply3"", whereas 123 represents the wordIndex of the respective comment you want to respond to and abcdef the ID of the comment you want tor espond to; you can also include only the ID or only the wordIndex if you only know one of them. If you have both, prefer the ID (prefix 'ph:') over the wordIndex (prefix 'wid:'). Never user 'wid:' with the ID, and never use 'ph:' with the WordIndex. If you are unsure, use no prefix. It is important that you provide your output exactly in this form: First provide the identifier for the comment to respond (ID or WordIndex), then the separator @@ and then your comment for replying. After that, add the separator §§§ and continue with the second portion and comment in the same way, and so on. Make sure to use these separators exactly as instructed. If you do not comply, your answer will be invalid. \n\n {FormatInstruction} \nFollow these rules strictly, because your output will otherwise not be valid."
         Const Default_SP_Add_BubblesExtract As String = "You will find between <WORDBUBBLES> and </WORDBUBBLES> extracted bubble comments from the document for you to consider as further context for your answer."
         Const Default_SP_Add_Bubbles_Format As String = " In your analysis response, use Markdown for bold, italics, underline and bulleted or numbered lists (one level) for better readibility."
@@ -1604,6 +1611,7 @@ Namespace SharedLibrary
         Const Default_SP_Add_Revisions As String = "Where the instruction refers to markups, track-changes, changes, insertions, deletions or revisions in the text, they are found between the tags '<ins>' and '</ins>' for insertions and between the tags '<del>' and '</del>' for deletions. ONLY what is encapsulated by these tags has changed or been marked-up (but do not refer to the tags in your output, as the user does not see them; they just indicate to you where the revisions are)."
         Public Shared Default_SP_MarkupRegex As String = $"You are an expert text comparison system and want you to give the instructions necessary to change an original text using search & replace commands to match the new text. I will below provide two blocks of text: one labeled <ORIGINALTEXT> ... </ORIGINALTEXT> and one labeled <NEWTEXT> ... </NEWTEXT>. With the two texts, do the following: \n1. You must identify every difference between them, including punctuation changes, word replacements, insertions, or deletions. Be very exact. You must find every tiny bit that is different. \n2. Develop a profound strategy on how and in which sequence to most efficiently and exactly apply these replacements, insertions and deletions to the old text using a search-and-replace function. This means you can search for certain text and all occurrences of such text will be replaced with the text string you provide. If the text string is empty (''), then the occurrences of the text will be deleted. When developing the strategy, you must consider the following: (a) Every occurrence of the search text will be replaced, not just the first one. This means that if you wish to change only one occurrence, you have to provide more context (i.e. more words) so that the search term will only find the one occurrence you are aiming at. (b) If there are several identical words or sentences that need to be change in the same manner, you can combine them, but only do so, if there are no further changes that involve these sections of the text. (c) Consider that if you run a search, it will also apply to text you have already changed earlier. This can result in problems, so you need to avoid this. (d) Consider that if you replace certain words, this may also trigger changes that are not wanted. For example, if in the sentence 'Their color is blue and the sun is shining on his neck.' you wish to change the first appearance of 'is' to 'are', you may not use the search term 'is' because it will also find the second appearance of 'is' and it will find 'his'. Instead, you will have to search for 'is blue' and replace it with 'are blue'. Hence, alway provide sufficient context where this is necessary to avoid unwanted changes. (e) You should avoid searching and replacing for the same text multiple times, as this will result in multiplication of words. If all occurrences of one term needs to be replaced with another term, you need to provide this only once. (f) Pay close attention to upper and lower case letters, as well as punctuation marks and spaces. The search and replace function is sensitive to that. (g) When building search terms, keep in mind that the system only matches whole words; wildcards and special characters are not supported. (h) As a special rule, do not consider additional or missing empty paragraphs at the end of the two texts as a relevant difference (they shall NOT trigger any action).\n3. Implement the strategy by producing a list of search terms and replacement texts (or empty strings for deletions). Your list must be strictly in this format, with no additional commentary or line breaks beyond the separators: SearchTerm1{RegexSeparator1}ReplacementforSearchTerm1{RegexSeparator2}SearchTerm2{RegexSeparator1}ReplacementforSearchTerm2{RegexSeparator2}SearchTerm3{RegexSeparator1}ReplacementforSearchTerm3... For example, if SearchTerm3 indicates a text to be deleted, the ReplacementforSearchTerm3 would be empty. - Use '{RegexSeparator1}' to separate the search term from its replacement. - Use '{RegexSeparator2}' to separate one find/replace pair from the next. - Do not include numeric placeholders (like 'Search Term 1') or any extraneous text. When generating the search and replacement terms, it is mandatory that you include the search and replacement terms exactly as they exist in the underlying text. Never change, correct or modify it. You must strictly comply with this. Otherwise your output will be unusable and invalid. \nNow, here are the texts:"
         Const Default_SP_ChatWord As String = "You are a helpful AI assistant, you are running inside Microsoft Word, and may be shown with content from the document that the user has opened currently (you will be told later in this prompt). When responding to the user, do so in the language of the question, unless the user instructs you otherwise. Before generating any output, keep in mind the following:\n\n 1. You have a legal professional background, are very intelligent, creative and precise. You have a good feeling for adequate wording and how to express ideas, and you have a lot of ideas on how to achieve things. You are easy going. \n\n 2. You exist within the application Microsoft Word. If the user allows you to interact with his document, then you can do so and you will automatically get additional instructions how to do so. \n\n 3. You always remain polite, but you adapt to the communications style of the user, and try to provide the type of help the user expresses. If the user gives commands, execute the commands without big discussion, except if something is not clear. If the user wants you to analyse his text, do so, be a concise, critical, eloquent, wise and to the point discussion partner and, if the user wants, go into details. If the user's input seems uncoordinated, too generic or really unclear, ask back and offer the kind of help you can really give, and try to find out what the user wants so you can help. If it despite several tries is not clear what the users wants, you might offer him certain help, but be not too fortcoming with offering ideas what you can do. In any event, follow the KISS principle: Unless it is necessary to complete a task, keep it always short and simple. \n\n 4. Your task is to help the user with his text. You may be asked to do this to answer some general questions to help the user brainstorm, draft his text, sort his ideas etc., or you may be asked to do specific stuff with his text. \n\n 5. If you are given access to the user's text (which is upon the user to decide using two checkboxes), you will be presented to it further below as 'content'. \n\n 6. You will also be given the name of the document that contains the 'content'. This is important because you may have to deal with several different documents, and can distinguish them based on their names. Try to do so and remember them. \n\n. 7. If you need to remember something, make sure you provide it as part of your output. You can only remember things that are contained in your output or the output of the user. Accordingly, if the user asks you to remember something from a particular content (i.e. other than what the user tells you or you have provided as an output), then repeat it, and if necessary with the name of the document, if it is meaningful. \n\n 8. Do not remove or add carriage returns or line feeds from a text unless this is necessary for fulfilling your task. Also, do not use double spaces following punctuation marks (double spaces following punctuation marks are only permitted if included in the original text). \n\n 9. The user can decide by clicking a checkbox 'Grant write access' whether he gives you the ability to change his content, search within the content or insert new text. If further below you are informed of the commands (e.g., [#INSERT ...#]) to do so, you know that he has done so and you may provide him assistance in explaining what you can do, if you believe he should know. \n\n 10. Be precise and follow instructions exactly. Otherwise your answers may be invalid."
+        Public Shared Default_SP_HelpMe As String = $"You are a helpful expert in handling the Office AI add-in {AN} (you are running within it as a chatbot called 'Help me, {AN8}'). You will only answer questions about how to handle the add-in, how to use it to be more productive, faster or produce higher quality, and for all your answers, you will exclusively rely on the manual provided to you below as to what the Add-in can do (but you can use your general knowledge on advising the user to be more productive, do a better job using AI or achieve a higher quality). If there is no manual provided, say so, tell the user that you can't answer the question and advise them to have access to the manual configured or fixed (as per the manual). You will accurately and in brief words respond to the user's questions in a language that everyone understands. You will never cite directly from the handbook, but you can use all information contained therein. Often, the same result can be achieved using different approaches and functions. Tell the user about them, and think of useful ways to use them (including giving examples). Assume the user is not experienced and nees guidance on how to get the best out of it (if the user appears to be very experienced, you can also start interacting in a more 'expert mode' style). Make practical suggestions on how the user could use certain features and how to combine different features, if this could be of interest for the user. The purpose is not only to provide advice on how to use the tool, but how the get the most out of it and out of AI. In addition to the actual question of the user you will also be provided with the previous chat history, which you shall consider, too. Never include greetings, flattery or other chit-chat in your response. Limit your output to what is strictly necessary. You can use Markdown, in particular bullets. Do not use fenced code or code formatting except if you provide a code block. If you want to provide a link, provide it formatted as a link."
         Const Default_SP_Chat As String = "You are an AI assistant designed for professionals. Your goal is to provide helpful, intelligent, eloquent, and critical answers while minimizing errors and unnecessary assumptions. General Behavior: Be professional and respectful at all times. You shall not be chatty or submissive; skip meaningless introductory statements and do not state the tasks you are given, just provide the result. Be concise but thorough: give answers that are clear, well-structured, and logically sound. Be critical and thoughtful: analyze problems, point out potential pitfalls, and suggest improvements. Admit knowledge gaps: if you don't know something, explicitly say so rather than guessing. If a question is ambiguous, ask clarifying questions instead of making assumptions. Capabilities and Limitations: You do not know whether you have access to the internet. If online data could improve your answer, explain this to the user. If you cannot retrieve up-to-date information, state that clearly. Knowledge and Accuracy: Prioritize correctness over creativity when facts are required. When you rely on assumptions, state them clearly. When summarizing, preserve the meaning without omitting critical details. If calculations or structured outputs are requested, double-check accuracy, and make it clear to the user that you are not good in calculations and they may be wrong. Tone and Style: Use eloquent, professional language without being verbose. Provide structured answers where appropriate (e.g., bullet points, numbered lists, tables). Be solution-oriented: when identifying issues, also suggest possible next steps or alternatives. Avoid jargon unless speaking with domain experts; otherwise, explain terms when necessary. Examples of Expected Behavior: If you know the answer: ""Based on current best practices, I recommend …"" If you're unsure: ""I’m not certain about this. If you need the latest information, we may need access to up-to-date sources. You will know whether you have access to online sources and search grounding, and if you have, provide sources for your statements. If you are asked to generate or create an image or other binary object and you are able to do so, only consider what [USER]'s latest prompt as a description of the image to be generated and created, and do not look at the rest of the prompt or chat history when generating the image or binary object. Also always provide the image as a binary object within the response, do NEVER provide an image as a download link, as this will invalidate your answer. If you generate and provide a binary object (e.g., an image), the user's environment in which you run will automatically save the image on the user's desktop; you will see this in the history, but ignore any reference to file paths of images in the history. Finally, ALWAYS provide your entire response in one single text. NEVER use multiple JSON records or properties to respond. "
         Const Default_SP_Add_ChatWord_Commands As String = "To help the user, you can now directly interact with the document or selection content provided to you (this comes from the user). Unless stated otherwise, this is the text of the user to which the user will when asking you to do things with his document, such as finding, replacing, deleting or inserting text you generate, or making changes to the text or implementing the suggestions you have made. You can also add and reply to comments in Word bubbles. Try to help the user to improve his content or answer questions concerning it. You are now authorized to do so if this is required to fulfill a request of the user. Proactively offer the user this possibility, if this helps to solve the user's issues. But never ask whether you should find, replace, delete or insert text if you actually do issue such as a command. Beware: You either ask whether you should issue a command to find, replace, delete or insert text, or ask so, but never both. If you are unsure, ask before doing something. \n\nYou can fulfill the users instructions by including commands in your output that will let the system search, modify and delete such content as per your instructions.\n\nTo do so, you must follow these instructions exactly: 1. You can optionally insert one or more of these commands for Word: - [#FIND: @@searchterm@@#] for finding, highlighting, marking or showing text to the user. The searchterm must be enclosed in @@ without quotes or other punctuation. - [#REPLACE: @@searchterm@@ §§newtext§§#] for search-and-replace. The searchterm must be in @@, the replacement text in §§, both without quotes. 2. If there are multiple occurrences of the search term in the document, you must provide additional context in the search term to uniquely identify the correct occurrence. Context may include a nearby phrase, word, or sentence fragment. Consider the entire text and other possible matches of what you wish to find and replace in order to find, replace or even delete content that you were not intending. 3. Ensure that the replacement term preserves necessary context to avoid accidental changes or deletions to other text. For example, if replacing only the second occurrence of ""example"" in ""This is an example. Another example follows."", the instruction could be [#REPLACE: @@Another example@@ §§Another sample@@#]. 4. If you provide multiple replacement commands, you must consider the changes already made by earlier commands when drafting later ones. For example, if the first command replaces ""example"" with ""sample"" and the second occurrence of ""example"" is in the same text, the search term for the second replacement must reflect the updated text. 5. You also have a command [#INSERTAFTER: @@searchtext@@ §§newtext§§#], which appends new text (newtext) immediately after searchtext. Use this if the user wants to add or expand text in the document. Your search term will be the text immediately preceeding the point where you want to insert the text for achieving your goal. If, HOWEVER, you are asked or required to insert newtext immediately before the text of the search term, then use the command [#INSERTBEFORE: @@searchtext@@ §§newtext§§#]. Inserting 'before' works as inserting 'after', with the exception that the newtext will be inserted before the text found and not after. 6. If your task is to insert a particular text in the user's empty document or with no instruction as to the location of the new text, use the command [#INSERT: @@newtext@@#] instead of INSERTBEFORE or INSERTAFTER. In this case, 'newtext' is the text you are asked to insert into the user's content (not the text you provide as your response. Never include what you wish to tell the user into newtext. The INSERT command is reserved exclusively for inserting text into the user's content. 7. If you want to delete text, do so by executing a [#REPLACE: @@searchtext@@ §§§§#] command, leaving the replacement text empty. 8. If you want to add a comment, do so by executing [#ADDCOMMENT: @@searchtext@@ §§yourcomment§§#], which will create a Word bubble. 9. If you want to reply to an existing Word bubble comment, do so by executing [#REPLYCOMMENT: @@wid:123 ph:abcdef@@ §§yourcomment§§#], whereas 123 represents the wordIndex of the comment you want to respond to and abcdef the ID of the comment; you can also include only the ID or only the wordIndex between @@ and @@ if you only know one of them. 10. If content to be searched for contains carriage returns (often shown as '\r') or line feeds (often shown as '\n'), make sure your search term also contains the \r and \n in the same place. If you do not include the carriage returns ('\r') and line feed characters ('\n') in your search terms, your command will not work and your response is invalid. 11. Before issuing any commands, think carefully about the order of the commands you issue. They will be executed in the order you produce them. Build a logical sequence to avoid following commands affecting the outcome of preceeding commands. Keep in mind that replaced or deleted text will remain visible to the system. For example, if you replace 'whirlpool' with 'table' and issue second command to replace 'pool' with 'chair', it will also find all occurences of 'whirlpool', even despite your previous command of replacing 'whirlpool'. To solve such issues, only issue commands that are certainly not conflicting. Then explain to the user what other changes you wish to do, but ask the user to first accept the changes if the user agrees, and wait for approval to continue issuing your commands. 12. No other commands are allowed. Keep in mind that you cannot read or preserve formatting; if you are asked to do things you can't do, tell the user so. However, you can create output in Markdown format, and if the user has selected the option, it will be converted (or can be converted afterwards using the 'Word helpers'. 13. In your visible answer to the user, never show these commands in the same line. Provide any commands only after your user-facing text, each on its own line. 14. If you do not need to find, replace, delete or insert text, do not produce a command. If you are unsure what to do, ask the user and interact. You can also make proposals explaining what you want to do and ask the user if this is what the user wants. If the user gives you a direct instruction, however, you can comply. 15. Use the exact syntax for the commands. If you deviate in any way (e.g. quotes, extra spaces, or missing delimiters), the response is invalid. 16. If you provide searchterms in your commands, be very precise. If you do not exactly quote the text as it is contained in the content, your command will not be executed. 17. The user does not see these commands, so do not repeat them in your text. Do not include them in the middle of your output. Always place them on separate lines at the end of your output. 18. Never repeat the text of your output in the commands and vice versa. However, if you issue commands, provide the user a summary of what you have done with his document and ask him to check. 19. If you include commands in your output, do not ask the user whether you shall implement the changes you suggest. Only ask the user whether you shall implement a change in the document if you have not already done so; keep in mind that any command you include will usually be executed when you provider your answer (unless something goes wrong, which is always possible, which is why every command should be checked). Asking the user whether you may issue commands if you already issue them is contradictory. If you are not sure, ask the user and issue commands only once the user has approved so. 20. Keep your response to the user and the commands for finding, replacing, inserting and deleting text completely separate.\n\n\nNow here are some examples: - Good example if the user wants to find, highlight or show to the user ""example"" with context: Text to user: ""I located the correct ""example"" in the sentence ""This is an example.""."" Then on a new line: [#FIND: @@This is an example@@#]. - Good example for replacing the second occurrence of ""example"": Text to user: ""I recommend replacing the second occurrence of ""example"" in ""This is an example. Another example follows.""."" Then on a new line: [#REPLACE: @@Another example@@ §§Another sample§§#]. - Good example for sequential replacements: Text to user: ""I suggest replacing ""example"" step by step: First, replace ""example"" in ""This is an example."" with ""sample."" Then, replace ""Another example follows."" with ""Another sample follows.""."" On separate lines: [#REPLACE: @@This is an example@@ §§This is a sample§§#] [#REPLACE: @@Another example follows@@ §§Another sample follows§§#]. - Good example for insertion: Text to user: ""I suggest adding a summary after the phrase ""Introduction:""."" Then on a new line: [#INSERTAFTER: @@Introduction:@@ §§Here is a short summary.§§#]. - If you have to delete a text containing carriage returns such as ""This is line1.\rThis is line 2.\r\r"", a good example is: [#REPLACE: @@This is line 1.\rThis is line 2.\r\r@@ §§§§#] \n\n--- A bad and invalid response is: [#REPLACE: @@This is line 1.This is line 2.@@ §§§§#] (because the search term in your command is missing the three carriage returns that are contained in the user content - the search term will not work without the three carriage returns; always include the same carriage returns and line feeds from the original content in your command search terms). --- Another bad and invalid response: [#REPLACE: @@example@@ §§sample@@#] (because it ends with a '@@' instead of a '§§', which is a mistake; you may never use an '@@' at the end of a command that replaces or inserts text). - A good example for replying to the comment with the wordIndex 2 is [#REPLYCOMMENT: @@2@@ §§This is a valid comment.§§#] - A good example for adding a comment is [@ADDCOMMENT: @@This is line 1.@@ §§This is a comment for line 1.§§#]\n\nYou must follow these instructions strictly."
         Const Default_SP_ChatExcel As String = "You are a helpful AI assistant, you are running inside Microsoft Excel, and may be shown with content from the worksheet that the user has opened currently (you will be told later in this prompt). When responding to the user, do so in the language of the question, unless the user instructs you otherwise. Before generating any output, keep in mind the following:\n\n 1. You are an expert in analyzing and explaining Excel files to non-experts and in drafting Excel formulas for use within Excel. You also have a legal background, one in mathematics and in coding. You are very intelligent, creative and precise. You have a good feeling for adequate wording and how to express ideas, and you have a lot of ideas on how to achieve things. You are easy going. \n\n 2. You exist within the application Microsoft Excel. If the user allows you to interact with his worksheet, then you can do so and you will automatically get additional instructions how to do so and be told so. You will recognize the instructions because they contain square brackets. If you have no such instructions you cannot implement anything and cannot change the worksheet. Tell the user that you can only interact with the worksheet if you are permitted to do so. \n\n 3. You always remain polite, but you adapt to the communications style of the user, and try to provide the type of help the user expresses. If the user gives commands, execute the commands without discussion, except if something is not clear or seems squarely wrong. If the user wants you to analyse his worksheet, do so, be a concise, critical, eloquent, wise and to the point discussion partner and, if the user wants, go into details. If the user's input seems uncoordinated, too generic or really unclear, ask back and offer the kind of help you can really give, and try to find out what the user wants so you can help. If it despite several tries is not clear what the users wants, you might offer him certain help, but be not too fortcoming with offering ideas what you can do. In any event, follow the KISS principle: Unless it is necessary to complete a task, keep it always short and simple. \n\n 4. Your task is to help the user with his worksheet, whatever the topic is. You may be asked to do this to answer some general questions to help the user brainstorm, draft his text, sort his ideas etc., or you may be asked to do specific stuff with his text. If there is no question, react to the user's statements as a helpful assistant taking into account the past conversation. Always take into account the past conversation. \n\n 5. If you are given read access to the user's worksheet (which is upon the user to decide using two checkboxes), you will be presented to it further below between the tags <RANGEOFCELLS> and </RANGEOFCELLS>, either in full or in part, whatever the user deems necessary. If you do not get a <RANGEOFCELLS>, then user has not given you read access to the worksheet or it is empty, but the user asks you about what is within his worksheet, then remind the user to first give you access to the worksheet or a selection; however, never mention the tags 'RANGEOFCELLS' because the user does not know about these tags (they are internal). Also, keep in mind that you do not need to know the content of the worksheet to write something into the worksheet if the user expressly asks you. So only ask him to grant you read access to the worksheet if you really need it to respond to a user task. \n\n 6. If you get access to the worksheet, you will also be given the name of the file and worksheet (format: 'file - worksheet'). This is important because you may have to deal with several different worksheets, and can distinguish them based on their names. Try to do so and remember them. \n\n 7. Each RANGEOFCELLS contains a description of the content and status of each relevant cells. The description starts with the cell address and then follows its content, formula, comments, color code and any dropdown menus. Be very CAREFUL when analyzing this information and make sure your are not mixing up cells, rows or lines. This is tricky, so analyze very careful before providing a response. \n\n 8. If you need to remember something, make sure you provide it as part of your output. You can only remember things that are contained in your output or the output of the user. Accordingly, if the user asks you to remember something from a particular content (i.e. other than what the user tells you or you have provided as an output), then repeat it, and if necessary with the name of the document, if it is meaningful. \n\n 9. Do not remove or add carriage returns or line feeds from a text unless this is necessary for fulfilling your task. Also, do not use double spaces following punctuation marks (double spaces following punctuation marks are only permitted if included in the original text). \n\n 10. The user can decide by clicking a checkbox 'Grant write access' whether he gives you the ability to change his worksheet, i.e. write access for inserting formulas, content or comments or deleting content. Read and write access are not dependent on each other. Only if further below you are informed of the commands to make changes to the worksheet or insert comments, you have been given write access and you may provide him assistance in explaining what you can do to change the worksheet or do it, if this appears necessary (if you have no write access, i.e. if you are not informed of the commands to change the Excel, do not try to modify the Excel). \n\n 11. Be precise and follow instructions exactly. Otherwise your answers may be invalid."
@@ -5180,6 +5188,10 @@ Namespace SharedLibrary
 
 
 
+        Private Shared ReadOnly _rtfUnicodePattern As New Regex("\\u(-?\d+)\?", RegexOptions.Compiled)
+        Private Shared ReadOnly _jsonUnicodePattern As New Regex("\\u([0-9A-Fa-f]{4})", RegexOptions.Compiled)
+
+
         ' Decode JSON/HTML escapes and normalize RTF hyperlink fields to "URL (display)".
         Public Shared Function DecodeTextLiterals(ByVal text As String) As String
             If String.IsNullOrEmpty(text) Then Return text
@@ -5211,10 +5223,25 @@ Namespace SharedLibrary
             ' 4) Convert RTF \line to newline
             result = Regex.Replace(result, "\\line\b\s*", Environment.NewLine, RegexOptions.IgnoreCase)
 
-            ' 5) Normalize RTF hyperlink fields (robust, brace-aware)
+            ' 5) RTF decimal \u####? → Unicode char
+            result = _rtfUnicodePattern.Replace(result, Function(m)
+                                                            Dim dec = Integer.Parse(m.Groups(1).Value)
+                                                            Return ChrW(dec)
+                                                        End Function)
+
+            ' 6) JSON hex \uXXXX → Unicode char (avoid double-decoding already converted)
+            result = _jsonUnicodePattern.Replace(
+                                    result,
+                                    Function(m As Match)
+                                        Dim hex As String = m.Groups(1).Value
+                                        Dim code As Integer = Integer.Parse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture)
+                                        Return ChrW(code)
+                                    End Function)
+
+            ' 7) Normalize RTF hyperlink fields (robust, brace-aware)
             result = NormalizeRtfHyperlinks(result)
 
-            ' 6) Final cleanup for leftover RTF remnants ({{...}} and font/format switches like \f0 \fs20)
+            ' 8) Final cleanup for leftover RTF remnants ({{...}} and font/format switches like \f0 \fs20)
             result = CleanupRtfRemnants(result)
 
             Return result
@@ -5301,6 +5328,41 @@ Namespace SharedLibrary
 
         ' Remove leftover RTF tokens and braces around normalized hyperlinks, e.g. "{{URL (title)}}" and "\f0\fs20".
         Private Shared Function CleanupRtfRemnants(ByVal s As String) As String
+            If String.IsNullOrEmpty(s) Then Return s
+
+            ' Paragraph and tab controls -> line breaks / spaces
+            s = Regex.Replace(s, "\s*\\par\b\s*", vbCrLf, RegexOptions.IgnoreCase)
+            s = Regex.Replace(s, "\\tab\b", " ", RegexOptions.IgnoreCase)
+
+            ' Remove paragraph formatting tokens (\pard, \liN, \fiN, \txN, \saN)
+            s = Regex.Replace(s, "\\pard\b(?:\s*\\[a-z]+-?\d+)*", "", RegexOptions.IgnoreCase)
+            s = Regex.Replace(s, "(?:\s*\\(?:li|fi|tx|sa|sb)-?\d+)+", "", RegexOptions.IgnoreCase)
+
+            ' Remove paired {{ ... }} around normalized URL (and optional " (title)")
+            s = Regex.Replace(s, "\{\{\s*(https?://[^\s}]+(?:\s*\([^)]+\))?)\s*\}\}", "$1", RegexOptions.IgnoreCase)
+
+            ' If a stray closing brace directly precedes an RTF control word, drop the brace
+            s = Regex.Replace(s, "\}\s*(\\[a-zA-Z])", "$1")
+
+            ' Remove common stray inline RTF formatting outside fields
+            s = Regex.Replace(s, "\\(?:fs\d+|f\d+|cf\d+|ul0?|b0?)\b", "", RegexOptions.IgnoreCase)
+
+            ' Normalize spaces around parentheses
+            s = Regex.Replace(s, "\s+\)", ")", RegexOptions.None)
+            s = Regex.Replace(s, "\(\s+", "(", RegexOptions.None)
+
+            ' Collapse multiple spaces
+            s = Regex.Replace(s, " +", " ")
+
+            ' Trim spaces at line starts/ends and collapse excessive blank lines
+            s = Regex.Replace(s, "[ \t]+\r?\n", vbCrLf)
+            s = Regex.Replace(s, "\r?\n[ \t]+", vbCrLf)
+            s = Regex.Replace(s, "(?:\r?\n){3,}", vbCrLf & vbCrLf).Trim()
+
+            Return s
+        End Function
+
+        Private Shared Function oldCleanupRtfRemnants(ByVal s As String) As String
             If String.IsNullOrEmpty(s) Then Return s
 
             ' Remove paired {{ ... }} around normalized URL (and optional " (title)")
@@ -5736,6 +5798,7 @@ Namespace SharedLibrary
                 context.SP_Add_Revisions = If(configDict.ContainsKey("SP_Add_Revisions"), configDict("SP_Add_Revisions"), Default_SP_Add_Revisions)
                 context.SP_MarkupRegex = If(configDict.ContainsKey("SP_MarkupRegex"), configDict("SP_MarkupRegex"), Default_SP_MarkupRegex)
                 context.SP_ChatWord = If(configDict.ContainsKey("SP_ChatWord"), configDict("SP_ChatWord"), Default_SP_ChatWord)
+                context.SP_HelpMe = If(configDict.ContainsKey("SP_HelpMe"), configDict("SP_HelpMe"), Default_SP_HelpMe)
                 context.SP_Chat = If(configDict.ContainsKey("SP_Chat"), configDict("SP_Chat"), Default_SP_Chat)
                 context.SP_Add_ChatWord_Commands = If(configDict.ContainsKey("SP_Add_ChatWord_Commands"), configDict("SP_Add_ChatWord_Commands"), Default_SP_Add_ChatWord_Commands)
                 context.SP_ChatExcel = If(configDict.ContainsKey("SP_ChatExcel"), configDict("SP_ChatExcel"), Default_SP_ChatExcel)
@@ -5766,7 +5829,7 @@ Namespace SharedLibrary
                 ' Boolean parameters
                 context.INI_DoubleS = ParseBoolean(configDict, "DoubleS")
                 context.INI_Clean = ParseBoolean(configDict, "Clean")
-                context.INI_NoDash = ParseBoolean(configDict, "NoDash")
+                context.INI_NoDash = ParseBoolean(configDict, "NoEmDash")
                 context.INI_MarkdownBubbles = ParseBoolean(configDict, "MarkdownBubbles")
                 context.INI_KeepFormat1 = ParseBoolean(configDict, "KeepFormat1")
                 context.INI_ReplaceText1 = ParseBoolean(configDict, "ReplaceText1", True)
@@ -5787,6 +5850,7 @@ Namespace SharedLibrary
 
                 context.INI_UpdateCheckInterval = If(configDict.ContainsKey("UpdateCheckInterval"), CInt(configDict("UpdateCheckInterval")), 7)
                 context.INI_UpdatePath = If(configDict.ContainsKey("UpdatePath"), configDict("UpdatePath"), "")
+                context.INI_HelpMeInkyPath = If(configDict.ContainsKey("HelpMeInkyPath"), configDict("HelpMeInkyPath"), Default_HelpMeInkyPath)
                 context.INI_SpeechModelPath = If(configDict.ContainsKey("SpeechModelPath"), configDict("SpeechModelPath"), "")
                 context.INI_TTSEndpoint = If(configDict.ContainsKey("TTSEndpoint"), configDict("TTSEndpoint"), "")
                 context.INI_LocalModelPath = If(configDict.ContainsKey("LocalModelPath"), configDict("LocalModelPath"), "")
@@ -9948,6 +10012,7 @@ Namespace SharedLibrary
             Dim rtf As String = Nothing
             If Not NoRTF Then
                 rtf = MarkdownToRtfConverter.Convert(bodyText, PreserveLiterals)
+                Debug.WriteLine("Converted RTF: " & rtf)
             End If
 
             Try
@@ -12701,6 +12766,7 @@ Namespace SharedLibrary
                     {"ContextMenu", context.INI_ContextMenu},
                     {"UpdateCheckInterval", context.INI_UpdateCheckInterval},
                     {"UpdatePath", context.INI_UpdatePath},
+                    {"HelpMeInkyPath", context.INI_HelpMeInkyPath},
                     {"SpeechModelPath", context.INI_SpeechModelPath},
                     {"LocalModelPath", context.INI_LocalModelPath},
                     {"TTSEndpoint", context.INI_TTSEndpoint},
@@ -12762,6 +12828,7 @@ Namespace SharedLibrary
                     {"SP_Add_Revisions", context.SP_Add_Revisions},
                     {"SP_MarkupRegex", context.SP_MarkupRegex},
                     {"SP_ChatWord", context.SP_ChatWord},
+                    {"SP_HelpMe", context.SP_HelpMe},
                     {"SP_Chat", context.SP_Chat},
                     {"SP_Add_ChatWord_Commands", context.SP_Add_ChatWord_Commands},
                     {"SP_ChatExcel", context.SP_ChatExcel},
@@ -12822,6 +12889,7 @@ Namespace SharedLibrary
                     {"SP_Add_Revisions", Default_SP_Add_Revisions},
                     {"SP_MarkupRegex", Default_SP_MarkupRegex},
                     {"SP_ChatWord", Default_SP_ChatWord},
+                    {"SP_HelpMe", Default_SP_HelpMe},
                     {"SP_Chat", Default_SP_Chat},
                     {"SP_Add_ChatWord_Commands", Default_SP_Add_ChatWord_Commands},
                     {"SP_ChatExcel", Default_SP_ChatExcel},
@@ -13521,6 +13589,7 @@ Namespace SharedLibrary
             variableValues.Add("ContextMenu", context.INI_ContextMenu)
             variableValues.Add("UpdateCheckInterval", context.INI_UpdateCheckInterval)
             variableValues.Add("UpdatePath", context.INI_UpdatePath)
+            variableValues.Add("HelpMeInkyPath", context.INI_HelpMeInkyPath)
             variableValues.Add("SpeechModelPath", context.INI_SpeechModelPath)
             variableValues.Add("LocalModelPath", context.INI_LocalModelPath)
             variableValues.Add("TTSEndpoint", context.INI_TTSEndpoint)
@@ -13583,6 +13652,7 @@ Namespace SharedLibrary
             variableValues.Add("SP_Add_Revisions", context.SP_Add_Revisions)
             variableValues.Add("SP_MarkupRegex", context.SP_MarkupRegex)
             variableValues.Add("SP_ChatWord", context.SP_ChatWord)
+            variableValues.Add("SP_HelpMe", context.SP_HelpMe)
             variableValues.Add("SP_Chat", context.SP_Chat)
             variableValues.Add("SP_Add_ChatWord_Commands", context.SP_Add_ChatWord_Commands)
             variableValues.Add("SP_ChatExcel", context.SP_ChatExcel)
@@ -13712,6 +13782,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_Add_Revisions") Then context.SP_Add_Revisions = updatedValues("SP_Add_Revisions")
                 If updatedValues.ContainsKey("SP_MarkupRegex") Then context.SP_MarkupRegex = updatedValues("SP_MarkupRegex")
                 If updatedValues.ContainsKey("SP_ChatWord") Then context.SP_ChatWord = updatedValues("SP_ChatWord")
+                If updatedValues.ContainsKey("SP_HelpMe") Then context.SP_HelpMe = updatedValues("SP_HelpMe")
                 If updatedValues.ContainsKey("SP_Chat") Then context.SP_Chat = updatedValues("SP_Chat")
                 If updatedValues.ContainsKey("SP_Add_ChatWord_Commands") Then context.SP_Add_ChatWord_Commands = updatedValues("SP_Add_ChatWord_Commands")
                 If updatedValues.ContainsKey("SP_ChatExcel") Then context.SP_ChatExcel = updatedValues("SP_ChatExcel")
@@ -13746,6 +13817,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("ContextMenu") Then context.INI_ContextMenu = updatedValues("ContextMenu")
                 If updatedValues.ContainsKey("UpdateCheckInterval") Then context.INI_UpdateCheckInterval = CInt(updatedValues("UpdateCheckInterval"))
                 If updatedValues.ContainsKey("UpdatePath") Then context.INI_UpdatePath = updatedValues("UpdatePath")
+                If updatedValues.ContainsKey("HelpMeInkyPath") Then context.INI_HelpMeInkyPath = updatedValues("HelpMeInkyPath")
                 If updatedValues.ContainsKey("SpeechModelPath") Then context.INI_SpeechModelPath = updatedValues("SpeechModelPath")
                 If updatedValues.ContainsKey("LocalModelPath") Then context.INI_LocalModelPath = updatedValues("LocalModelPath")
                 If updatedValues.ContainsKey("TTSEndpoint") Then context.INI_TTSEndpoint = updatedValues("TTSEndpoint")
@@ -21580,6 +21652,8 @@ Namespace SharedLibrary
                 markdownText = EscapeAsterisksInsideSquareBrackets(markdownText)
             End If
 
+            markdownText = EscapeExcelInstructionMarkers(markdownText)
+
             'markdownText = System.Text.RegularExpressions.Regex.Unescape(markdownText)
             markdownText = System.Text.RegularExpressions.Regex.Replace(
                     markdownText,
@@ -21645,6 +21719,16 @@ Namespace SharedLibrary
             ' RTF-Dokument schließen
             rtfBuilder.AppendLine("}")
             Return rtfBuilder.ToString()
+        End Function
+
+        ' Escapes the opening bracket of Excel instruction markers at the start of a line
+        ' so Markdig won't parse them as links (the backslash is consumed by the parser).
+        Private Function EscapeExcelInstructionMarkers(md As String) As String
+            If String.IsNullOrEmpty(md) Then Return md
+            ' Match start-of-line optional whitespace, then [Cell:|[Value:|[Formula:|[Comment:
+            Dim pattern As String = "(?m)^(\s*)\[(Cell|Value|Formula|Comment):"
+            Dim replacement As String = "$1\[$2:"
+            Return System.Text.RegularExpressions.Regex.Replace(md, pattern, replacement)
         End Function
 
         ' Escapes asterisks inside square-bracket ranges so Markdown won't turn *x* into italics.
@@ -25576,6 +25660,852 @@ End Function
 
 #End Region
 
+    End Class
+
+
+    Public Class frmHelpMeInky
+        Inherits System.Windows.Forms.Form
+
+        Private WindowTitle As String = $"Help me, {AN8}!"
+        Private Const AssistantName As String = AN8
+
+        Private ReadOnly _context As ISharedContext
+        Private ReadOnly _hostAppName As String          ' New: host application name (Word / Excel / Outlook)
+        Private ReadOnly _mdPipeline As Markdig.MarkdownPipeline
+        Private ReadOnly _chat As WebBrowser = New WebBrowser() With {
+            .Dock = DockStyle.Fill,
+            .AllowWebBrowserDrop = False,
+            .IsWebBrowserContextMenuEnabled = False,
+            .WebBrowserShortcutsEnabled = False,
+            .ScriptErrorsSuppressed = True
+        }
+        Private ReadOnly _txtInput As TextBox = New TextBox() With {
+            .Dock = DockStyle.Fill,
+            .Multiline = True,
+            .AcceptsReturn = True,
+            .WordWrap = True
+        }
+        Private ReadOnly _btnClear As Button = New Button() With {.Text = "Clear", .AutoSize = True}
+        Private ReadOnly _btnClose As Button = New Button() With {.Text = "Close", .AutoSize = True}
+        Private ReadOnly _btnSend As Button = New Button() With {.Text = $"Ask {AssistantName}", .AutoSize = True}
+        Private ReadOnly _chkNoTopMost As System.Windows.Forms.CheckBox = New System.Windows.Forms.CheckBox() With {.Text = "Do not stay on top", .AutoSize = True} ' New checkbox
+
+        Private _htmlReady As Boolean = False
+        Private ReadOnly _htmlQueue As New List(Of String)()
+        Private _lastThinkingId As String = Nothing
+        Private ReadOnly _history As New List(Of (Role As String, Content As String))()
+        Private _manualCache As String = Nothing
+        Private _manualCachePath As String = Nothing
+        Private _welcomeInProgress As Integer = 0 ' 0 = none, 1 = running
+
+        Private _helpMeAltResolved As Boolean = False
+        Private _helpMeAltAvailable As Boolean = False
+        Private ReadOnly _modelSemaphore As New Threading.SemaphoreSlim(1, 1)
+
+        ' Extended constructor (hostAppName optional for backward compatibility)
+        Public Sub New(context As ISharedContext, Optional hostAppName As String = "")
+            MyBase.New()
+            _context = context
+            _hostAppName = hostAppName
+
+            Me.Text = WindowTitle
+            Me.FormBorderStyle = FormBorderStyle.Sizable
+            Me.StartPosition = FormStartPosition.Manual
+            Me.MinimumSize = New System.Drawing.Size(720, 420)
+            Me.Font = New System.Drawing.Font("Segoe UI", 9.0F)
+            Try
+                Me.Icon = Icon.FromHandle(New Bitmap(My.Resources.Red_Ink_Logo).GetHicon())
+            Catch
+            End Try
+
+            Dim table As New TableLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .ColumnCount = 1,
+                .RowCount = 3,
+                .Padding = New Padding(10)
+            }
+            table.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+            table.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
+            table.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+            table.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+
+            _txtInput.Margin = New Padding(0, 10, 0, 6)
+            Dim threeLines = (_txtInput.Font.Height * 3) + 10
+            _txtInput.MinimumSize = New System.Drawing.Size(0, threeLines)
+            _txtInput.Height = threeLines
+
+            Dim pnlButtons As New FlowLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .FlowDirection = FlowDirection.LeftToRight,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .Padding = New Padding(0, 0, 0, 4)
+            }
+            pnlButtons.Controls.Add(_btnSend)
+            pnlButtons.Controls.Add(_btnClear)
+            pnlButtons.Controls.Add(_btnClose)
+            pnlButtons.Controls.Add(_chkNoTopMost) ' Add checkbox to button panel
+
+            table.Controls.Add(_chat, 0, 0)
+            table.Controls.Add(_txtInput, 0, 1)
+            table.Controls.Add(pnlButtons, 0, 2)
+            Me.Controls.Add(table)
+
+            _mdPipeline = New MarkdownPipelineBuilder().
+                UseAdvancedExtensions().
+                UseEmojiAndSmiley().
+                UseSoftlineBreakAsHardlineBreak().
+                Build()
+
+            AddHandler Me.Load, AddressOf OnLoadForm
+            AddHandler Me.FormClosing, AddressOf OnFormClosing
+            AddHandler Me.Activated, AddressOf OnActivated ' ensure top-most behavior reapplied
+            AddHandler _btnSend.Click, AddressOf OnSend
+            AddHandler _btnClear.Click, AddressOf OnClear
+            AddHandler _btnClose.Click, AddressOf OnClose
+            AddHandler _txtInput.KeyDown, AddressOf OnInputKeyDown
+            AddHandler _chat.DocumentCompleted, AddressOf Chat_DocumentCompleted
+            AddHandler _chat.Navigating, AddressOf Chat_Navigating
+            AddHandler _chat.NewWindow, AddressOf Chat_NewWindow
+            AddHandler _chkNoTopMost.CheckedChanged, AddressOf OnTopMostChanged
+        End Sub
+
+        Private Sub Dbg(msg As String)
+            Debug.WriteLine($"[HelpMeInky {DateTime.Now:HH:mm:ss.fff}] {msg}")
+        End Sub
+
+        Private Sub Ui(action As Action)
+            If Me.IsDisposed Then Return
+            If Me.InvokeRequired Then
+                Try : Me.BeginInvoke(action) : Catch : End Try
+            Else
+                action()
+            End If
+        End Sub
+
+        Public Sub ShowRaised(Optional owner As IWin32Window = Nothing)
+            Dbg("ShowRaised")
+            If Me.WindowState = FormWindowState.Minimized Then Me.WindowState = FormWindowState.Normal
+            If Not Me.Visible Then
+                If owner IsNot Nothing Then Me.Show(owner) Else Me.Show()
+            End If
+            Me.Activate()
+            ApplyTopMostBehavior()
+            _txtInput.Focus()
+            _txtInput.SelectAll()
+        End Sub
+
+        Private Sub OnActivated(sender As Object, e As EventArgs)
+            ApplyTopMostBehavior()
+        End Sub
+
+        Private Sub OnTopMostChanged(sender As Object, e As EventArgs)
+            Try
+                My.Settings.HelpMeNoTopMost = _chkNoTopMost.Checked ' Ensure you add this Boolean setting
+                My.Settings.Save()
+            Catch
+            End Try
+            ApplyTopMostBehavior()
+        End Sub
+
+        Private Sub ApplyTopMostBehavior()
+            ' If unchecked => stay always on top
+            If _chkNoTopMost IsNot Nothing AndAlso _chkNoTopMost.Checked Then
+                Me.TopMost = False
+            Else
+                Me.TopMost = True
+            End If
+        End Sub
+
+        Private Async Sub OnLoadForm(sender As Object, e As EventArgs)
+            Dbg("OnLoadForm start")
+            Try
+                If My.Settings.HelpMeFormLocation <> System.Drawing.Point.Empty AndAlso My.Settings.HelpMeFormSize <> System.Drawing.Size.Empty Then
+                    Me.Location = My.Settings.HelpMeFormLocation
+                    Me.Size = My.Settings.HelpMeFormSize
+                Else
+                    Dim area = Screen.PrimaryScreen.WorkingArea
+                    Dim w = Math.Max(Me.MinimumSize.Width, 820)
+                    Dim h = Math.Max(Me.MinimumSize.Height, 500)
+                    Me.Location = New System.Drawing.Point(area.Left + (area.Width - w) \ 2, area.Top + (area.Height - h) \ 2)
+                    Me.Size = New System.Drawing.Size(w, h)
+                End If
+            Catch ex As Exception
+                Dbg("Restore bounds error: " & ex.Message)
+            End Try
+
+            ' Load persisted TopMost choice (default False => window stays on top)
+            Try
+                _chkNoTopMost.Checked = My.Settings.HelpMeNoTopMost
+            Catch
+                _chkNoTopMost.Checked = False
+            End Try
+            ApplyTopMostBehavior()
+
+            InitializeChatHtml()
+
+            If Not String.IsNullOrEmpty(My.Settings.LastHelpMeChatHtml) Then
+                AppendHtml(My.Settings.LastHelpMeChatHtml)
+            ElseIf Not String.IsNullOrEmpty(My.Settings.LastHelpMeChat) Then
+                AppendTranscriptToHtml(My.Settings.LastHelpMeChat)
+            Else
+                Await SafeGenerateWelcomeAsync()
+            End If
+        End Sub
+
+        Private Sub OnFormClosing(sender As Object, e As FormClosingEventArgs)
+            Dbg("OnFormClosing")
+            Try
+                PersistTranscriptLimited()
+                PersistChatHtml()
+                If Me.WindowState = FormWindowState.Normal Then
+                    My.Settings.HelpMeFormLocation = Me.Location
+                    My.Settings.HelpMeFormSize = Me.Size
+                Else
+                    My.Settings.HelpMeFormLocation = Me.RestoreBounds.Location
+                    My.Settings.HelpMeFormSize = Me.RestoreBounds.Size
+                End If
+                My.Settings.HelpMeNoTopMost = _chkNoTopMost.Checked
+                My.Settings.Save()
+            Catch ex As Exception
+                Dbg("OnFormClosing error: " & ex.Message)
+            End Try
+        End Sub
+
+        Private Sub OnSend(sender As Object, e As EventArgs)
+            Dim userText = _txtInput.Text.Trim()
+            Dbg($"OnSend len={userText.Length}")
+            If userText.Length = 0 Then Return
+
+            AppendUserHtml(userText)
+            _history.Add(("user", userText))
+            _txtInput.Clear()
+            ShowAssistantThinking()
+            Dim __ = SendAsync(userText)
+        End Sub
+
+        Private Async Sub OnClear(sender As Object, e As EventArgs)
+            Dbg("OnClear start")
+            Try
+                _history.Clear()
+                InitializeChatHtml()
+                My.Settings.LastHelpMeChat = ""
+                My.Settings.LastHelpMeChatHtml = ""
+                My.Settings.Save()
+                Dbg("State cleared & saved")
+                Await SafeGenerateWelcomeAsync().ConfigureAwait(False)
+            Catch ex As Exception
+                Dbg("OnClear error: " & ex.Message)
+            Finally
+                If _txtInput.InvokeRequired Then
+                    _txtInput.BeginInvoke(Sub() _txtInput.Focus())
+                Else
+                    _txtInput.Focus()
+                End If
+            End Try
+        End Sub
+
+        Private Sub OnClose(sender As Object, e As EventArgs)
+            Dbg("OnClose")
+            Me.Close()
+        End Sub
+
+        Private Sub OnInputKeyDown(sender As Object, e As KeyEventArgs)
+            If e.KeyCode = Keys.Enter Then
+                e.SuppressKeyPress = True
+                OnSend(Me, EventArgs.Empty)
+            ElseIf e.KeyCode = Keys.Escape Then
+                Me.Close()
+            End If
+        End Sub
+
+        Private Async Function SafeGenerateWelcomeAsync() As Task(Of Task)
+            If Interlocked.CompareExchange(_welcomeInProgress, 1, 0) <> 0 Then
+                Dbg("SafeGenerateWelcomeAsync skipped: already running")
+                Exit Function
+            End If
+            Try
+                Await GenerateWelcomeAsync()
+            Catch ex As Exception
+                Dbg("SafeGenerateWelcomeAsync fatal: " & ex.Message)
+                RemoveAssistantThinking()
+                AppendAssistantMarkdown("*(Welcome failed: " & System.Security.SecurityElement.Escape(ex.Message) & ")*")
+            Finally
+                Interlocked.Exchange(_welcomeInProgress, 0)
+            End Try
+        End Function
+
+        Private Async Function GenerateWelcomeAsync() As Task(Of Task)
+            Dbg("GenerateWelcomeAsync start")
+            Dim langName As String = System.Globalization.CultureInfo.CurrentUICulture.DisplayName
+            Dim partOfDay As String = GetPartOfDay()
+            Dim manualText As String = Await GetManualOnceAsync()
+            Dim systemPrompt As String
+
+            manualText = manualText.Trim()
+            If manualText.StartsWith("Error", System.StringComparison.OrdinalIgnoreCase) OrElse manualText = "" Then
+                systemPrompt = $"Generate a brief, friendly {langName} welcome that naturally references it is {partOfDay} now, but tell the user that you can't work because you have no access to the manual (which needs to be configured and is retrieved either via an URL or file path; most likely, the path/URL is wrong or not working). Advise that the configured source should be checked or configured as per the manual."
+            Else
+                systemPrompt = $"Generate a brief, friendly {langName} welcome that naturally references it is {partOfDay} now and asks what you can do. Do NOT state your name. One short short sentence, not talkative."
+            End If
+            Dim userPrompt As String = ""
+            Dim answer As String = ""
+            Try
+                Dim sw = Stopwatch.StartNew()
+                answer = Await CallHelpMeLlmAsync(systemPrompt, userPrompt)
+                sw.Stop()
+                Dbg($"Welcome LLM ms={sw.ElapsedMilliseconds} rawLen={If(answer, "").Length}")
+            Catch ex As Exception
+                Dbg("Welcome LLM error: " & ex.Message)
+                answer = "Hello! How can I help?"
+            End Try
+
+            answer = If(answer, "").Trim()
+            AppendAssistantMarkdown(answer)
+            _history.Add(("assistant", answer))
+            PersistChatHtml()
+            Dbg("GenerateWelcomeAsync done")
+        End Function
+
+        Private Async Function SendAsync(userText As String) As Task(Of Task)
+            Dbg("SendAsync start")
+            Try
+                Dim hostInfo As String = If(String.IsNullOrEmpty(_hostAppName), "", $" (Host application (and version of {AN} add-in): Microsoft {_hostAppName})")
+                Dim systemPrompt As String = _context.SP_HelpMe & hostInfo
+                Dim manualText As String = Await GetManualOnceAsync()
+                Dim convo As String = BuildConversationForLlm()
+
+                manualText = manualText.Trim()
+                If manualText.StartsWith("Error", System.StringComparison.OrdinalIgnoreCase) Or manualText = "" Then
+                    manualText = "No manual"
+                End If
+                Dim sb As New StringBuilder()
+                sb.AppendLine("User question:")
+                sb.AppendLine(userText)
+                sb.AppendLine()
+                sb.AppendLine("Manual:")
+                sb.AppendLine(manualText)
+                sb.AppendLine()
+                sb.AppendLine("Conversation so far:")
+                sb.AppendLine(convo)
+
+                Dim sw = Stopwatch.StartNew()
+                Dim answer As String = Await CallHelpMeLlmAsync(systemPrompt, sb.ToString())
+                sw.Stop()
+
+                answer = If(answer, "").Trim()
+                Dbg($"SendAsync ms={sw.ElapsedMilliseconds} ansLen={answer.Length}")
+
+                RemoveAssistantThinking()
+                AppendAssistantMarkdown(answer)
+                _history.Add(("assistant", answer))
+                PersistChatHtml()
+            Catch ex As Exception
+                Dbg("SendAsync error: " & ex.Message)
+                RemoveAssistantThinking()
+                AppendAssistantMarkdown("*(Error: " & System.Security.SecurityElement.Escape(ex.Message) & ")*")
+            End Try
+        End Function
+
+        Private Async Function CallHelpMeLlmAsync(systemPrompt As String, userPrompt As String) As Task(Of String)
+            If _context Is Nothing Then Return ""
+            If Not String.IsNullOrEmpty(_hostAppName) AndAlso systemPrompt.IndexOf(_hostAppName, StringComparison.OrdinalIgnoreCase) < 0 Then
+                systemPrompt &= $" (This chat runs inside Microsoft {_hostAppName}.)"
+            End If
+
+            If Not _helpMeAltResolved Then
+                _helpMeAltAvailable = False
+                If Not String.IsNullOrWhiteSpace(_context.INI_AlternateModelPath) Then
+                    If SharedMethods.GetSpecialTaskModel(_context, _context.INI_AlternateModelPath, "HelpMe") Then
+                        _helpMeAltAvailable = True
+                    End If
+                End If
+                _helpMeAltResolved = True
+                Dbg($"Alternate HelpMe model available={_helpMeAltAvailable}")
+            End If
+
+            Await _modelSemaphore.WaitAsync().ConfigureAwait(False)
+            Dim backupConfig As ModelConfig = Nothing
+            Dim appliedAlternate As Boolean = False
+            Dim useSecondApi As Boolean = False
+            Dim timeout As Long = 0
+
+            Try
+                If _helpMeAltAvailable Then
+                    backupConfig = SharedMethods.GetCurrentConfig(_context)
+                    useSecondApi = True
+                    appliedAlternate = True
+                    timeout = If(_context.INI_Timeout_2 > 0, _context.INI_Timeout_2, _context.INI_Timeout)
+                Else
+                    timeout = _context.INI_Timeout
+                End If
+
+                Return Await SharedMethods.LLM(_context,
+                                               systemPrompt,
+                                               userPrompt,
+                                               "",
+                                               "",
+                                               timeout,
+                                               useSecondApi,
+                                               True).ConfigureAwait(False)
+            Finally
+                If appliedAlternate AndAlso backupConfig IsNot Nothing Then
+                    SharedMethods.RestoreDefaults(_context, backupConfig)
+                End If
+                _modelSemaphore.Release()
+            End Try
+        End Function
+
+        Private Async Function GetManualOnceAsync() As Task(Of String)
+            Dim path = If(_context IsNot Nothing, _context.INI_HelpMeInkyPath, "")
+            If String.IsNullOrWhiteSpace(path) Then Return ""
+            If _manualCache IsNot Nothing AndAlso String.Equals(_manualCachePath, path, StringComparison.OrdinalIgnoreCase) Then
+                Return _manualCache
+            End If
+            Dbg("Loading manual fresh: " & path)
+            Dim loaded = Await GetManualTextFreshAsync(path, _context)
+            If Not String.IsNullOrEmpty(loaded) Then
+                _manualCache = loaded
+                _manualCachePath = path
+            End If
+            Return If(_manualCache, "")
+        End Function
+
+        Private Shared Async Function GetManualTextFreshAsync(pathOrUrl As String, Optional context As ISharedContext = Nothing) As Task(Of String)
+            If String.IsNullOrWhiteSpace(pathOrUrl) Then Return ""
+            Dim s As String = pathOrUrl.Trim()
+
+            ' Ensure modern TLS (harmless if already enabled)
+            Try
+                '#If NETFRAMEWORK Then
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 Or CType(&HC00, SecurityProtocolType) ' include TLS 1.3 if supported
+                '#End If
+            Catch
+            End Try
+
+            ' Remote URL
+            If s.StartsWith("http://", StringComparison.OrdinalIgnoreCase) OrElse s.StartsWith("https://", StringComparison.OrdinalIgnoreCase) Then
+                Try
+                    Dim handler As New HttpClientHandler()
+                    handler.AllowAutoRedirect = True
+                    handler.AutomaticDecompression = DecompressionMethods.GZip Or DecompressionMethods.Deflate
+
+                    Using client As New HttpClient(handler)
+                        client.Timeout = TimeSpan.FromSeconds(30)
+                        ' Some servers reject requests without UA
+                        Try
+                            client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "RedInk/1.0 (+https://apps.vischer.com/redink)")
+                            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/pdf, text/*, */*")
+                        Catch
+                        End Try
+
+                        Using resp As HttpResponseMessage = Await client.GetAsync(s, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(False)
+                            If Not resp.IsSuccessStatusCode Then Return ""
+
+                            Dim data As Byte() = Await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(False)
+
+                            ' Extract media type if provided
+                            Dim mediaType As String = ""
+                            If resp.Content IsNot Nothing AndAlso resp.Content.Headers IsNot Nothing AndAlso resp.Content.Headers.ContentType IsNot Nothing Then
+                                If Not String.IsNullOrEmpty(resp.Content.Headers.ContentType.MediaType) Then
+                                    mediaType = resp.Content.Headers.ContentType.MediaType.ToLowerInvariant()
+                                End If
+                            End If
+
+                            ' PDF detection
+                            Dim isPdf As Boolean = False
+
+                            ' 1) Declared content-type
+                            If Not String.IsNullOrEmpty(mediaType) AndAlso mediaType.IndexOf("pdf", StringComparison.OrdinalIgnoreCase) >= 0 Then
+                                isPdf = True
+                            End If
+
+                            ' 2) URL contains ".pdf" anywhere (also handles querystring)
+                            If Not isPdf Then
+                                If s.IndexOf(".pdf", StringComparison.OrdinalIgnoreCase) >= 0 Then
+                                    isPdf = True
+                                End If
+                            End If
+
+                            ' 3) Magic header scan for "%PDF" within first KB (after possible BOM or garbage)
+                            If Not isPdf AndAlso data IsNot Nothing AndAlso data.Length >= 4 Then
+                                Dim scanMax As Integer = Math.Min(data.Length - 4, 1024)
+                                Dim i As Integer = 0
+                                While i <= scanMax
+                                    If data(i) = AscW("%"c) AndAlso data(i + 1) = AscW("P"c) AndAlso data(i + 2) = AscW("D"c) AndAlso data(i + 3) = AscW("F"c) Then
+                                        isPdf = True
+                                        Exit While
+                                    End If
+                                    i += 1
+                                End While
+                            End If
+
+                            If isPdf Then
+                                Try
+                                    Dim tmpPath As String = Path.Combine(Path.GetTempPath(), "manual_" & Guid.NewGuid().ToString("N") & ".pdf")
+                                    File.WriteAllBytes(tmpPath, data)
+                                    Return Await SharedMethods.ReadPdfAsText(tmpPath, True, False, False, context).ConfigureAwait(False)
+                                Catch
+                                    Return ""
+                                End Try
+                            End If
+
+                            ' Fallback: decode as text
+                            Dim enc As Encoding = Encoding.UTF8
+                            Dim charset As String = ""
+                            If resp.Content IsNot Nothing AndAlso resp.Content.Headers IsNot Nothing AndAlso resp.Content.Headers.ContentType IsNot Nothing Then
+                                charset = resp.Content.Headers.ContentType.CharSet
+                            End If
+                            If Not String.IsNullOrEmpty(charset) Then
+                                Try
+                                    enc = Encoding.GetEncoding(charset)
+                                Catch
+                                    enc = Encoding.UTF8
+                                End Try
+                            End If
+
+                            Dim text As String = enc.GetString(data)
+
+                            ' HTML -> plain
+                            If Not String.IsNullOrEmpty(mediaType) AndAlso mediaType.IndexOf("html", StringComparison.OrdinalIgnoreCase) >= 0 Then
+                                If LooksLikeHtml(text) Then
+                                    Return HtmlToPlain(text)
+                                Else
+                                    Return text
+                                End If
+                            End If
+
+                            ' Generic octet-stream sometimes still is HTML
+                            If LooksLikeHtml(text) Then
+                                Return HtmlToPlain(text)
+                            End If
+
+                            Return text
+                        End Using
+                    End Using
+                Catch
+                    Return ""
+                End Try
+            End If
+
+            ' Local file path
+            Try
+                If Not File.Exists(s) Then Return ""
+                Select Case Path.GetExtension(s).ToLowerInvariant()
+                    Case ".txt", ".md", ".log"
+                        Return File.ReadAllText(s, Encoding.UTF8)
+                    Case ".docx"
+                        Return ReadDocxWithWordInterop(s)
+                    Case ".rtf"
+                        Try
+                            Return SharedMethods.ReadRtfAsText(s)
+                        Catch
+                            Return ""
+                        End Try
+                    Case ".pdf"
+                        Try
+                            Return Await SharedMethods.ReadPdfAsText(s, True, False, False, context).ConfigureAwait(False)
+                        Catch
+                            Return ""
+                        End Try
+                    Case Else
+                        Return File.ReadAllText(s, Encoding.UTF8)
+                End Select
+            Catch
+                Return ""
+            End Try
+        End Function
+
+        Private Shared Function ReadDocxWithWordInterop(path As String) As String
+            Dim app As Microsoft.Office.Interop.Word.Application = Nothing
+            Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
+            Try
+                Try
+                    app = CType(Runtime.InteropServices.Marshal.GetActiveObject("Word.Application"), Microsoft.Office.Interop.Word.Application)
+                Catch
+                    app = New Microsoft.Office.Interop.Word.Application() With {.Visible = False}
+                End Try
+                doc = app.Documents.Open(path, [ReadOnly]:=True, Visible:=False)
+                Dim txt = doc.Content.Text
+                doc.Close(SaveChanges:=False)
+                Return If(txt, "")
+            Catch
+                Try
+                    If doc IsNot Nothing Then doc.Close(SaveChanges:=False)
+                Catch
+                End Try
+                Return ""
+            End Try
+        End Function
+
+        Private Shared Function LooksLikeHtml(s As String) As Boolean
+            If String.IsNullOrEmpty(s) Then Return False
+            Dim t = s.TrimStart()
+            Return t.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) _
+                OrElse t.StartsWith("<html", StringComparison.OrdinalIgnoreCase) _
+                OrElse t.IndexOf("<body", StringComparison.OrdinalIgnoreCase) >= 0
+        End Function
+
+        Private Shared Function HtmlToPlain(html As String) As String
+            Try
+                Dim doc As New HtmlAgilityPack.HtmlDocument()
+                doc.LoadHtml(html)
+                Return doc.DocumentNode.InnerText
+            Catch
+                Return html
+            End Try
+        End Function
+
+        Private Sub InitializeChatHtml()
+            Ui(Sub()
+                   _htmlQueue.Clear()
+                   _htmlReady = False
+                   Dbg("InitializeChatHtml")
+                   Dim baseSize = If(Me.Font IsNot Nothing, Me.Font.SizeInPoints, 9.0F)
+                   Dim fontPt = Math.Max(CSng(baseSize + 1.0F), 10.0F)
+                   Dim css =
+                        $"html,body{{height:100%;margin:0;padding:0;background:#fff;color:#000;}}
+                        body{{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:{fontPt}pt;line-height:1.45;}}
+                        #chat{{padding:8px;}}
+                        .msg{{margin:6px 0;word-wrap:break-word;}}
+                        .msg .who{{font-weight:600;margin-right:4px;}}
+                        .msg.user .who{{color:#333;}}
+                        .msg.assistant .who{{color:#003366;}}
+                        .msg.thinking .content{{opacity:.75;font-style:italic;}}
+                        a{{color:#0068c9;text-decoration:underline;cursor:pointer;}}
+                        pre{{white-space:pre-wrap;background:#f6f8fa;border:1px solid #e1e4e8;border-radius:4px;padding:6px;}}"
+                   Dim html =
+                        $"<!DOCTYPE html>
+                        <html>
+                        <head>
+                        <meta http-equiv=""X-UA-Compatible"" content=""IE=edge"" />
+                        <meta charset=""utf-8"">
+                        <style>{css}</style>
+                        <script>
+                        function appendMessage(html) {{
+                          var c=document.getElementById('chat'); if(!c) return;
+                          var temp=document.createElement('div'); temp.innerHTML=html;
+                          while(temp.firstChild){{c.appendChild(temp.firstChild);}}
+                          window.scrollTo(0, document.body.scrollHeight);
+                        }}
+                        function removeById(id) {{
+                          var el=document.getElementById(id); if(!el||!el.parentNode) return;
+                          el.parentNode.removeChild(el);
+                        }}
+                        </script>
+                        </head>
+                        <body><div id=""chat""></div></body>
+                        </html>"
+                   _chat.DocumentText = html
+               End Sub)
+        End Sub
+
+        Private Sub Chat_DocumentCompleted(sender As Object, e As WebBrowserDocumentCompletedEventArgs)
+            _htmlReady = True
+            Dbg("DocumentCompleted flushQueue=" & _htmlQueue.Count)
+            If _htmlQueue.Count > 0 Then
+                Try
+                    For Each frag In _htmlQueue
+                        _chat.Document.InvokeScript("appendMessage", New Object() {frag})
+                    Next
+                Catch ex As Exception
+                    Dbg("Flush error: " & ex.Message)
+                Finally
+                    _htmlQueue.Clear()
+                End Try
+            End If
+        End Sub
+
+        Private Sub Chat_Navigating(sender As Object, e As WebBrowserNavigatingEventArgs)
+            Try
+                Dim scheme = e.Url?.Scheme?.ToLowerInvariant()
+                If scheme = "http" OrElse scheme = "https" OrElse scheme = "mailto" Then
+                    e.Cancel = True
+                    Process.Start(New ProcessStartInfo(e.Url.ToString()) With {.UseShellExecute = True})
+                End If
+            Catch ex As Exception
+                Dbg("Navigating error: " & ex.Message)
+            End Try
+        End Sub
+
+        Private Sub Chat_NewWindow(sender As Object, e As CancelEventArgs)
+            e.Cancel = True
+        End Sub
+
+        Private Sub AppendHtml(fragment As String)
+            If String.IsNullOrEmpty(fragment) Then Return
+            Ui(Sub()
+                   If Not _htmlReady OrElse _chat.Document Is Nothing Then
+                       _htmlQueue.Add(fragment)
+                       Return
+                   End If
+                   Try
+                       _chat.Document.InvokeScript("appendMessage", New Object() {fragment})
+                   Catch
+                       _htmlQueue.Add(fragment)
+                   End Try
+               End Sub)
+        End Sub
+
+        Private Sub AppendUserHtml(text As String)
+            Dim encoded = WebUtility.HtmlEncode(text).Replace(vbCrLf, "<br>").Replace(vbLf, "<br>").Replace(vbCr, "<br>")
+            AppendHtml($"<div class='msg user'><span class='who'>You:</span><span class='content'>{encoded}</span></div>")
+            PersistChatHtml()
+        End Sub
+
+        Private Sub ShowAssistantThinking()
+            _lastThinkingId = "thinking-" & Guid.NewGuid().ToString("N")
+            AppendHtml($"<div id=""{_lastThinkingId}"" class='msg assistant thinking'><span class='who'>{WebUtility.HtmlEncode(AssistantName)}:</span><span class='content'>Thinking...</span></div>")
+        End Sub
+
+        Private Sub RemoveAssistantThinking()
+            If String.IsNullOrEmpty(_lastThinkingId) Then Return
+            Ui(Sub()
+                   Try
+                       If _chat.Document IsNot Nothing Then
+                           _chat.Document.InvokeScript("removeById", New Object() {_lastThinkingId})
+                       End If
+                   Catch
+                   Finally
+                       _lastThinkingId = Nothing
+                   End Try
+               End Sub)
+        End Sub
+
+        Private Sub AppendAssistantMarkdown(md As String)
+            md = If(md, "")
+            Dim body = Markdig.Markdown.ToHtml(md, _mdPipeline)
+            Dim t = body.Trim()
+            Dim isSingle = Regex.IsMatch(t, "^\s*<p>[\s\S]*?</p>\s*$", RegexOptions.IgnoreCase) AndAlso
+                           Not Regex.IsMatch(t, "<(ul|ol|pre|table|h[1-6]|blockquote|hr|div)\b", RegexOptions.IgnoreCase)
+
+            If isSingle Then
+                ' Single paragraph: keep fully inline
+                Dim inlineHtml = Regex.Replace(t, "^\s*<p>|</p>\s*$", "", RegexOptions.IgnoreCase)
+                AppendHtml($"<div class='msg assistant'><span class='who'>{WebUtility.HtmlEncode(AssistantName)}:</span><span class='content'>{inlineHtml}</span></div>")
+            Else
+                ' Multi-block: inline only the first paragraph; render the rest below
+                Dim m = Regex.Match(t, "^\s*<p>([\s\S]*?)</p>\s*", RegexOptions.IgnoreCase)
+                If m.Success Then
+                    Dim firstInline = m.Groups(1).Value
+                    Dim rest = t.Substring(m.Index + m.Length).Trim()
+                    Dim sb As New StringBuilder()
+                    sb.Append("<div class='msg assistant'>")
+                    sb.Append("<span class='who'>").Append(WebUtility.HtmlEncode(AssistantName)).Append(":</span>")
+                    sb.Append("<span class='content'>").Append(firstInline).Append("</span>")
+                    If rest.Length > 0 Then
+                        sb.Append("<div class='content'>").Append(rest).Append("</div>")
+                    End If
+                    sb.Append("</div>")
+                    AppendHtml(sb.ToString())
+                Else
+                    ' Fallback: previous behavior
+                    AppendHtml($"<div class='msg assistant'><span class='who'>{WebUtility.HtmlEncode(AssistantName)}:</span><div class='content'>{t}</div></div>")
+                End If
+            End If
+        End Sub
+
+        Private Sub PersistChatHtml()
+            Ui(Sub()
+                   Try
+                       If _chat.Document Is Nothing Then Return
+                       Dim root = _chat.Document.GetElementById("chat")
+                       If root Is Nothing Then Return
+                       My.Settings.LastHelpMeChatHtml = root.InnerHtml
+                       My.Settings.Save()
+                   Catch ex As Exception
+                       Dbg("PersistChatHtml error: " & ex.Message)
+                   End Try
+               End Sub)
+        End Sub
+
+        Private Sub AppendTranscriptToHtml(transcript As String)
+            If String.IsNullOrEmpty(transcript) Then Return
+            Dim lines = transcript.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf).Split({vbLf}, StringSplitOptions.None)
+            Dim currentRole As String = Nothing
+            Dim content As New StringBuilder()
+
+            Dim flush =
+                Sub()
+                    If content.Length = 0 OrElse String.IsNullOrEmpty(currentRole) Then
+                        content.Clear() : currentRole = Nothing : Return
+                    End If
+                    If currentRole = "user" Then
+                        Dim enc = WebUtility.HtmlEncode(content.ToString()).Replace(vbLf, "<br>")
+                        AppendHtml($"<div class='msg user'><span class='who'>You:</span><span class='content'>{enc}</span></div>")
+                    Else
+                        AppendAssistantMarkdown(content.ToString())
+                    End If
+                    content.Clear()
+                    currentRole = Nothing
+                End Sub
+
+            For Each ln In lines
+                If ln.StartsWith("You:", StringComparison.OrdinalIgnoreCase) Then
+                    flush() : currentRole = "user" : content.Append(ln.Substring(4).TrimStart())
+                ElseIf ln.StartsWith(AssistantName & ":", StringComparison.OrdinalIgnoreCase) Then
+                    flush() : currentRole = "assistant" : content.Append(ln.Substring((AssistantName & ":").Length).TrimStart())
+                Else
+                    If content.Length > 0 Then content.AppendLine()
+                    content.Append(ln)
+                End If
+            Next
+            flush()
+            PersistChatHtml()
+        End Sub
+
+        Private Sub PersistTranscriptLimited()
+            Dim transcript = BuildTranscriptPlain()
+            Dim cap As Integer = Math.Max(5000, If(_context IsNot Nothing, _context.INI_ChatCap, 0))
+            If transcript.Length > cap Then
+                transcript = transcript.Substring(transcript.Length - cap)
+            End If
+            My.Settings.LastHelpMeChat = transcript
+        End Sub
+
+        Private Function BuildTranscriptPlain() As String
+            Dim sb As New StringBuilder()
+            For Each m In _history
+                If m.Role = "user" Then
+                    sb.AppendLine("You: " & m.Content)
+                Else
+                    sb.AppendLine(AssistantName & ": " & m.Content)
+                End If
+            Next
+            Return sb.ToString()
+        End Function
+
+        Private Function BuildConversationForLlm() As String
+            Dim sb As New StringBuilder()
+            Dim cap As Integer = Math.Max(5000, If(_context IsNot Nothing, _context.INI_ChatCap, 0))
+            Dim acc = 0
+            For i = _history.Count - 1 To 0 Step -1
+                Dim line = If(_history(i).Role = "user", "User: ", AssistantName & ": ") & _history(i).Content & Environment.NewLine
+                If acc + line.Length > cap Then
+                    Dim remain = cap - acc
+                    If remain > 0 Then sb.Insert(0, line.Substring(line.Length - remain))
+                    Exit For
+                Else
+                    sb.Insert(0, line)
+                    acc += line.Length
+                End If
+            Next
+            Return sb.ToString()
+        End Function
+
+        Private Shared Function StripMarkdownForTranscript(md As String) As String
+            If String.IsNullOrEmpty(md) Then Return ""
+            Dim s = Regex.Replace(md, "```.*?```", "", RegexOptions.Singleline)
+            s = s.Replace("**", "").Replace("__", "").Replace("*", "").Replace("_", "").Replace("`", "")
+            Return s
+        End Function
+
+        Private Shared Function GetPartOfDay() As String
+            Dim h = DateTime.Now.Hour
+            If h < 12 Then Return "Morning"
+            If h < 18 Then Return "Afternoon"
+            Return "Evening"
+        End Function
     End Class
 
 End Namespace

@@ -229,6 +229,66 @@ Namespace My
                 Me("UpdateRetryPromptShownOutlook") = value
             End Set
         End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property LastHelpMeChat() As String
+            Get
+                Return CType(Me("LastHelpMeChat"),String)
+            End Get
+            Set
+                Me("LastHelpMeChat") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property LastHelpMeChatHtml() As String
+            Get
+                Return CType(Me("LastHelpMeChatHtml"),String)
+            End Get
+            Set
+                Me("LastHelpMeChatHtml") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("0, 0")>  _
+        Public Property HelpMeFormLocation() As Global.System.Drawing.Point
+            Get
+                Return CType(Me("HelpMeFormLocation"),Global.System.Drawing.Point)
+            End Get
+            Set
+                Me("HelpMeFormLocation") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("0, 0")>  _
+        Public Property HelpMeFormSize() As Global.System.Drawing.Size
+            Get
+                Return CType(Me("HelpMeFormSize"),Global.System.Drawing.Size)
+            End Get
+            Set
+                Me("HelpMeFormSize") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("False")>  _
+        Public Property HelpMeNoTopMost() As Boolean
+            Get
+                Return CType(Me("HelpMeNoTopMost"),Boolean)
+            End Get
+            Set
+                Me("HelpMeNoTopMost") = value
+            End Set
+        End Property
     End Class
 End Namespace
 

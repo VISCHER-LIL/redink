@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
 '
-' 31.10.2025
+' 8.11.2025
 
 Imports Microsoft.Office.Tools.Ribbon
 Imports Microsoft.Win32
@@ -163,5 +163,9 @@ Public Class Ribbon1
 
     Private Sub RI_CSVAnalyze_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_CSVAnalyze.Click
         Globals.ThisAddIn.AnalyzeCsvWithLLM()
+    End Sub
+
+    Private Sub RI_HelpMe_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_HelpMe.Click
+        Globals.ThisAddIn.HelpMeInky()
     End Sub
 End Class

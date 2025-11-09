@@ -65,7 +65,6 @@ Partial Class Ribbon1
         Me.RI_Shorten = Me.Factory.CreateRibbonButton
         Me.RI_Anonymize = Me.Factory.CreateRibbonButton
         Me.RI_SwitchParty = Me.Factory.CreateRibbonButton
-        Me.RI_CSVAnalyze = Me.Factory.CreateRibbonButton
         Me.RI_FreestyleNM = Me.Factory.CreateRibbonButton
         Me.RI_FreestyleAM = Me.Factory.CreateRibbonButton
         Me.RI_Undo = Me.Factory.CreateRibbonButton
@@ -73,7 +72,9 @@ Partial Class Ribbon1
         Me.RI_AdjustHeight = Me.Factory.CreateRibbonButton
         Me.RI_AdjustLegacyNotes = Me.Factory.CreateRibbonButton
         Me.RI_Regex = Me.Factory.CreateRibbonButton
+        Me.RI_CSVAnalyze = Me.Factory.CreateRibbonButton
         Me.RI_Chat = Me.Factory.CreateRibbonButton
+        Me.RI_HelpMe = Me.Factory.CreateRibbonButton
         Me.Settings = Me.Factory.CreateRibbonButton
         Me.Group2 = Me.Factory.CreateRibbonGroup
         Me.RI_PrimLang2 = Me.Factory.CreateRibbonButton
@@ -118,6 +119,7 @@ Partial Class Ribbon1
         Me.Menu1.Items.Add(Me.Menu2)
         Me.Menu1.Items.Add(Me.RI_CSVAnalyze)
         Me.Menu1.Items.Add(Me.RI_Chat)
+        Me.Menu1.Items.Add(Me.RI_HelpMe)
         Me.Menu1.Items.Add(Me.Settings)
         Me.Menu1.Label = "Task"
         Me.Menu1.Name = "Menu1"
@@ -197,14 +199,6 @@ Partial Class Ribbon1
         Me.RI_SwitchParty.ScreenTip = "Will switch two parties in the text of the selected cells"
         Me.RI_SwitchParty.ShowImage = True
         '
-        'RI_CSVAnalyze
-        '
-        Me.RI_CSVAnalyze.Label = "Analyze CSV"
-        Me.RI_CSVAnalyze.Name = "RI_CSVAnalyze"
-        Me.RI_CSVAnalyze.OfficeImageId = "GetPowerQueryDataFromCsv"
-        Me.RI_CSVAnalyze.ScreenTip = "Will parse through a CSV and analyze its content"
-        Me.RI_CSVAnalyze.ShowImage = True
-        '
         'RI_FreestyleNM
         '
         Me.RI_FreestyleNM.Label = "Freestyle"
@@ -266,6 +260,14 @@ Partial Class Ribbon1
         Me.RI_Regex.ScreenTip = "Will perform a RegEx search (and replace)"
         Me.RI_Regex.ShowImage = True
         '
+        'RI_CSVAnalyze
+        '
+        Me.RI_CSVAnalyze.Label = "Analyze CSV"
+        Me.RI_CSVAnalyze.Name = "RI_CSVAnalyze"
+        Me.RI_CSVAnalyze.OfficeImageId = "GetPowerQueryDataFromCsv"
+        Me.RI_CSVAnalyze.ScreenTip = "Will parse through a CSV and analyze its content"
+        Me.RI_CSVAnalyze.ShowImage = True
+        '
         'RI_Chat
         '
         Me.RI_Chat.Label = "Chatbot"
@@ -273,6 +275,14 @@ Partial Class Ribbon1
         Me.RI_Chat.OfficeImageId = "ContactUs"
         Me.RI_Chat.ScreenTip = "Will open a window where you can chat with the LLM"
         Me.RI_Chat.ShowImage = True
+        '
+        'RI_HelpMe
+        '
+        Me.RI_HelpMe.Label = "Help me, Inky"
+        Me.RI_HelpMe.Name = "RI_HelpMe"
+        Me.RI_HelpMe.OfficeImageId = "Help"
+        Me.RI_HelpMe.ScreenTip = "This will call up a chatbot that answers your questions about Red Ink"
+        Me.RI_HelpMe.ShowImage = True
         '
         'Settings
         '
@@ -404,6 +414,7 @@ Partial Class Ribbon1
     Friend WithEvents RI_Undo As RibbonButton
     Friend WithEvents RI_Chat As RibbonButton
     Friend WithEvents RI_CSVAnalyze As RibbonButton
+    Friend WithEvents RI_HelpMe As RibbonButton
 End Class
 
 Partial Class ThisRibbonCollection
