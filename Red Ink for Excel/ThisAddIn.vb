@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 9.11.2025
+' 12.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -31,6 +31,7 @@ Imports System.Drawing
 Imports System.IO
 Imports System.Runtime.InteropServices
 Imports System.Text.RegularExpressions
+Imports System.Threading
 Imports System.Threading.Tasks
 Imports System.Web
 Imports System.Windows.Forms
@@ -204,9 +205,23 @@ Public Class ThisAddIn
         RemoveOldContextMenu()
     End Sub
 
+    Private Shared ReadOnly _uiContext As SynchronizationContext = WindowsFormsSynchronizationContext.Current
+
+    Private Shared Async Function EnsureUIThread() As System.Threading.Tasks.Task
+        If _uiContext IsNot Nothing AndAlso SynchronizationContext.Current IsNot _uiContext Then
+            Await System.Threading.Tasks.Task.Factory.StartNew(
+                Sub()
+                    ' Continue processing here with Word objects
+                End Sub,
+                CancellationToken.None,
+                TaskCreationOptions.None,
+                TaskScheduler.FromCurrentSynchronizationContext())
+        End If
+    End Function
+
     ' Hardcoded config values
 
-    Public Const Version As String = "V.091125 Gen2 Beta Test"
+    Public Const Version As String = "V.121125 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -411,6 +426,14 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_DefaultPrefix As String
+        Get
+            Return _context.INI_DefaultPrefix
+        End Get
+        Set(value As String)
+            _context.INI_DefaultPrefix = value
+        End Set
+    End Property
 
     Public Shared Property INI_MarkdownBubbles As Boolean
         Get
@@ -1848,7 +1871,9 @@ Public Class ThisAddIn
         Return Await SharedMethods.PostCorrection(_context, inputText, UseSecondAPI)
     End Function
     Public Shared Async Function LLM(ByVal promptSystem As String, ByVal promptUser As String, Optional ByVal Model As String = "", Optional ByVal Temperature As String = "", Optional ByVal Timeout As Long = 0, Optional ByVal UseSecondAPI As Boolean = False, Optional ByVal Hidesplash As Boolean = True, Optional ByVal AddUserPrompt As String = "", Optional ByVal FileObject As String = "") As Task(Of String)
-        Return Await SharedMethods.LLM(_context, promptSystem, promptUser, Model, Temperature, Timeout, UseSecondAPI, Hidesplash, AddUserPrompt, FileObject)
+        Dim Response = Await SharedMethods.LLM(_context, promptSystem, promptUser, Model, Temperature, Timeout, UseSecondAPI, Hidesplash, AddUserPrompt, FileObject)
+        Await EnsureUIThread()
+        Return Response
     End Function
     Private Function ShowSettingsWindow(Settings As Dictionary(Of String, String), SettingsTips As Dictionary(Of String, String))
         SharedMethods.ShowSettingsWindow(Settings, SettingsTips, _context)
@@ -2456,6 +2481,9 @@ Public Class ThisAddIn
         Dim LastPromptInstruct As String = If(String.IsNullOrWhiteSpace(My.Settings.LastPrompt), "", "; Ctrl-P for your last prompt")
         Dim PureInstruct As String = $"; use '{PurePrefix}' for direct prompting"
 
+        Dim DefaultPrefix As String = INI_DefaultPrefix
+        Dim DefaultPrefixText As String = ""
+
         If selectedRange Is Nothing Then
             NoSelectedCells = True
         End If
@@ -2489,14 +2517,19 @@ Public Class ThisAddIn
             PromptLibInstruct = " or press 'OK' for the prompt library"
         End If
 
+        If DefaultPrefix.Trim() <> "" Then
+            DefaultPrefixText = $" (default prefix: '{DefaultPrefix}')"
+        End If
+
+
         Dim OptionalButtons As System.Tuple(Of String, String, String)() = {
                             System.Tuple.Create("OK, use pane", $"Use this to automatically insert '{PanePrefix}' as a prefix.", PanePrefix)
                         }
 
         If Not NoSelectedCells Then
-            OtherPrompt = Trim(SLib.ShowCustomInputBox($"Please provide the prompt you wish to execute on the selected cells (start {CBCInstruct}; {TextInstruct}; {PaneInstruct}; {BatchInstruct}; {BubblesInstruct})" & PromptLibInstruct & PureInstruct & ExtInstruct & AddonInstruct & LastPromptInstruct & ":", $"{AN} Freestyle (using " & If(UseSecondAPI, INI_Model_2, INI_Model) & ")", False, "", My.Settings.LastPrompt, OptionalButtons))
+            OtherPrompt = Trim(SLib.ShowCustomInputBox($"Please provide the prompt you wish to execute on the selected cells (start {CBCInstruct}; {TextInstruct}; {PaneInstruct}; {BatchInstruct}; {BubblesInstruct})" & PromptLibInstruct & PureInstruct & ExtInstruct & AddonInstruct & LastPromptInstruct & DefaultPrefixText & ":", $"{AN} Freestyle (using " & If(UseSecondAPI, INI_Model_2, INI_Model) & ")", False, "", My.Settings.LastPrompt, OptionalButtons))
         Else
-            OtherPrompt = Trim(SLib.ShowCustomInputBox($"Please provide the prompt you wish to execute {PromptLibInstruct} (the result will be shown to you before inserting anything into your worksheet); {PaneInstruct}{BatchInstruct}{PureInstruct}{ExtInstruct}{AddonInstruct}{LastPromptInstruct}:", $"{AN} Freestyle (using " & If(UseSecondAPI, INI_Model_2, INI_Model) & ")", False, "", My.Settings.LastPrompt, OptionalButtons))
+            OtherPrompt = Trim(SLib.ShowCustomInputBox($"Please provide the prompt you wish to execute {PromptLibInstruct} (the result will be shown to you before inserting anything into your worksheet); {PaneInstruct}{BatchInstruct}{PureInstruct}{ExtInstruct}{AddonInstruct}{LastPromptInstruct}{DefaultPrefixText}:", $"{AN} Freestyle (using " & If(UseSecondAPI, INI_Model_2, INI_Model) & ")", False, "", My.Settings.LastPrompt, OptionalButtons))
             DoRange = True
         End If
 
@@ -2515,6 +2548,24 @@ Public Class ThisAddIn
         Else
             If String.IsNullOrEmpty(OtherPrompt) Or OtherPrompt = "ESC" Then Return False
         End If
+
+        ' Check if OtherPrompt starts with a word ending with a colon
+        If Not String.IsNullOrWhiteSpace(OtherPrompt) Then
+            Dim firstWord As String = OtherPrompt.Split({" "c}, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()
+            If firstWord IsNot Nothing AndAlso Not firstWord.EndsWith(":"c) Then
+
+                Dim prefix As String = DefaultPrefix.Trim()
+
+                ' Ensure prefix ends with colon and space
+                If prefix <> "" AndAlso Not prefix.EndsWith(":"c) Then
+                    prefix &= ":"
+                End If
+
+                OtherPrompt = prefix & " " & OtherPrompt.Trim()
+                OtherPrompt = OtherPrompt.Trim()
+            End If
+        End If
+
 
         My.Settings.LastPrompt = OtherPrompt
         My.Settings.Save()
@@ -5079,7 +5130,8 @@ Public Class ThisAddIn
                 {"Language1", "Default translation language 1"},
                 {"Language2", "Default translation language 2"},
                 {"PromptLibPath", "Prompt library file"},
-                {"PromptLibPathLocal", "Prompt library file (local)"}
+                {"PromptLibPathLocal", "Prompt library file (local)"},
+                {"DefaultPrefix", "Default prefix to use in 'Freestyle'"}
             }
 
         Dim SettingsTips As New Dictionary(Of String, String) From {
@@ -5094,7 +5146,8 @@ Public Class ThisAddIn
                 {"Language1", "The language (in English) that will be used for the first quick access button in the ribbon"},
                 {"Language2", "The language (in English) that will be used for the second quick access button in the ribbon"},
                 {"PromptLibPath", "The filename (including path, support environmental variables) for your prompt library (if any)"},
-                {"PromptLibPath", "The filename (including path, support environmental variables) for your local prompt library (if any)"}
+                {"PromptLibPath", "The filename (including path, support environmental variables) for your local prompt library (if any)"},
+                {"DefaultPrefix", "You can define here the default prefix to use within 'Freestyle' if no other prefix is used (will be added authomatically)."}
                 }
         ShowSettingsWindow(Settings, SettingsTips)
 

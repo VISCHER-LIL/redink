@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
 '
-' 5.11.2025
+' 12.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -24,14 +24,17 @@
 
 
 Imports System.ComponentModel
+Imports System.Data
 Imports System.Diagnostics
 Imports System.Drawing
 Imports System.Runtime.InteropServices
+Imports System.Security.Cryptography
 Imports System.Text.RegularExpressions
 Imports System.Threading.Tasks
 Imports System.Windows.Forms
 Imports Markdig
 Imports Microsoft.Office.Interop.Word
+Imports Microsoft.Office.Tools.Ribbon
 Imports NAudio
 Imports Newtonsoft.Json.Linq
 Imports SharedLibrary.SharedLibrary
@@ -46,8 +49,10 @@ Public Class frmAIChat
 
     Const AN As String = "Red Ink"
     Const AN5 As String = "Inky"   ' for Chatbox
+    Const AN6 As String = "RI"
 
     Const MarkerChar As String = ChrW(&HE000)
+    Const CursorPositionCount As Integer = 25
 
     Private PreceedingNewline As String = ""
     Private OldChat As String = ""
@@ -173,11 +178,15 @@ Public Class frmAIChat
 
         ' Prefer restoring from stored HTML; otherwise fallback to plain transcript.
         Dim previousChatHtml As String = My.Settings.LastChatHistoryHtml
+        Dim hasExistingChat As Boolean = False
+
         If Not String.IsNullOrEmpty(previousChatHtml) Then
             ' Append as one fragment so wireLinks runs and events attach
             AppendHtml(previousChatHtml)
+            hasExistingChat = True
         ElseIf Not String.IsNullOrEmpty(previousChat) Then
             AppendTranscriptToHtml(previousChat)
+            hasExistingChat = True
         End If
 
         ' Set basic form props
@@ -196,7 +205,7 @@ Public Class frmAIChat
 
         AddHandler txtUserInput.KeyDown, AddressOf UserInput_KeyDown
 
-        lblInstructions.Text = $"Enter your question and click 'Send' or Ctrl-Enter. You can allow the chatbot to perform actions on your document (search, replace, delete, insert text and add or reply to comments)."
+        lblInstructions.Text = $"Enter your question and click 'Send' or press Enter. You can allow the chatbot to perform actions on your document (search, replace, delete, insert text and add or reply to comments)."
         lblInstructions.AutoSize = True
         lblInstructions.Height = 50
         lblInstructions.Anchor = AnchorStyles.Top Or AnchorStyles.Left Or AnchorStyles.Right
@@ -241,12 +250,13 @@ Public Class frmAIChat
         ' Set the window title after all fields are ready
         UpdateTitle()
 
-        If String.IsNullOrWhiteSpace(txtChatHistory.Text) Then
-            Dim result = Await WelcomeMessage()
-        Else
+        If hasExistingChat Then
             txtChatHistory.SelectionStart = txtChatHistory.Text.Length
             txtChatHistory.ScrollToCaret()
+        Else
+            Dim result = Await WelcomeMessage()
         End If
+
         If String.IsNullOrEmpty(txtUserInput.Text) Then txtUserInput.Focus()
     End Sub
 
@@ -300,6 +310,9 @@ Public Class frmAIChat
         Dim userPrompt As String = txtUserInput.Text.Trim()
         If userPrompt = "" Then Return
 
+        Dim errorOccurred As Boolean = False
+        Dim errorMessage As String = ""
+
         Try
             ' Build entire conversation so far into one string for context
             SystemPrompt = _context.SP_ChatWord().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("MMMM dd, yyyy hh:mm tt")}. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland." & If(chkIncludeDocText.Checked, "\nYou have access to the user's document. \n", "") & If(chkIncludeselection.Checked, "\nYou have access to a selection of user's document. \n ", "") & If(My.Settings.DoCommands And (chkIncludeDocText.Checked Or chkIncludeselection.Checked), _context.SP_Add_ChatWord_Commands, "")
@@ -325,6 +338,12 @@ Public Class frmAIChat
             Dim docText As String = If(chkIncludeDocText.Checked, GetActiveDocumentText(), "")
             Dim selectionText As String = If(chkIncludeselection.Checked Or chkIncludeDocText.Checked, GetCurrentSelectionText(), "")
 
+            ' If full document is included but no selection, get cursor context
+            Dim sel As Microsoft.Office.Interop.Word.Selection = Globals.ThisAddIn.Application.Selection
+            If sel IsNot Nothing AndAlso sel.Start = sel.End Then
+                selectionText = GetCursorContext(CursorPositionCount)
+            End If
+
             ' Construct the full prompt
             Dim fullPrompt As New StringBuilder()
 
@@ -332,8 +351,13 @@ Public Class frmAIChat
                 fullPrompt.AppendLine("The user's document has the name '" & Globals.ThisAddIn.Application.ActiveDocument.Name & "' and has the following content: '" & docText & "'")
             End If
             If Not String.IsNullOrEmpty(selectionText) Then
-                fullPrompt.AppendLine("In the user's document '" & Globals.ThisAddIn.Application.ActiveDocument.Name & "' the user has selected the following text: '" & selectionText & "'")
+                If chkIncludeDocText.Checked AndAlso sel.Start = sel.End Then
+                    fullPrompt.AppendLine("In the user's document '" & Globals.ThisAddIn.Application.ActiveDocument.Name & "' the cursor is currently positioned in the following context: '" & selectionText & "'")
+                Else
+                    fullPrompt.AppendLine("In the user's document '" & Globals.ThisAddIn.Application.ActiveDocument.Name & "' the user has selected the following text: '" & selectionText & "'")
+                End If
             End If
+
             fullPrompt.AppendLine("User: " & userPrompt)
             fullPrompt.AppendLine("The conversation so far (not including any previously added text document):\n" & conversationSoFar)
 
@@ -393,13 +417,18 @@ Public Class frmAIChat
                                     RemoveAssistantThinking()
 
                                     ' Append assistant answer to text transcript (plain)
-                                    AppendToChatHistory(Environment.NewLine & $"{AN5}: " & aiResponsePlain.TrimEnd().Replace(vbCrLf, Environment.NewLine).Replace(vbLf, Environment.NewLine) & Environment.NewLine)
+                                    AppendToChatHistory(Environment.NewLine & $"{AN5}: " & aiResponsePlain.TrimStart().TrimEnd().Replace(vbCrLf, Environment.NewLine).Replace(vbLf, Environment.NewLine) & Environment.NewLine)
 
                                     ' Append assistant answer as Markdown-rendered HTML (commands filtered)
-                                    AppendAssistantMarkdown(aiResponseMdDisplay)
+                                    AppendAssistantMarkdown(aiResponseMdDisplay.TrimStart())
 
                                     If My.Settings.DoCommands And Not String.IsNullOrWhiteSpace(CommandsString) Then
-                                        ExecuteAnyCommands(CommandsString, chkIncludeselection.Checked)
+                                        Try
+                                            ExecuteAnyCommands(CommandsString, chkIncludeselection.Checked)
+                                        Catch cmdEx As Exception
+                                            ' Report command execution error to chat
+                                            ReportCommandExecutionError(cmdEx.Message)
+                                        End Try
                                     End If
                                     txtUserInput.Text = ""
                                     If String.IsNullOrEmpty(txtUserInput.Text) Then txtUserInput.Focus()
@@ -408,10 +437,97 @@ Public Class frmAIChat
             _chatHistory.Add(("assistant", aiResponsePlain.TrimEnd()))
 
         Catch ex As System.Exception
-            MsgBox("Error in btnSend_Click: " & ex.Message, MsgBoxStyle.Critical)
+            ' Just capture the error, don't do async work here
+            errorOccurred = True
+            errorMessage = $"Error processing request: {ex.Message}"
         End Try
+
+        ' Handle the error outside the Try-Catch if it occurred
+        If errorOccurred Then
+            Await UpdateUIAsync(Sub()
+                                    ReportCommandExecutionError(errorMessage)
+                                    txtUserInput.Text = userPrompt ' Restore user input so they can try again
+                                End Sub)
+        End If
+
     End Sub
 
+    Private Sub ReportCommandExecutionError(errorMessage As String)
+        If String.IsNullOrWhiteSpace(errorMessage) Then Return
+
+        Dim errorText As String = $"⚠ Error: {errorMessage}"
+
+        ' Add to plain text chat history
+        AppendToChatHistory(Environment.NewLine & "─────────────────────────────────────" & Environment.NewLine)
+        AppendToChatHistory(errorText & Environment.NewLine)
+        AppendToChatHistory("─────────────────────────────────────" & Environment.NewLine)
+
+        ' Add to HTML chat with formatting
+        Dim htmlError As String = $"<div class='msg assistant error' style='border-left: 3px solid #ff9800; padding-left: 10px; margin: 10px 0; background-color: #fff3e0;'>
+            <span class='who' style='color: #ff9800;'>System:</span>
+            <div class='content'>
+                <hr style='border: none; border-top: 1px solid #ff9800; margin: 8px 0;' />
+                <strong>⚠ {HtmlEncode(errorMessage)}</strong>
+                <hr style='border: none; border-top: 1px solid #ff9800; margin: 8px 0;' />
+            </div>
+        </div>"
+
+        AppendHtml(htmlError)
+        PersistChatHtml()
+
+        ' Add to chat history so AI can see the error
+        _chatHistory.Add(("assistant", $"System Error: {errorMessage}"))
+    End Sub
+
+    ' Gets context around the cursor position (characters before and after) with cursor position marker
+    Private Function GetCursorContext(charCount As Integer) As String
+        Try
+            Dim activeDoc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
+            Dim sel As Microsoft.Office.Interop.Word.Selection = activeDoc.Application.Selection
+
+            ' Check if there's an actual selection (not just cursor position)
+            If Not String.IsNullOrEmpty(sel.Text) AndAlso sel.Start <> sel.End Then
+                Return ""
+            End If
+
+            Dim cursorPos As Integer = sel.Start
+            Dim docStart As Integer = activeDoc.Content.Start
+            Dim docEnd As Integer = activeDoc.Content.End
+
+            ' Calculate the range boundaries
+            Dim contextStart As Integer = Math.Max(docStart, cursorPos - charCount)
+            Dim contextEnd As Integer = Math.Min(docEnd, cursorPos + charCount)
+
+            ' Get text before cursor
+            Dim beforeRange As Microsoft.Office.Interop.Word.Range = activeDoc.Range(contextStart, cursorPos)
+            Dim textBefore As String = beforeRange.Text
+
+            ' Get text after cursor
+            Dim afterRange As Microsoft.Office.Interop.Word.Range = activeDoc.Range(cursorPos, contextEnd)
+            Dim textAfter As String = afterRange.Text
+
+            ' Combine with cursor marker
+            Dim contextText As String = textBefore & "[cursor is here]" & textAfter
+
+            ' Try to extract bubbles/comments if available for the entire context range
+            Dim bubbles As String = ""
+            Try
+                Dim fullContextRange As Microsoft.Office.Interop.Word.Range = activeDoc.Range(contextStart, contextEnd)
+                bubbles = ThisAddIn.BubblesExtract(fullContextRange, True) ' Silent=True
+            Catch
+                ' ignore and keep contextText
+            End Try
+
+            If Not String.IsNullOrEmpty(bubbles) Then
+                Return contextText & " " & bubbles
+            End If
+
+            Return contextText
+
+        Catch ex As Exception
+            Return ""
+        End Try
+    End Function
 
     Private Async Function WelcomeMessage() As Task(Of String)
 
@@ -576,6 +692,7 @@ Public Class frmAIChat
                 _useSecondApi = False
                 UpdateModelButtonText()
                 UpdateTitle()
+                UpdateDocumentCheckboxesState()
                 Return
             End If
 
@@ -619,6 +736,7 @@ Public Class frmAIChat
 
             UpdateModelButtonText()
             UpdateTitle()
+            UpdateDocumentCheckboxesState()
         Else
             ' Legacy behavior: simple toggle between primary and configured second model
             _useSecondApi = Not _useSecondApi
@@ -627,6 +745,7 @@ Public Class frmAIChat
             _alternateModelDisplayName = Nothing
             UpdateModelButtonText()
             UpdateTitle()
+            UpdateDocumentCheckboxesState()
         End If
     End Sub
 
@@ -640,8 +759,35 @@ Public Class frmAIChat
     End Sub
 
 
+    ' Disables document/selection checkboxes when using second API models
+    Private Sub UpdateDocumentCheckboxesState()
+        If _useSecondApi Then
+            ' Disable and uncheck document-related checkboxes
+
+            chkIncludeDocText.Checked = False
+            chkIncludeselection.Checked = False
+            chkPermitCommands.Checked = False
+
+            ' Update settings
+            My.Settings.IncludeDocument = False
+            My.Settings.IncludeSelection = False
+            My.Settings.DoCommands = False
+            My.Settings.Save()
+        Else
+            ' Re-enable checkboxes when switching back to primary model
+            chkIncludeDocText.Enabled = True
+            chkIncludeselection.Enabled = True
+            chkPermitCommands.Enabled = True
+
+            ' Optionally restore previous settings (or leave unchecked)
+            ' chkIncludeDocText.Checked = My.Settings.IncludeDocument
+            ' chkIncludeselection.Checked = My.Settings.IncludeSelection
+            ' chkPermitCommands.Checked = My.Settings.DoCommands
+        End If
+    End Sub
+
     ' Clears the conversation from both the UI and saved settings.
-    Private Sub btnClear_Click(sender As Object, e As EventArgs)
+    Private Async Sub btnClear_Click(sender As Object, e As EventArgs)
 
         _chatHistory.Clear()
         txtChatHistory.Clear()
@@ -653,7 +799,7 @@ Public Class frmAIChat
 
         ClearChatHtml()
 
-        Dim result = WelcomeMessage()
+        Await WelcomeMessage()
     End Sub
 
     ' Press Escape to close. Also button-based exit.
@@ -707,10 +853,25 @@ Public Class frmAIChat
 
     ' Trigger the Send button on Ctrl+Enter in the user input textbox.
 
-    Private Sub UserInput_KeyDown(sender As Object, e As KeyEventArgs)
+    Private Sub oldUserInput_KeyDown(sender As Object, e As KeyEventArgs)
         If e.Control AndAlso e.KeyCode = Keys.Enter Then
             btnSend.PerformClick()
             e.Handled = True
+        End If
+    End Sub
+
+    ' Trigger the Send button on Enter, allow Shift+Enter for new line
+    Private Sub UserInput_KeyDown(sender As Object, e As KeyEventArgs)
+        If e.KeyCode = Keys.Enter Then
+            If e.Shift Then
+                ' Allow Shift+Enter to insert a new line (default behavior)
+                Return
+            Else
+                ' Enter alone sends the message
+                e.SuppressKeyPress = True
+                btnSend.PerformClick()
+                e.Handled = True
+            End If
         End If
     End Sub
 
@@ -963,6 +1124,7 @@ Public Class frmAIChat
 
 
     Private CommandsList As String = ""
+    Private FailedCommandsList As New List(Of String)() ' Add this to track failed commands
 
     Public Sub ExecuteAnyCommands(teststring As String, OnlySelection As Boolean)
 
@@ -972,12 +1134,53 @@ Public Class frmAIChat
         Me.TopMost = False
 
         CommandsList = ""
+        FailedCommandsList.Clear() ' Clear previous failed commands
         Dim LastCommandsList As String = ""
+
+        Dim wordApp As Microsoft.Office.Interop.Word.Application
+
+        ' ============= ENSURE WE'RE IN MAIN STORY WITHOUT CHANGING SELECTION =============
+        Try
+            wordApp = Globals.ThisAddIn.Application
+
+            If wordApp IsNot Nothing AndAlso wordApp.ActiveDocument IsNot Nothing AndAlso wordApp.Selection IsNot Nothing Then
+                Dim currentDoc As Microsoft.Office.Interop.Word.Document = wordApp.ActiveDocument
+                Dim currentSel As Microsoft.Office.Interop.Word.Selection = wordApp.Selection
+                Dim currentStory As Word.WdStoryType = currentSel.StoryType
+
+                ' Only act if we're NOT already in the main text story
+                If currentStory <> Word.WdStoryType.wdMainTextStory Then
+                    ' Force view back to print view to get out of special editing modes
+                    wordApp.ActiveWindow.View.Type = Microsoft.Office.Interop.Word.WdViewType.wdPrintView
+
+                    ' Move to start of main document story without selecting anything
+                    Dim mainStoryRange As Word.Range = currentDoc.StoryRanges(Word.WdStoryType.wdMainTextStory)
+                    mainStoryRange.Collapse(Word.WdCollapseDirection.wdCollapseStart)
+                    mainStoryRange.Select()
+
+                    ' Collapse to insertion point (no selection)
+                    currentSel.Collapse(Word.WdCollapseDirection.wdCollapseStart)
+                End If
+            End If
+        Catch ex As Exception
+            ' Best-effort; continue even if this fails
+            Debug.WriteLine($"Warning: Could not reset to main story: {ex.Message}")
+        End Try
+        ' ================================================================================
+
+
 
         If commands.Count() > 0 Then
             Globals.ThisAddIn.Application.Activate()
             'InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):")
             System.Threading.Thread.Sleep(200)
+
+            wordApp = Globals.ThisAddIn.Application
+            With wordApp.ActiveWindow.View
+                .RevisionsView = Microsoft.Office.Interop.Word.WdRevisionsView.wdRevisionsViewFinal
+                .ShowRevisionsAndComments = False
+            End With
+
         End If
 
         For Each pc In commands
@@ -986,64 +1189,83 @@ Public Class frmAIChat
                 ' Exit the loop
                 Exit For
             End If
+
+            Dim commandSuccess As Boolean = True ' Track success of each command
+            Dim commandDescription As String = ""
+
             Select Case pc.Command.ToLower()
                 Case "find"
-                    CommandsList = $"Finding '{pc.Argument1}'" & Environment.NewLine & CommandsList
+                    commandDescription = $"Finding '{pc.Argument1}'"
+                    CommandsList = commandDescription & Environment.NewLine & CommandsList
                     LastCommandsList = CommandsList
                     'InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):" & Environment.NewLine & Environment.NewLine & CommandsList)
                     System.Threading.Thread.Sleep(500)
-                    ExecuteFindCommand(pc.Argument1, OnlySelection)
+                    commandSuccess = ExecuteFindCommand(pc.Argument1, OnlySelection)
 
                 Case "addcomment"
-                    CommandsList = $"Adding comment '{pc.Argument2}' to the text '{pc.Argument1}'" & Environment.NewLine & CommandsList
+                    commandDescription = $"Adding comment '{pc.Argument2}' to the text '{pc.Argument1}'"
+                    CommandsList = commandDescription & Environment.NewLine & CommandsList
                     LastCommandsList = CommandsList
                     'InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):" & Environment.NewLine & Environment.NewLine & CommandsList)
                     System.Threading.Thread.Sleep(500)
-                    ExecuteAddComment(pc.Argument1, pc.Argument2, OnlySelection)
+                    commandSuccess = ExecuteAddComment(pc.Argument1, pc.Argument2, OnlySelection)
 
                 Case "replycomment"
-                    CommandsList = $"Replying to comment '{pc.Argument1}' to with '{pc.Argument2}'" & Environment.NewLine & CommandsList
+                    commandDescription = $"Replying to comment '{pc.Argument1}' with '{pc.Argument2}'"
+                    CommandsList = commandDescription & Environment.NewLine & CommandsList
                     LastCommandsList = CommandsList
                     'InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):" & Environment.NewLine & Environment.NewLine & CommandsList)
                     System.Threading.Thread.Sleep(500)
-                    ExecuteReplyToCommentByIdToken(pc.Argument1, pc.Argument2)
+                    commandSuccess = ExecuteReplyToCommentByIdToken(pc.Argument1, pc.Argument2)
 
                 Case "replace"
                     If String.IsNullOrEmpty(pc.Argument2) Then
-                        CommandsList = $"Deleting '{pc.Argument1}'" & Environment.NewLine & CommandsList
+                        commandDescription = $"Deleting '{pc.Argument1}'"
                     Else
-                        CommandsList = $"Replacing '{pc.Argument1}' with '{pc.Argument2}" & Environment.NewLine & CommandsList
+                        commandDescription = $"Replacing '{pc.Argument1}' with '{pc.Argument2}'"
                     End If
+                    CommandsList = commandDescription & Environment.NewLine & CommandsList
                     LastCommandsList = CommandsList
                     InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):" & Environment.NewLine & Environment.NewLine & CommandsList)
                     System.Threading.Thread.Sleep(500)
-                    ExecuteReplaceCommand(pc.Argument1, pc.Argument2, OnlySelection, MarkerChar)
+                    commandSuccess = ExecuteReplaceCommand(pc.Argument1, pc.Argument2, OnlySelection, MarkerChar)
 
                 Case "insertafter"
-                    CommandsList = $"Inserting '{pc.Argument2}' after '{pc.Argument1}'" & Environment.NewLine & CommandsList
+                    commandDescription = $"Inserting '{pc.Argument2}' after '{pc.Argument1}'"
+                    CommandsList = commandDescription & Environment.NewLine & CommandsList
                     LastCommandsList = CommandsList
                     InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):" & Environment.NewLine & Environment.NewLine & CommandsList)
                     System.Threading.Thread.Sleep(500)
-                    ExecuteInsertBeforeAfterCommand(pc.Argument1, pc.Argument2, OnlySelection, False)
+                    commandSuccess = ExecuteInsertBeforeAfterCommand(pc.Argument1, pc.Argument2, OnlySelection, False)
 
                 Case "insertbefore"
-                    CommandsList = $"Inserting '{pc.Argument2}' before '{pc.Argument1}'" & Environment.NewLine & CommandsList
+                    commandDescription = $"Inserting '{pc.Argument2}' before '{pc.Argument1}'"
+                    CommandsList = commandDescription & Environment.NewLine & CommandsList
                     LastCommandsList = CommandsList
                     InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):" & Environment.NewLine & Environment.NewLine & CommandsList)
                     System.Threading.Thread.Sleep(500)
-                    ExecuteInsertBeforeAfterCommand(pc.Argument1, pc.Argument2, OnlySelection, True)
+                    commandSuccess = ExecuteInsertBeforeAfterCommand(pc.Argument1, pc.Argument2, OnlySelection, True)
 
                 Case "insert"
-                    CommandsList = $"Inserting '{pc.Argument1}'" & Environment.NewLine & CommandsList
+                    commandDescription = $"Inserting '{pc.Argument1}'"
+                    CommandsList = commandDescription & Environment.NewLine & CommandsList
                     LastCommandsList = CommandsList
                     InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):" & Environment.NewLine & Environment.NewLine & CommandsList)
                     System.Threading.Thread.Sleep(500)
                     Debug.WriteLine("ExecuteInsert")
-                    ExecuteInsertCommand(pc.Argument1)
+                    commandSuccess = ExecuteInsertCommand(pc.Argument1)
 
                 Case Else
                     ' Unknown command or default
+                    commandDescription = $"Unknown command: '{pc.Command}'"
+                    commandSuccess = False
             End Select
+
+            ' Track failed commands
+            If Not commandSuccess AndAlso Not String.IsNullOrWhiteSpace(commandDescription) Then
+                FailedCommandsList.Add($"Failed: {commandDescription}")
+            End If
+
             If LastCommandsList <> CommandsList Then
                 'InfoBox.ShowInfoBox("Executing bot commands ('Esc' to abort):" & Environment.NewLine & Environment.NewLine & CommandsList)
                 System.Threading.Thread.Sleep(500)
@@ -1059,11 +1281,68 @@ Public Class frmAIChat
             ReplaceSpecialCharacter(OnlySelection)
 
             InfoBox.ShowInfoBox("")
+
+            With wordApp.ActiveWindow.View
+                .RevisionsView = Microsoft.Office.Interop.Word.WdRevisionsView.wdRevisionsViewFinal
+                .ShowRevisionsAndComments = True
+            End With
+
+        End If
+
+        ' COM-Objekt sauber freigeben
+        If wordApp IsNot Nothing Then
+            System.Runtime.InteropServices.Marshal.ReleaseComObject(wordApp)
+            wordApp = Nothing
         End If
 
         Me.TopMost = topmost
         Me.Focus()
 
+        ' Report failed commands to chat if any
+        If FailedCommandsList.Count > 0 Then
+            ReportFailedCommands()
+        End If
+
+    End Sub
+
+    Private Sub ReportFailedCommands()
+        If FailedCommandsList Is Nothing OrElse FailedCommandsList.Count = 0 Then Return
+
+        Dim errorMessage As New System.Text.StringBuilder()
+        errorMessage.AppendLine()
+        errorMessage.AppendLine("─────────────────────────────────────")
+        errorMessage.AppendLine("⚠ Some commands could not be executed:")
+        errorMessage.AppendLine()
+
+        For Each failedCmd In FailedCommandsList
+            errorMessage.AppendLine($"  • {failedCmd}")
+        Next
+
+        errorMessage.AppendLine()
+        errorMessage.AppendLine("─────────────────────────────────────")
+
+        ' Add to plain text chat history
+        AppendToChatHistory(errorMessage.ToString())
+
+        ' Add to HTML chat with formatting
+        Dim htmlError As String = $"<div class='msg assistant error' style='border-left: 3px solid #d93025; padding-left: 10px; margin: 10px 0; background-color: #fef1f0;'>
+            <span class='who' style='color: #d93025;'>System:</span>
+            <div class='content'>
+                <hr style='border: none; border-top: 1px solid #d93025; margin: 8px 0;' />
+                <strong>⚠ Some commands could not be executed:</strong><br/>
+                <ul style='margin: 8px 0;'>"
+
+        For Each failedCmd In FailedCommandsList
+            htmlError += $"<li>{HtmlEncode(failedCmd)}</li>"
+        Next
+
+        htmlError += "</ul><hr style='border: none; border-top: 1px solid #d93025; margin: 8px 0;' /></div></div>"
+
+        AppendHtml(htmlError)
+        PersistChatHtml()
+
+        ' Add to chat history so AI can see the failures
+        _chatHistory.Add(("assistant", $"System: Some commands failed - {String.Join("; ", FailedCommandsList)}"))
     End Sub
 
     Private Sub ReplaceSpecialCharacter(Optional OnlySelection As Boolean = False)
@@ -1104,10 +1383,12 @@ Public Class frmAIChat
     '  - "wid:1234 ph:abcdef..."       (labels with ':' and whitespace)
     '  - "1234"                        (id only)
     '  - "abcdef..."                   (hash only)
-    Private Sub ExecuteReplyToCommentByIdToken(
+
+    Private Function ExecuteReplyToCommentByIdToken(
     ByVal idToken As String,
     ByVal replyText As String
-)
+) As Boolean
+
         Dim app As Microsoft.Office.Interop.Word.Application = Nothing
         Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
         Dim hadSel As Boolean = False
@@ -1125,14 +1406,14 @@ Public Class frmAIChat
                 End If
             End If
 
-            ' ——— existing logic ———
+            ' ——— validation logic ———
             If String.IsNullOrWhiteSpace(idToken) Then
                 Debug.WriteLine("Add-Reply: Missing ID token.")
-                Exit Sub
+                Return False
             End If
             If String.IsNullOrWhiteSpace(replyText) Then
                 Debug.WriteLine("Add-Reply: Reply text is empty.")
-                Exit Sub
+                Return False
             End If
 
             Dim wordId As System.Nullable(Of Integer) = Nothing
@@ -1140,21 +1421,33 @@ Public Class frmAIChat
 
             If Not TryParseCommentIdToken(idToken, wordId, pseudoHash) Then
                 Debug.WriteLine("Add-Reply: Could not parse ID token (expected formats like '1234|abcdef' or 'id=1234;hash=abcdef').")
-                Exit Sub
+                Return False
             End If
+
+            ' Add detailed logging to debug the issue
+            Debug.WriteLine($"Add-Reply: Parsed token '{idToken}' -> WordId={If(wordId.HasValue, wordId.Value.ToString(), "null")}, Hash={If(pseudoHash, "null")}")
 
             Dim formatted As Boolean = chkConvertMarkdown.Checked
-            Dim ok As Boolean = ThisAddIn.ReplyToWordComment(wordId, pseudoHash, replyText, formatted)
-            If Not ok Then
-                Debug.WriteLine("Add-Reply: Failed to add comment reply (target not found).")
-            End If
-            ' ——— end existing logic ———
+            Dim ok As Boolean = ThisAddIn.ReplyToWordComment(wordId, pseudoHash, AN6 & ": " & replyText, formatted)
 
+            If ok Then
+                Debug.WriteLine($"Add-Reply: Successfully added reply to comment {If(wordId.HasValue, wordId.Value.ToString(), pseudoHash)}")
+            Else
+                Debug.WriteLine($"Add-Reply: Failed to add reply to comment {If(wordId.HasValue, wordId.Value.ToString(), pseudoHash)} (target not found).")
+            End If
+
+            Return ok
+
+        Catch ex As Exception
+            ' Log the error but don't throw - let the calling code handle it
+            Debug.WriteLine($"Add-Reply Error: {ex.Message}")
+            Return False
         Finally
             ' Restore focus and selection to main text story; avoid leaving caret in a comment
             Try
                 If app IsNot Nothing AndAlso doc IsNot Nothing AndAlso hadSel Then
-                    app.ActiveWindow.Activate()
+                    ' Ensure we're back in the main story before restoring selection
+                    app.ActiveWindow.View.Type = Microsoft.Office.Interop.Word.WdViewType.wdPrintView
                     Dim s As Integer = Math.Max(doc.Content.Start, Math.Min(origStart, doc.Content.End))
                     Dim e As Integer = Math.Max(doc.Content.Start, Math.Min(origEnd, doc.Content.End))
                     doc.Range(s, e).Select() ' use a doc Range to force wdMainTextStory
@@ -1163,7 +1456,7 @@ Public Class frmAIChat
                 ' best-effort restore; ignore failures
             End Try
         End Try
-    End Sub
+    End Function
 
 
 
@@ -1180,6 +1473,9 @@ Public Class frmAIChat
 
         Dim s As String = raw.Trim()
 
+        ' Log what we're trying to parse
+        Debug.WriteLine($"TryParseCommentIdToken: Parsing '{s}'")
+
         ' 1) Fast path: split "id|hash"
         Dim pipeParts = s.Split(New Char() {"|"c}, 2, StringSplitOptions.None)
         If pipeParts.Length = 2 Then
@@ -1188,21 +1484,31 @@ Public Class frmAIChat
             Dim idVal As Integer
             If Integer.TryParse(left, idVal) Then wordId = idVal
             If Not String.IsNullOrWhiteSpace(right) Then pseudoHash = right
+            Debug.WriteLine($"TryParseCommentIdToken: Pipe format -> WordId={If(wordId.HasValue, wordId.Value.ToString(), "null")}, Hash={If(pseudoHash, "null")}")
             Return (wordId.HasValue OrElse Not String.IsNullOrWhiteSpace(pseudoHash))
         End If
 
         ' 2) Labeled forms: allow separators ; , | or whitespace; allow labels wid/id and ph/hash/pseudohash
-        ' Examples: "id=1234;hash=abcdef", "wid:1234 ph:abcdef"
+        ' Examples: "id=1234;hash=abcdef", "wid:1234 ph:abcdef", "id:3"
         Dim idMatch = System.Text.RegularExpressions.Regex.Match(s, "(?:\bwid|\bid|\bwordid)\s*[:=]\s*(?<id>-?\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
         If idMatch.Success Then
             Dim idVal As Integer
-            If Integer.TryParse(idMatch.Groups("id").Value, idVal) Then wordId = idVal
+            If Integer.TryParse(idMatch.Groups("id").Value, idVal) Then
+                wordId = idVal
+                Debug.WriteLine($"TryParseCommentIdToken: Found WordId={wordId.Value} from labeled format")
+            End If
         End If
+
         Dim hashMatch = System.Text.RegularExpressions.Regex.Match(s, "(?:\bph|\bhash|\bpseudohash)\s*[:=]\s*(?<hash>[A-Za-z0-9_-]{6,})", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
         If hashMatch.Success Then
             pseudoHash = hashMatch.Groups("hash").Value.Trim()
+            Debug.WriteLine($"TryParseCommentIdToken: Found Hash={pseudoHash} from labeled format")
         End If
-        If wordId.HasValue OrElse Not String.IsNullOrWhiteSpace(pseudoHash) Then Return True
+
+        If wordId.HasValue OrElse Not String.IsNullOrWhiteSpace(pseudoHash) Then
+            Debug.WriteLine($"TryParseCommentIdToken: Labeled format -> WordId={If(wordId.HasValue, wordId.Value.ToString(), "null")}, Hash={If(pseudoHash, "null")}")
+            Return True
+        End If
 
         ' 3) Single token fallback:
         '    - all digits => id only
@@ -1210,24 +1516,29 @@ Public Class frmAIChat
         Dim onlyDigits As Boolean = s.All(Function(ch) Char.IsDigit(ch))
         If onlyDigits Then
             Dim idVal As Integer
-            If Integer.TryParse(s, idVal) Then wordId = idVal
-            Return True
+            If Integer.TryParse(s, idVal) Then
+                wordId = idVal
+                Debug.WriteLine($"TryParseCommentIdToken: Plain number -> WordId={wordId.Value}")
+                Return True
+            End If
         Else
             ' Accept as hash if it looks non-empty
             If s.Length >= 6 Then
                 pseudoHash = s
+                Debug.WriteLine($"TryParseCommentIdToken: Plain text -> Hash={pseudoHash}")
                 Return True
             End If
         End If
 
+        Debug.WriteLine("TryParseCommentIdToken: Failed to parse")
         Return False
     End Function
 
-    Private Sub ExecuteAddComment(
+    Private Function ExecuteAddComment(
     ByVal searchTerm As String,
     ByVal commentText As String,
     Optional ByVal onlySelection As Boolean = False
-)
+) As Boolean
 
         Dim app As Microsoft.Office.Interop.Word.Application = Nothing
         Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
@@ -1235,11 +1546,11 @@ Public Class frmAIChat
         ' Validate inputs
         If String.IsNullOrWhiteSpace(searchTerm) Then
             Debug.WriteLine("AddComments: Search term is empty.")
-            Return
+            Return False
         End If
         If String.IsNullOrWhiteSpace(commentText) Then
             Debug.WriteLine("AddComments: Comment text is empty.")
-            Return
+            Return False
         End If
 
         ' Get Word application and active document
@@ -1251,18 +1562,18 @@ Public Class frmAIChat
             End Try
         Catch ex As System.Exception
             Debug.WriteLine("AddComments: Unable to access Word Application instance.")
-            Return
+            Return False
         End Try
 
         Try
             doc = app.ActiveDocument
         Catch
             Debug.WriteLine("AddComments: No active document found.")
-            Return
+            Return False
         End Try
         If doc Is Nothing Then
             Debug.WriteLine("AddComments: No active document found.")
-            Return
+            Return False
         End If
 
         Dim sel As Microsoft.Office.Interop.Word.Selection = doc.Application.Selection
@@ -1297,9 +1608,9 @@ Public Class frmAIChat
                     newComment = doc.Comments.Add(anchor, String.Empty)
 
                     If chkConvertMarkdown.Checked Then
-                        ThisAddIn.InsertMarkdownToComment(newComment.Range, commentText)
+                        ThisAddIn.InsertMarkdownToComment(newComment.Range, AN6 & ": " & commentText)
                     Else
-                        newComment.Range.Text = commentText
+                        newComment.Range.Text = AN6 & ": " & commentText
                     End If
 
                     added += 1
@@ -1327,15 +1638,16 @@ Public Class frmAIChat
             End Try
         End Try
         Debug.WriteLine($"AddComments: Added {added} comments for term '{searchTerm}'.")
-        Return
-    End Sub
+        Return added > 0
+    End Function
 
-    Private Sub ExecuteFindCommand(searchTerm As String, Optional OnlySelection As Boolean = False)
+    Private Function ExecuteFindCommand(searchTerm As String, Optional OnlySelection As Boolean = False) As Boolean
         Dim doc As Word.Document = Globals.ThisAddIn.Application.ActiveDocument
         Dim trackChangesEnabled As Boolean = doc.TrackRevisions
         Dim originalAuthor As String = doc.Application.UserName
         Dim selectionStart As Integer = doc.Application.Selection.Start
         Dim selectionEnd As Integer = doc.Application.Selection.End
+        Dim found As Boolean = False ' Track if anything was found
 
         Try
             doc.Application.Activate()
@@ -1347,7 +1659,7 @@ Public Class frmAIChat
             searchTerm = DecodeParagraphMarks(searchTerm)
             If String.IsNullOrWhiteSpace(searchTerm) Then
                 CommandsList = $"Note: Empty search term (ignored)." & Environment.NewLine & CommandsList
-                Exit Sub
+                Return False ' Return false for empty search
             End If
 
             ' Define the starting selection based on OnlySelection
@@ -1360,14 +1672,12 @@ Public Class frmAIChat
                 doc.Application.Selection.SetRange(doc.Content.Start, doc.Content.End)
             End If
 
-            Dim found As Boolean = False
-
             Dim lastSelectionStart As Integer = -1 ' Track last selection position
             Dim stuckCounter As Integer = 0        ' Counter for repeated positions
             Dim maxStuckLimit As Integer = 2        ' Maximum allowed stuck occurrences
 
             ' Loop through the content to find and mark all instances
-            Do While Globals.ThisAddIn.FindLongTextInChunks(searchTerm, doc.Application.Selection) = True
+            Do While Globals.ThisAddIn.FindLongTextInChunks(searchTerm, doc.Application.Selection, True) = True
 
                 If doc.Application.Selection Is Nothing Then Exit Do
 
@@ -1422,13 +1732,15 @@ Public Class frmAIChat
                 End If
             Loop
 
-
             If Not found Then
                 CommandsList = $"Note: The search term was not found." & Environment.NewLine & CommandsList
             End If
 
+            Return found ' Return success status
+
         Catch ex As System.Exception
             MsgBox("Error in ExecuteFindCommand: " & ex.Message)
+            Return False ' Return false on error
 
         Finally
             ' Restore original state of Track Changes and Author
@@ -1439,23 +1751,26 @@ Public Class frmAIChat
             doc.Application.Selection.SetRange(selectionStart, selectionEnd)
             doc.Application.Selection.Select()
         End Try
-    End Sub
+    End Function
 
 
-    Private Sub ExecuteReplaceCommand(oldText As String, newText As String, OnlySelection As Boolean, Marker As String)
+    Private Function ExecuteReplaceCommand(oldText As String, newText As String, OnlySelection As Boolean, Marker As String) As Boolean
         Dim doc As Word.Document = Globals.ThisAddIn.Application.ActiveDocument
 
         Dim trackChangesEnabled As Boolean = doc.TrackRevisions
         Dim originalAuthor As String = doc.Application.UserName
 
         Try
-
             oldText = DecodeParagraphMarks(oldText)
             newText = DecodeParagraphMarks(newText)
 
+            ' Normalize inputs to avoid NullReference/substring issues
+            oldText = If(oldText, String.Empty)
+            newText = If(newText, String.Empty)
+
             If String.IsNullOrWhiteSpace(oldText) Then
                 CommandsList = $"Note: Empty search term (ignored)." & Environment.NewLine & CommandsList
-                Exit Sub
+                Return False
             End If
 
             doc.Application.Activate()
@@ -1480,19 +1795,23 @@ Public Class frmAIChat
 
             Dim newTextWithMarker As String
             If newText.Length > 2 Then
-                newTextWithMarker = $"{newText.Substring(0, newText.Length - 2)}{Marker}{newText.Substring(newText.Length - 2)}"
+                ' Safe: startIndex (newText.Length - 2) >= 1 here
+                newTextWithMarker =
+                    newText.Substring(0, newText.Length - 2) &
+                    Marker &
+                    newText.Substring(newText.Length - 2)
             Else
+                ' Length 0,1,2 -> leave unchanged (no marker)
                 newTextWithMarker = newText
             End If
 
             Dim selectionStart As Integer = doc.Application.Selection.Start
-                Dim selectionEnd As Integer = doc.Application.Selection.End
-                doc.Application.Selection.SetRange(workRange.Start, workRange.End)
-                Dim found As Boolean = False
+            Dim selectionEnd As Integer = doc.Application.Selection.End
+            doc.Application.Selection.SetRange(workRange.Start, workRange.End)
+            Dim found As Boolean = False
 
             ' Loop through the content to find and replace all instances
-            Do While Globals.ThisAddIn.FindLongTextInChunks(oldText, doc.Application.Selection) = True
-
+            Do While Globals.ThisAddIn.FindLongTextInChunks(oldText, doc.Application.Selection, True) = True
                 If doc.Application.Selection Is Nothing Then Exit Do
 
                 If (GetAsyncKeyState(System.Windows.Forms.Keys.Escape) And 1) <> 0 Then
@@ -1509,17 +1828,24 @@ Public Class frmAIChat
                     End If
                 Next
 
-                ' Account for trackchanges being turned on, i.e. the old text remains
+                ' Account for track changes being on (old text remains as a deletion)
                 Dim currentEnd As Integer = doc.Application.Selection.End
                 If Not isDeleted Then
-                    currentEnd = currentEnd + Len(newTextWithMarker)
-                    selectionEnd = selectionEnd + Len(newTextWithMarker)
-                    ' Replace the found text
+                    currentEnd += Len(newTextWithMarker)
+                    selectionEnd += Len(newTextWithMarker)
+
                     doc.Application.Selection.Text = newTextWithMarker
-                    If chkConvertMarkdown.Checked Then Globals.ThisAddIn.ConvertMarkdownToWord()
+
+                    If chkConvertMarkdown.Checked Then
+                        Try
+                            Globals.ThisAddIn.ConvertMarkdownToWord()
+                        Catch
+                            ' Best-effort; do not fail the replace if formatting conversion fails
+                        End Try
+                    End If
                 End If
 
-                ' Check if the collapsed selection has reached the end of the document or the selection
+                ' Continue searching within the allowed range
                 If OnlySelection Then
                     If currentEnd >= selectionEnd Then Exit Do
                     doc.Application.Selection.SetRange(currentEnd, selectionEnd)
@@ -1530,24 +1856,33 @@ Public Class frmAIChat
             Loop
 
             If Not found Then
-                    CommandsList = $"Note: The search term was not found (Chunk Search)." & Environment.NewLine & CommandsList
-                End If
+                CommandsList = $"Note: The search term was not found (Chunk Search)." & Environment.NewLine & CommandsList
+            End If
 
-                doc.Application.Selection.SetRange(selectionStart, selectionEnd)
-                doc.Application.Selection.Select()
+            doc.Application.Selection.SetRange(selectionStart, selectionEnd)
+            doc.Application.Selection.Select()
 
+            Return found
 
         Catch ex As System.Exception
+
+#If DEBUG Then
+            Debug.WriteLine("Error: " & ex.Message)
+            Debug.WriteLine("Stacktrace: " & ex.StackTrace)
+
+            System.Diagnostics.Debugger.Break()
+#End If
+
             MsgBox("Error in ExecuteReplaceCommand: " & ex.Message, MsgBoxStyle.Critical)
 
         Finally
             doc.TrackRevisions = trackChangesEnabled
             'doc.Application.UserName = originalAuthor
         End Try
-    End Sub
+    End Function
 
 
-    Private Sub ExecuteInsertBeforeAfterCommand(searchText As String, newText As String, Optional OnlySelection As Boolean = False, Optional InsertBefore As Boolean = False)
+    Private Function ExecuteInsertBeforeAfterCommand(searchText As String, newText As String, Optional OnlySelection As Boolean = False, Optional InsertBefore As Boolean = False) As Boolean
         Dim doc As Word.Document = Globals.ThisAddIn.Application.ActiveDocument
 
         ' Save the current state of Track Changes and Author
@@ -1559,7 +1894,7 @@ Public Class frmAIChat
             newText = DecodeParagraphMarks(newText)
             If String.IsNullOrWhiteSpace(searchText) Then
                 CommandsList = $"Note: Empty insertion anchor (ignored)." & Environment.NewLine & CommandsList
-                Exit Sub
+                Return False
             End If
 
             doc.Application.Activate()
@@ -1567,7 +1902,6 @@ Public Class frmAIChat
 
             ' Enable Track Changes and set the author to 
             doc.TrackRevisions = True
-            'doc.Application.UserName = AN
 
             ' Determine the range for the search
             Dim workrange As Word.Range
@@ -1586,12 +1920,12 @@ Public Class frmAIChat
 
 
             Dim selectionStart As Integer = doc.Application.Selection.Start
-                Dim selectionEnd As Integer = doc.Application.Selection.End
+            Dim selectionEnd As Integer = doc.Application.Selection.End
 
-                doc.Application.Selection.SetRange(workrange.Start, workrange.End)
+            doc.Application.Selection.SetRange(workrange.Start, workrange.End)
 
             ' Loop through the content to find and replace all instances
-            Do While Globals.ThisAddIn.FindLongTextInChunks(searchText, doc.Application.Selection) = True
+            Do While Globals.ThisAddIn.FindLongTextInChunks(searchText, doc.Application.Selection, True) = True
 
                 If doc.Application.Selection Is Nothing Then Exit Do
 
@@ -1606,7 +1940,7 @@ Public Class frmAIChat
                     doc.Application.Selection.InsertBefore(newText)
                 Else
                     doc.Application.Selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
-                    doc.Application.Selection.Text = newText & doc.Application.Selection.Text
+                    doc.Application.Selection.Text = newText
                 End If
                 If chkConvertMarkdown.Checked Then Globals.ThisAddIn.ConvertMarkdownToWord()
 
@@ -1621,29 +1955,40 @@ Public Class frmAIChat
             Loop
 
             If Not found Then
-                    CommandsList = $"Note: The search term was not found (Chunk Search)." & Environment.NewLine & CommandsList
-                End If
+                CommandsList = $"Note: The search term was not found (Chunk Search)." & Environment.NewLine & CommandsList
+            End If
 
-                doc.Application.Selection.SetRange(selectionStart, selectionEnd)
-                doc.Application.Selection.Select()
+            doc.Application.Selection.SetRange(selectionStart, selectionEnd)
+            doc.Application.Selection.Select()
 
 
 
-                If Not found Then
+            If Not found Then
                 CommandsList = $"Note: The insertion point was not found." & Environment.NewLine & CommandsList
             End If
 
+            Return found
+
         Catch ex As System.Exception
+
+#If DEBUG Then
+        Debug.WriteLine("Error: " & ex.Message)
+        Debug.WriteLine("Stacktrace: " & ex.StackTrace)
+
+        System.Diagnostics.Debugger.Break()
+#End If
+
             MsgBox("Error in ExecuteInsertBeforeAfterCommand: " & ex.Message, MsgBoxStyle.Critical)
+            Return False
 
         Finally
             ' Restore the original state of Track Changes and Author
             doc.TrackRevisions = trackChangesEnabled
             'doc.Application.UserName = originalAuthor
         End Try
-    End Sub
+    End Function
 
-    Private Sub ExecuteInsertCommand(newText As String)
+    Private Function ExecuteInsertCommand(newText As String) As Boolean
         Dim doc = Globals.ThisAddIn.Application.ActiveDocument
         Dim trackChangesEnabled = doc.TrackRevisions
         Try
@@ -1655,12 +2000,14 @@ Public Class frmAIChat
             selection.Collapse(Word.WdCollapseDirection.wdCollapseStart)
             selection.Text = newText
             If chkConvertMarkdown.Checked Then Globals.ThisAddIn.ConvertMarkdownToWord()
+            Return True ' Success
         Catch ex As Exception
             MsgBox("Error in ExecuteInsertCommand: " & ex.Message, MsgBoxStyle.Critical)
+            Return False ' Failed
         Finally
             doc.TrackRevisions = trackChangesEnabled
         End Try
-    End Sub
+    End Function
 
 
 End Class
@@ -1714,12 +2061,12 @@ Partial Public Class frmAIChat
 
     ' HTML renderer for the chat history: an overlay WebBrowser on top of the hidden txtChatHistory.
     Private ReadOnly wbChat As New WebBrowser() With {
-        .Dock = DockStyle.Fill,
-        .AllowWebBrowserDrop = False,
-        .IsWebBrowserContextMenuEnabled = False,
-        .WebBrowserShortcutsEnabled = False,
-        .ScriptErrorsSuppressed = True
-    }
+    .Dock = DockStyle.Fill,
+    .AllowWebBrowserDrop = False,
+    .IsWebBrowserContextMenuEnabled = True,
+    .WebBrowserShortcutsEnabled = True,
+    .ScriptErrorsSuppressed = True
+}
 
     ' Queue + readiness flag so we can append even if the WebBrowser is not yet ready.
     Private _htmlReady As Boolean = False

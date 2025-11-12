@@ -36,7 +36,7 @@
     <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\redink_prerelease\excel\</PublishUrl>
     <InstallUrl>https://apps.vischer.com/redink/excel/</InstallUrl>
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.1.1.62</ApplicationVersion>
+    <ApplicationVersion>0.1.1.63</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>

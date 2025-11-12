@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 9.11.2025
+' 12.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -168,6 +168,19 @@ Public Class ThisAddIn
 
     End Sub
 
+    Private Shared ReadOnly _uiContext As SynchronizationContext = WindowsFormsSynchronizationContext.Current
+
+    Private Shared Async Function EnsureUIThread() As System.Threading.Tasks.Task
+        If _uiContext IsNot Nothing AndAlso SynchronizationContext.Current IsNot _uiContext Then
+            Await System.Threading.Tasks.Task.Factory.StartNew(
+                Sub()
+                    ' Continue processing here with Word objects
+                End Sub,
+                CancellationToken.None,
+                TaskCreationOptions.None,
+                TaskScheduler.FromCurrentSynchronizationContext())
+        End If
+    End Function
 
     ' Hardcoded config values
 
@@ -175,7 +188,7 @@ Public Class ThisAddIn
     Public Const AN2 As String = "red_ink"
     Public Const AN6 As String = "Inky"
 
-    Public Const Version As String = "V.091125 Gen2 Beta Test"
+    Public Const Version As String = "V.121125 Gen2 Beta Test"
 
     ' Hardcoded configuration
 
@@ -385,6 +398,14 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_DefaultPrefix As String
+        Get
+            Return _context.INI_DefaultPrefix
+        End Get
+        Set(value As String)
+            _context.INI_DefaultPrefix = value
+        End Set
+    End Property
 
     Public Shared Property INI_MarkdownBubbles As Boolean
         Get
@@ -2065,8 +2086,10 @@ Public Class ThisAddIn
         Return Await SharedMethods.PostCorrection(_context, inputText, UseSecondAPI)
     End Function
 
-    Public Shared Async Function LLM(ByVal promptSystem As String, ByVal promptUser As String, Optional ByVal Model As String = "", Optional ByVal Temperature As String = "", Optional ByVal Timeout As Long = 0, Optional ByVal UseSecondAPI As Boolean = False, Optional HideSplash As Boolean = False, Optional ByVal AddUserPrompt As String = "", Optional ByVal FileObject As String = "", Optional cancellationToken As Threading.CancellationToken = Nothing) As Task(Of String)
-        Return Await SharedMethods.LLM(_context, promptSystem, promptUser, Model, Temperature, Timeout, UseSecondAPI, HideSplash, AddUserPrompt, FileObject, cancellationToken)
+    Public Shared Async Function LLM(ByVal promptSystem As String, ByVal promptUser As String, Optional ByVal Model As String = "", Optional ByVal Temperature As String = "", Optional ByVal Timeout As Long = 0, Optional ByVal UseSecondAPI As Boolean = False, Optional HideSplash As Boolean = False, Optional ByVal AddUserPrompt As String = "", Optional ByVal FileObject As String = "", Optional cancellationToken As Threading.CancellationToken = Nothing, Optional EnsureUI As Boolean = True) As Task(Of String)
+        Dim Response = Await SharedMethods.LLM(_context, promptSystem, promptUser, Model, Temperature, Timeout, UseSecondAPI, HideSplash, AddUserPrompt, FileObject, cancellationToken)
+        If EnsureUI Then Await EnsureUIThread()
+        Return Response
     End Function
 
     Private Function ShowSettingsWindow(Settings As Dictionary(Of String, String), SettingsTips As Dictionary(Of String, String))
@@ -4007,6 +4030,9 @@ Public Class ThisAddIn
                 AddOnInstruct += MyStyleInstruct.Replace("; add ", ", ")
             End If
 
+            Dim DefaultPrefix As String = INI_DefaultPrefix
+            Dim DefaultPrefixText As String = ""
+
             Dim outlookApp As Microsoft.Office.Interop.Outlook.Application = Globals.ThisAddIn.Application
             Dim inspector As Microsoft.Office.Interop.Outlook.Inspector = ComRetry(Function() outlookApp.ActiveInspector())
 
@@ -4071,6 +4097,10 @@ Public Class ThisAddIn
                 End If
             End If
 
+            If DefaultPrefix.Trim() <> "" Then
+                DefaultPrefixText = $" (default prefix: '{DefaultPrefix}')"
+            End If
+
             ' Prompt for the text to process
 
             If Not NoText Then
@@ -4079,14 +4109,14 @@ Public Class ThisAddIn
                             System.Tuple.Create("OK, do a new doc", $"Use this to automatically insert '{NewDocPrefix}' as a prefix.", NewDocPrefix),
                             System.Tuple.Create("OK, do a markup", $"Use this to automatically insert '{MarkupPrefixDiff}' as a prefix.", MarkupPrefixDiff)
                         }
-                OtherPrompt = SLib.ShowCustomInputBox($"Please provide the prompt you wish to execute on the selected text ({MarkupInstruct}, {InplaceInstruct}, {ClipboardInstruct}){PromptLibInstruct}{AddOnInstruct}{LastPromptInstruct}:", $"{AN} Freestyle", False, "", My.Settings.LastPrompt, OptionalButtons)
+                OtherPrompt = SLib.ShowCustomInputBox($"Please provide the prompt you wish to execute on the selected text ({MarkupInstruct}, {InplaceInstruct}, {ClipboardInstruct}){PromptLibInstruct}{AddOnInstruct}{LastPromptInstruct}{DefaultPrefixText}:", $"{AN} Freestyle", False, "", My.Settings.LastPrompt, OptionalButtons)
             Else
                 Dim OptionalButtons As System.Tuple(Of String, String, String)() = {
                             System.Tuple.Create("OK, use window", $"Use this to automatically insert '{ClipboardPrefix}' as a prefix.", ClipboardPrefix),
                             System.Tuple.Create("OK, do a new doc", $"Use this to automatically insert '{NewDocPrefix}' as a prefix.", NewDocPrefix)
                         }
 
-                OtherPrompt = SLib.ShowCustomInputBox($"Please provide the prompt you wish to execute ({ClipboardInstruct}){PromptLibInstruct}{AddOnInstruct}{LastPromptInstruct}:", $"{AN} Freestyle", False, "", My.Settings.LastPrompt, OptionalButtons)
+                OtherPrompt = SLib.ShowCustomInputBox($"Please provide the prompt you wish to execute ({ClipboardInstruct}){PromptLibInstruct}{AddOnInstruct}{LastPromptInstruct}{DefaultPrefixText}:", $"{AN} Freestyle", False, "", My.Settings.LastPrompt, OptionalButtons)
             End If
 
             If String.IsNullOrEmpty(OtherPrompt) AndAlso OtherPrompt <> "ESC" AndAlso INI_PromptLib Then
@@ -4105,6 +4135,24 @@ Public Class ThisAddIn
             Else
                 If String.IsNullOrEmpty(OtherPrompt) Or OtherPrompt = "ESC" Then Exit Sub
             End If
+
+            ' Check if OtherPrompt starts with a word ending with a colon
+            If Not String.IsNullOrWhiteSpace(OtherPrompt) Then
+                Dim firstWord As String = OtherPrompt.Split({" "c}, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()
+                If firstWord IsNot Nothing AndAlso Not firstWord.EndsWith(":"c) Then
+
+                    Dim prefix As String = DefaultPrefix.Trim()
+
+                    ' Ensure prefix ends with colon and space
+                    If prefix <> "" AndAlso Not prefix.EndsWith(":"c) Then
+                        prefix &= ":"
+                    End If
+
+                    OtherPrompt = prefix & " " & OtherPrompt.Trim()
+                    OtherPrompt = OtherPrompt.Trim()
+                End If
+            End If
+
 
             My.Settings.LastPrompt = OtherPrompt
             My.Settings.Save()
@@ -5227,7 +5275,8 @@ Public Class ThisAddIn
                         {"PostCorrection", "Prompt to apply after queries"},
                         {"Language1", "Default translation language"},
                         {"PromptLibPath", "Prompt library file"},
-                        {"PromptLibPathLocal", "Prompt library file (local)"}
+                        {"PromptLibPathLocal", "Prompt library file (local)"},
+                        {"DefaultPrefix", "Default prefix to use in 'Freestyle'"}
                     }
 
         Dim SettingsTips As New Dictionary(Of String, String) From {
@@ -5250,7 +5299,8 @@ Public Class ThisAddIn
                         {"PostCorrection", "Add a prompt that will be applied to each result before it is further processed (slow!)"},
                         {"Language1", "The language (in English) that will be used for the quick access button in the ribbon"},
                         {"PromptLibPath", "The filename (including path, support environmental variables) for your prompt library (if any)"},
-                        {"PromptLibPathLocal", "The filename (including path, support environmental variables) for your local prompt library (if any)"}
+                        {"PromptLibPathLocal", "The filename (including path, support environmental variables) for your local prompt library (if any)"},
+                        {"DefaultPrefix", "You can define here the default prefix to use within 'Freestyle' if no other prefix is used (will be added authomatically)."}
                     }
 
         ShowSettingsWindow(Settings, SettingsTips)
@@ -6205,7 +6255,7 @@ Public Class ThisAddIn
 
                     Try
                         Dim llmOut As String =
-                            Await LLM(sysPrompt, userPrompt, "", "", 0, UseSecondAPI, Not ShowTimer, "", FileObject, linkedCts.Token).
+                            Await LLM(sysPrompt, userPrompt, "", "", 0, UseSecondAPI, Not ShowTimer, "", FileObject, linkedCts.Token, EnsureUI:=False).
                                 ConfigureAwait(False)
 
                         If UseSecondAPI AndAlso originalConfigLoaded Then
@@ -6222,48 +6272,6 @@ Public Class ThisAddIn
             End Function,
             cancellationToken)
     End Function
-
-    Public Function oldRunLlmAsync(
-    ByVal sysPrompt As System.String,
-    ByVal userPrompt As System.String,
-    Optional ByVal UseSecondAPI As System.Boolean = False,
-    Optional ByVal ShowTimer As System.Boolean = True,
-    Optional ByVal FileObject As System.String = "",
-    Optional ByVal cancellationToken As System.Threading.CancellationToken = Nothing
-) As System.Threading.Tasks.Task(Of System.String)
-
-        EnsureLlmUiThread()
-
-        Return System.Threading.Tasks.Task.Factory.StartNew(
-        Function() As System.String
-            Using linkedCts As System.Threading.CancellationTokenSource =
-                System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-
-                If UseSecondAPI Then ModelTimeout = INI_Timeout_2 Else ModelTimeout = INI_Timeout
-
-                Try
-                    Return Nito.AsyncEx.AsyncContext.Run(
-                        Async Function() As System.Threading.Tasks.Task(Of System.String)
-                            Dim llmOut As System.String =
-                                Await LLM(sysPrompt, userPrompt, "", "", 0, UseSecondAPI, Not ShowTimer, "", FileObject, linkedCts.Token).ConfigureAwait(True)
-
-                            If UseSecondAPI AndAlso originalConfigLoaded Then
-                                RestoreDefaults(_context, originalConfig)
-                                originalConfigLoaded = False
-                            End If
-
-                            Return If(llmOut, System.String.Empty)
-                        End Function)
-                Catch ex As OperationCanceledException
-                    Return "Operation was canceled by the user."
-                End Try
-            End Using
-        End Function,
-        cancellationToken,
-        System.Threading.Tasks.TaskCreationOptions.None,
-        llmScheduler)
-    End Function
-
 
 
     ' ---------------------------------------------------------------------------
@@ -6420,12 +6428,6 @@ Public Class ThisAddIn
         End Try
     End Function
 
-    Private Function GetSystemPromptChat() As System.String
-        ' Try: My.Settings("SP_Chat") → else fallback        
-        Dim v As System.String = TryGetAppSetting(Of System.String)("SP_Chat", Nothing)
-        If Not System.String.IsNullOrWhiteSpace(v) Then Return v
-        Return "You are a helpful assistant."
-    End Function
 
     ' Extract a human label/key from ModelConfig even if it lacks “Description”.
     ' --------- DROP-IN: ersetzt GetModelDisplayKey ---------
@@ -7378,7 +7380,7 @@ Public Class ThisAddIn
                         SaveInkyState(st)
 
                         ' ------------------ (D) Prepare system prompt (same logic) ------------------
-                        Dim sysPromptBase As String = GetSystemPromptChat()
+                        Dim sysPromptBase As String = _context.SP_Chat
                         Dim nowLocal As String = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss zzz", Globalization.CultureInfo.InvariantCulture)
                         sysPromptBase &= Environment.NewLine & "Current local date/time: " & nowLocal
                         sysPromptBase &= Environment.NewLine & $"Your name is '{AN6}'. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland."

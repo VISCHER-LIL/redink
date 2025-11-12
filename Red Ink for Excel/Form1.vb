@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
 '
-' 2.9.2025
+' 12.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -181,7 +181,7 @@ Public Class frmAIChat
         AddHandler txtUserInput.KeyDown, AddressOf UserInput_KeyDown
 
         ' Set up instructions label
-        lblInstructions.Text = $"Enter your question and click 'Send' or Ctrl-Enter. Add '{ExtWSTrigger}' to pass along other open worksheets in your question. You can allow the chatbot to perform actions on your worksheet (change or comment cells): you can undo the last action, if needed."
+        lblInstructions.Text = $"Enter your question and click 'Send' or press Enter. Add '{ExtWSTrigger}' to pass along other open worksheets in your question. You can allow the chatbot to perform actions on your worksheet (change or comment cells): you can undo the last action, if needed."
         lblInstructions.AutoSize = True
         lblInstructions.Height = 50
         lblInstructions.Anchor = AnchorStyles.Top Or AnchorStyles.Left Or AnchorStyles.Right
@@ -602,10 +602,25 @@ Public Class frmAIChat
 
     ' Trigger the Send button on Ctrl+Enter in the user input textbox.
 
-    Private Sub UserInput_KeyDown(sender As Object, e As KeyEventArgs)
+    Private Sub oldUserInput_KeyDown(sender As Object, e As KeyEventArgs)
         If e.Control AndAlso e.KeyCode = Keys.Enter Then
             btnSend.PerformClick()
             e.Handled = True
+        End If
+    End Sub
+
+    ' Trigger the Send button on Enter, allow Shift+Enter for new line
+    Private Sub UserInput_KeyDown(sender As Object, e As KeyEventArgs)
+        If e.KeyCode = Keys.Enter Then
+            If e.Shift Then
+                ' Allow Shift+Enter to insert a new line (default behavior)
+                Return
+            Else
+                ' Enter alone sends the message
+                e.SuppressKeyPress = True
+                btnSend.PerformClick()
+                e.Handled = True
+            End If
         End If
     End Sub
 

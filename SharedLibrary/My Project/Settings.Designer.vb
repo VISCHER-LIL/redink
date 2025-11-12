@@ -289,6 +289,18 @@ Namespace My
                 Me("HelpMeNoTopMost") = value
             End Set
         End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property DefaultPrefix() As String
+            Get
+                Return CType(Me("DefaultPrefix"),String)
+            End Get
+            Set
+                Me("DefaultPrefix") = value
+            End Set
+        End Property
     End Class
 End Namespace
 
