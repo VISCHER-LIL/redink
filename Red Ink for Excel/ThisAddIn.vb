@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 12.11.2025
+' 13.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -221,7 +221,7 @@ Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.121125 Gen2 Beta Test"
+    Public Const Version As String = "V.131125 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -842,6 +842,16 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_ReplaceText2Override As String
+        Get
+            Return _context.INI_ReplaceText2Override
+        End Get
+        Set(value As String)
+            _context.INI_ReplaceText2Override = value
+        End Set
+    End Property
+
+
     Public Shared Property INI_DoMarkupOutlook As Boolean
         Get
             Return _context.INI_DoMarkupOutlook
@@ -1285,6 +1295,16 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Add_Chat_NoCommands As String
+        Get
+            Return _context.SP_Add_Chat_NoCommands
+        End Get
+        Set(value As String)
+            _context.SP_Add_Chat_NoCommands = value
+        End Set
+    End Property
+
+
     Public Shared Property SP_ChatExcel As String
         Get
             Return _context.SP_ChatExcel
@@ -1572,6 +1592,24 @@ Public Class ThisAddIn
         End Get
         Set(value As Integer)
             _context.INI_MarkupMethodWord = value
+        End Set
+    End Property
+
+    Public Shared Property INI_MarkupMethodWordOverride As String
+        Get
+            Return _context.INI_MarkupMethodWordOverride
+        End Get
+        Set(value As String)
+            _context.INI_MarkupMethodWordOverride = value
+        End Set
+    End Property
+
+    Public Shared Property INI_MarkupMethodOutlookOverride As String
+        Get
+            Return _context.INI_MarkupMethodOutlookOverride
+        End Get
+        Set(value As String)
+            _context.INI_MarkupMethodOutlookOverride = value
         End Set
     End Property
 
@@ -5146,9 +5184,10 @@ Public Class ThisAddIn
                 {"Language1", "The language (in English) that will be used for the first quick access button in the ribbon"},
                 {"Language2", "The language (in English) that will be used for the second quick access button in the ribbon"},
                 {"PromptLibPath", "The filename (including path, support environmental variables) for your prompt library (if any)"},
-                {"PromptLibPath", "The filename (including path, support environmental variables) for your local prompt library (if any)"},
+                {"PromptLibPathLocal", "The filename (including path, support environmental variables) for your local prompt library (if any)"},
                 {"DefaultPrefix", "You can define here the default prefix to use within 'Freestyle' if no other prefix is used (will be added authomatically)."}
                 }
+
         ShowSettingsWindow(Settings, SettingsTips)
 
         Dim splash As New SplashScreen("Updating menu following your changes ...")

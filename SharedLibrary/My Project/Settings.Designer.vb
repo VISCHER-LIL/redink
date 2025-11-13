@@ -301,6 +301,42 @@ Namespace My
                 Me("DefaultPrefix") = value
             End Set
         End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property ReplaceText2Override() As String
+            Get
+                Return CType(Me("ReplaceText2Override"),String)
+            End Get
+            Set
+                Me("ReplaceText2Override") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property MarkupMethodWordOverride() As String
+            Get
+                Return CType(Me("MarkupMethodWordOverride"),String)
+            End Get
+            Set
+                Me("MarkupMethodWordOverride") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property MarkupMethodOutlookOverride() As String
+            Get
+                Return CType(Me("MarkupMethodOutlookOverride"),String)
+            End Get
+            Set
+                Me("MarkupMethodOutlookOverride") = value
+            End Set
+        End Property
     End Class
 End Namespace
 

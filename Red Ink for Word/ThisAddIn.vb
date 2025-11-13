@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 12.11.2025
+' 13.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -1925,7 +1925,7 @@ Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.121125 Gen2 Beta Test"
+    Public Const Version As String = "V.131125 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -2706,6 +2706,15 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_ReplaceText2Override As String
+        Get
+            Return _context.INI_ReplaceText2Override
+        End Get
+        Set(value As String)
+            _context.INI_ReplaceText2Override = value
+        End Set
+    End Property
+
     Public Shared Property INI_DoMarkupOutlook As Boolean
         Get
             Return _context.INI_DoMarkupOutlook
@@ -2723,6 +2732,7 @@ Public Class ThisAddIn
             _context.INI_DoMarkupWord = value
         End Set
     End Property
+
 
     Public Shared Property INI_RoastMe As Boolean
         Get
@@ -3179,6 +3189,15 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Add_Chat_NoCommands As String
+        Get
+            Return _context.SP_Add_Chat_NoCommands
+        End Get
+        Set(value As String)
+            _context.SP_Add_Chat_NoCommands = value
+        End Set
+    End Property
+
     Public Shared Property SP_ChatExcel As String
         Get
             Return _context.SP_ChatExcel
@@ -3468,6 +3487,24 @@ Public Class ThisAddIn
         End Get
         Set(value As Integer)
             _context.INI_MarkupMethodWord = value
+        End Set
+    End Property
+
+    Public Shared Property INI_MarkupMethodWordOverride As String
+        Get
+            Return _context.INI_MarkupMethodWordOverride
+        End Get
+        Set(value As String)
+            _context.INI_MarkupMethodWordOverride = value
+        End Set
+    End Property
+
+    Public Shared Property INI_MarkupMethodOutlookOverride As String
+        Get
+            Return _context.INI_MarkupMethodOutlookOverride
+        End Get
+        Set(value As String)
+            _context.INI_MarkupMethodOutlookOverride = value
         End Set
     End Property
 
@@ -3772,6 +3809,48 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    ' Return Original when OverrideValue is empty or not interpretable.
+    ' Overload for String originals.
+    Public Function Override(Original As String, OverrideValue As String) As String
+        If String.IsNullOrWhiteSpace(OverrideValue) Then
+            Return Original
+        End If
+        Return OverrideValue
+    End Function
+
+    ' Overload for Boolean originals.
+    ' Accepts (ignore case): True-set = 1, yes, ja, wahr, true; False-set = 0, no, nein, falsch, false.
+    Public Function Override(Original As Boolean, OverrideValue As String) As Boolean
+        If String.IsNullOrWhiteSpace(OverrideValue) Then
+            Return Original
+        End If
+
+        Dim s As String = OverrideValue.Trim().ToLowerInvariant()
+
+        If s = "1" OrElse s = "yes" OrElse s = "ja" OrElse s = "wahr" OrElse s = "true" Then
+            Return True
+        End If
+
+        If s = "0" OrElse s = "no" OrElse s = "nein" OrElse s = "falsch" OrElse s = "false" Then
+            Return False
+        End If
+
+        ' Not interpretable → keep original
+        Return Original
+    End Function
+
+    ' Overload for Integer originals.
+    ' Returns Original unless OverrideValue parses as a valid Int32.
+    Public Function Override(Original As Integer, OverrideValue As String) As Integer
+        If String.IsNullOrWhiteSpace(OverrideValue) Then
+            Return Original
+        End If
+        Dim parsed As Integer
+        If Integer.TryParse(OverrideValue.Trim(), Globalization.NumberStyles.Integer, CultureInfo.InvariantCulture, parsed) Then
+            Return parsed
+        End If
+        Return Original
+    End Function
 
 #End Region
 
@@ -4547,24 +4626,24 @@ Public Class ThisAddIn
 
     Public Async Sub Correct()
         If INILoadFail() Then Return
-        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Correct), True, INI_KeepFormat2, INI_KeepParaFormatInline, INI_ReplaceText2, INI_DoMarkupWord, INI_MarkupMethodWord, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not INI_ReplaceText2)
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Correct), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
     Public Async Sub Improve()
         If INILoadFail() Then Return
-        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Improve), True, INI_KeepFormat2, INI_KeepParaFormatInline, INI_ReplaceText2, INI_DoMarkupWord, INI_MarkupMethodWord, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not INI_ReplaceText2)
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Improve), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
     Public Async Sub Friendly()
         If INILoadFail() Then Return
-        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Friendly), True, INI_KeepFormat2, INI_KeepParaFormatInline, INI_ReplaceText2, INI_DoMarkupWord, INI_MarkupMethodWord, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not INI_ReplaceText2)
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Friendly), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
     Public Async Sub Convincing()
         If INILoadFail() Then Return
-        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Convincing), True, INI_KeepFormat2, INI_KeepParaFormatInline, INI_ReplaceText2, INI_DoMarkupWord, INI_MarkupMethodWord, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not INI_ReplaceText2)
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Convincing), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
     Public Async Sub NoFillers()
         If INILoadFail() Then Return
-        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_NoFillers), True, INI_KeepFormat2, INI_KeepParaFormatInline, INI_ReplaceText2, INI_DoMarkupWord, INI_MarkupMethodWord, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not INI_ReplaceText2)
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_NoFillers), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
     Public Async Sub ApplyMyStyle()
@@ -4594,7 +4673,7 @@ Public Class ThisAddIn
             Return
         End If
 
-        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_MyStyle_Apply) & " " & MyStyleInsert, True, INI_KeepFormat2, INI_KeepParaFormatInline, INI_ReplaceText2, INI_DoMarkupWord, INI_MarkupMethodWord, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not INI_ReplaceText2)
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_MyStyle_Apply) & " " & MyStyleInsert, True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
 
@@ -4602,7 +4681,7 @@ Public Class ThisAddIn
         If INILoadFail() Then Return
 
         Dim DoMarkup As Boolean = INI_DoMarkupWord
-        Dim DoReplace As Boolean = INI_ReplaceText2
+        Dim DoReplace As Boolean = Override(INI_ReplaceText2, INI_ReplaceText2Override)
         If Not DoMarkup Or Not DoReplace Then
             Dim result2 As Integer = ShowCustomYesNoBox($"As per your current settings no markup will be applied. For anonymizing a larger text, doing a markup may be a better choice. How Do you want To Continue?", "Continue As Is", "Continue With a markup")
             If result2 = 2 Then
@@ -4610,10 +4689,10 @@ Public Class ThisAddIn
             End If
         End If
 
-        Dim MarkupMethod As Integer = INI_MarkupMethodWord
+        Dim MarkupMethod As Integer = Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride)
         If INI_DoMarkupWord And MarkupMethod <> 4 Then
             Dim MarkupNow As String = ""
-            Select Case INI_MarkupMethodWord
+            Select Case Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride)
                 Case 1
                     MarkupNow = "Word markup method"
                 Case 2
@@ -4654,15 +4733,15 @@ Public Class ThisAddIn
             True,
             INI_KeepFormat2,
             INI_KeepParaFormatInline,
-            INI_ReplaceText2,
+            Override(INI_ReplaceText2, INI_ReplaceText2Override),
             INI_DoMarkupWord,
-            INI_MarkupMethodWord,
+            Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride),
             True,
             False,
             True,
             False,
             INI_KeepFormatCap,
-            NoFormatAndFieldSaving:=Not INI_ReplaceText2,
+            NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override),
             DoBubblesExtract:=True
         )
 
@@ -4672,7 +4751,7 @@ Public Class ThisAddIn
     End Sub
     Public Async Sub SuggestTitles()
         If INILoadFail() Then Return
-        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_SuggestTitles), True, INI_KeepFormat2, INI_KeepParaFormatInline, INI_ReplaceText2, INI_DoMarkupWord, INI_MarkupMethodWord, True, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not INI_ReplaceText2)
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_SuggestTitles), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), True, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
     Public Async Sub InsertClipboard()
@@ -4730,7 +4809,7 @@ Public Class ThisAddIn
         Loop
         If ShortenPercentValue = 0 Then Return
         ShortenLength = (Textlength - (Textlength * (100 - ShortenPercentValue) / 100))
-        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Improve), True, INI_KeepFormat2, INI_KeepParaFormatInline, INI_ReplaceText2, INI_DoMarkupWord, INI_MarkupMethodWord, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not INI_ReplaceText2)
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Improve), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
     Public Async Sub SwitchParty()
         If INILoadFail() Then Return
@@ -4753,7 +4832,7 @@ Public Class ThisAddIn
         Loop
 
         Dim DoMarkup As Boolean = INI_DoMarkupWord
-        Dim DoReplace As Boolean = INI_ReplaceText2
+        Dim DoReplace As Boolean = Override(INI_ReplaceText2, INI_ReplaceText2Override)
         If Not DoMarkup Or Not DoReplace Then
             Dim result2 As Integer = ShowCustomYesNoBox($"As per your current settings no markup will be applied. For using 'Switch Party' on a larger texts, markup may be a better choice. How do you want to continue?", "Continue as is", "Continue with a markup")
             If result2 = 2 Then
@@ -4762,10 +4841,10 @@ Public Class ThisAddIn
             End If
         End If
 
-        Dim MarkupMethod As Integer = INI_MarkupMethodWord
+        Dim MarkupMethod As Integer = Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride)
         If INI_DoMarkupWord And MarkupMethod <> 4 Then
             Dim MarkupNow As String = ""
-            Select Case INI_MarkupMethodWord
+            Select Case Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride)
                 Case 1
                     MarkupNow = "Word markup method"
                 Case 2
@@ -6102,8 +6181,8 @@ Public Class ThisAddIn
             Dim DoMarkup As Boolean = False
             Dim DoClipboard As Boolean = False
             Dim DoBubbles As Boolean = False
-            Dim DoInplace As Boolean = INI_ReplaceText2
-            Dim MarkupMethod As Integer = INI_MarkupMethodWord
+            Dim DoInplace As Boolean = Override(INI_ReplaceText2, INI_ReplaceText2Override)
+            Dim MarkupMethod As Integer = Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride)
             Dim DoLib As Boolean = False
             Dim DoNet As Boolean = False
             Dim DoTPMarkup As Boolean = False
@@ -8195,6 +8274,7 @@ Public Class ThisAddIn
                             TTSAvailable = True
                         End If
 
+                        LLMResult = NormalizeHostGuestConversation(LLMResult)
 
                         If TTSAvailable Then
                             Dim FinalText = ShowCustomWindow("The LLM has created the following podcast script for you (you can edit it; you do Not have to manually remove the SSML codes, if you do Not Like them)", LLMResult, "The next step Is the production of an audio file. You can choose whether you want to use the original text or your text with any changes you have made. The text will also be put in the clipboard. If you select Cancel, the original text will only be put into the clipboard.", AN, True)
@@ -8721,6 +8801,56 @@ Public Class ThisAddIn
         Return cmt
     End Function
 
+
+    Public Function NormalizeHostGuestConversation(llmResult As String) As String
+        ' Ensures:
+        ' 1) Conversation consists of turns starting with "H:" or "G:".
+        ' 2) Any newline directly after "H:" / "G:" is removed.
+        ' 3) A space follows the speaker tag: "H: " / "G: ".
+        ' 4) Turns are separated by exactly one blank line (i.e. two consecutive CRLFs).
+        ' 5) Trailing blank lines in each turn's body are trimmed so we never end up with more than one empty line between turns.
+        If String.IsNullOrWhiteSpace(llmResult) Then Return String.Empty
+
+        ' Normalize line endings to LF for regex processing
+        Dim s = llmResult.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf)
+
+        ' Collapse 3+ blank lines to 2 (optional hygiene)
+        s = System.Text.RegularExpressions.Regex.Replace(s, "\n{3,}", vbLf & vbLf)
+
+        ' Regex: capture each turn starting with H: or G:
+        Dim rx As New System.Text.RegularExpressions.Regex("(?<=^|\n)(H:|G:)(?:\s*\n)?(.*?)(?=\n(?:H:|G:)|$)", System.Text.RegularExpressions.RegexOptions.Singleline)
+        Dim matches = rx.Matches(s)
+
+        Dim turns As New List(Of String)
+
+        For Each m As System.Text.RegularExpressions.Match In matches
+            Dim tag = m.Groups(1).Value ' "H:" or "G:"
+            Dim body = m.Groups(2).Value
+
+            ' Trim leading whitespace/newlines at start of body
+            body = System.Text.RegularExpressions.Regex.Replace(body, "^\s+", "")
+
+            ' Trim trailing whitespace/newlines to avoid extra blank lines between turns
+            body = System.Text.RegularExpressions.Regex.Replace(body, "\s+$", "")
+
+            ' Skip empty bodies (optional)
+            If String.IsNullOrWhiteSpace(body) Then Continue For
+
+            ' Ensure tag followed by single space
+            Dim normalizedTag = tag & " "
+
+            ' Restore Windows line endings inside body
+            body = body.Replace(vbLf, vbCrLf)
+
+            ' Remove any accidental CR/LF immediately after tag (defensive)
+            If body.StartsWith(vbCrLf) Then body = body.TrimStart()
+
+            turns.Add(normalizedTag & body)
+        Next
+
+        ' Join turns with exactly one blank line (two CRLFs)
+        Return String.Join(vbCrLf & vbCrLf, turns)
+    End Function
 
     Public Sub SetBubbles(LLMResult As System.String, Selection As Microsoft.Office.Interop.Word.Selection, DoSilent As System.Boolean, Optional Prefix As String = "")
 
@@ -14146,7 +14276,7 @@ ContinueLoop:
         End If
         OtherPrompt = SLib.ShowCustomInputBox("If you want, you can amend the prompt that will be used to intelligently merge your selection into your document:", $"{AN} Intelligent Merge", False, SP_MergePrompt_Cached).Trim()
         If String.IsNullOrEmpty(OtherPrompt) Or OtherPrompt = "ESC" Then Return
-        Dim result As String = Await ProcessSelectedText(OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" & newtext & "</INSERT> ", True, INI_KeepFormat2, INI_KeepParaFormatInline, INI_ReplaceText2, INI_DoMarkupWord, INI_MarkupMethodWord, False, False, True, False, INI_KeepFormatCap)
+        Dim result As String = Await ProcessSelectedText(OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" & newtext & "</INSERT> ", True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap)
     End Sub
 
 
@@ -14253,7 +14383,7 @@ ContinueLoop:
                 }
 
             Dim DefaultItem As Integer = 5
-            If INI_DoMarkupWord Then DefaultItem = INI_MarkupMethodWord
+            If INI_DoMarkupWord Then DefaultItem = Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride)
             Dim picked As Integer = SelectValue(items, DefaultItem, "Choose markup method ...")
 
             If picked < 1 Then Return
@@ -14262,7 +14392,7 @@ ContinueLoop:
             OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" &
             newtext & "</INSERT> ",
             True, INI_KeepFormat2, INI_KeepParaFormatInline,
-            INI_ReplaceText2, If(picked < 5, True, False), If(picked < 5, picked, INI_MarkupMethodWord),
+            Override(INI_ReplaceText2, INI_ReplaceText2Override), If(picked < 5, True, False), If(picked < 5, picked, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride)),
             False, False, True, False, INI_KeepFormatCap)
 
         Catch ex As System.Exception
@@ -14295,7 +14425,7 @@ ContinueLoop:
         End If
         OtherPrompt = SLib.ShowCustomInputBox("If you want, you can amend the prompt that will be used to intelligently merge your selection into your document:", $"{AN} Intelligent Merge", False, SP_MergePrompt_Cached).Trim()
         If String.IsNullOrEmpty(OtherPrompt) Or OtherPrompt = "ESC" Then Return
-        Dim result As String = Await ProcessSelectedText(OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" & newtext & "</INSERT> ", True, INI_KeepFormat2, INI_KeepParaFormatInline, INI_ReplaceText2, INI_DoMarkupWord, INI_MarkupMethodWord, False, False, True, False, INI_KeepFormatCap)
+        Dim result As String = Await ProcessSelectedText(OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" & newtext & "</INSERT> ", True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap)
     End Sub
 
     Public ONNX_initialized As Boolean = False
@@ -15402,11 +15532,13 @@ ContinueLoop:
                 {"ReplaceText1", "Replace text (translations)"},
                 {"KeepFormat2", "Keep format (other commands)"},
                 {"ReplaceText2", "Replace text (other commands)"},
+                {"ReplaceText2Override", "Replace text (other commands) [override]"},
                 {"KeepParaFormatInline", "Keep paragraph format"},
                 {"KeepFormatCap", "Maximum text for keeping format (chars)"},
                 {"DoMarkupWord", "Output as a markup (some functions)"},
                 {"MarkupMethodHelper", "Markup method helpers (1 = Word, 2 = Diff, 3 = DiffW)"},
                 {"MarkupMethodWord", "Markup method (1 = Word, 2 = Diff, 3 = DiffW, 4 = Regex)"},
+                {"MarkupMethodWordOverride", "Markup method (1 = Word, 2 = Diff, 3 = DiffW, 4 = Regex) [override]"},
                 {"MarkupDiffCap", "Maximum characters for Diff Markup"},
                 {"MarkupRegexCap", "Maximum characters for Regex Markup"},
                 {"MarkdownBubbles", "Use Markdown in Word bubbles"},
@@ -15435,11 +15567,13 @@ ContinueLoop:
                 {"ReplaceText1", "If selected, the response of the LLM for translations will replace the original text"},
                 {"KeepFormat2", "If selected, the original's text basic character formatting will be retained for commands other than translations (by HTML encoding, takes time!)"},
                 {"ReplaceText2", "If selected, the response of the LLM for other commands (than translate) will replace the original text"},
+                {"ReplaceText2Override", "Leave empty to not override the above value; use 0 or 'false' to disable and 1 or 'true' to enable 'Replace text' as a personal override"},
                 {"KeepParaFormatInline", "If selected, the basic formatting of each paragraph will be retained by encoding it into the text (takes time, but less time encoding HTML), unless 'Keep Format' is selected"},
                 {"KeepFormatCap", "If a text has more characters, then the format will not be retained (to prevent having to wait too long)"},
                 {"DoMarkupWord", "Whether a markup should be done for functions that change only parts of a text"},
                 {"MarkupMethodHelper", "Which markup method to use: 1 = Word compare, 2 = Simple Differ, 3 = Diff shown in a window"},
                 {"MarkupMethodWord", "Which markup method to use: 1 = Word compare, 2 = Simple Differ, 3 = Diff shown in a window, 4 = LLM-based Regex Markup"},
+                {"MarkupMethodWordOverride", "Leave empty to not override the above value; otherwise enter the personal override value for 'markup method'"},
                 {"MarkupDiffCap", "The maximum size of the text that should be processed using the Diff method (to avoid you having to wait too long)"},
                 {"MarkupRegexCap", "The maximum size of the text that should be processed using the Regex method (to avoid you having to wait too long)"},
                 {"MarkdownBubbles", $"If selected, Word bubbles created by {AN} will support Markdown formatting (if provided by the LLM)"},
@@ -19514,57 +19648,6 @@ ContinueLoop:
         End If
     End Sub
 
-    Public Sub oldMergeAudioFiles(inputFiles As System.Collections.Generic.List(Of System.String), outputFile As System.String, Optional maxsnippets As Integer = 0)
-        If inputFiles Is Nothing OrElse inputFiles.Count = 0 Then
-            Throw New System.ArgumentException("No input files.")
-        End If
-
-        ' Einheitliches Zielformat für den Encoder (16 Bit PCM, 48000 Hz, Stereo)
-        Dim targetFormat As New NAudio.Wave.WaveFormat(48000, 16, 2)
-        Dim Counter As Integer = 0
-
-        Try
-            Using mp3Writer As New NAudio.Lame.LameMP3FileWriter(outputFile, targetFormat, NAudio.Lame.LAMEPreset.STANDARD)
-                For Each path As System.String In inputFiles
-                    If maxsnippets > 0 Then
-                        GlobalProgressLabel = $"Merging audio {System.Math.Max(maxsnippets - Counter, 0)} snippets..."
-                    End If
-                    Using reader As New NAudio.Wave.Mp3FileReader(path)
-                        ' Immer zum Ziel-PCM-Format resamplen (verhindert Format-Mix)
-                        Using resampler As New NAudio.Wave.MediaFoundationResampler(reader, targetFormat)
-                            resampler.ResamplerQuality = 60
-                            Dim buffer(32768 - 1) As System.Byte
-                            While True
-                                Dim read As System.Int32 = resampler.Read(buffer, 0, buffer.Length)
-                                If read <= 0 Then Exit While
-                                mp3Writer.Write(buffer, 0, read)
-                            End While
-                        End Using
-                    End Using
-                    Counter += 1
-                Next
-            End Using
-        Catch ex As System.Exception
-            System.Diagnostics.Debug.WriteLine("Error merging audio files: " & ex.Message)
-            Throw
-        End Try
-    End Sub
-
-
-
-    Sub VeryOldMergeAudioFiles(inputFiles As List(Of String), outputFile As String)
-        Try
-            Using outputStream As New FileStream(outputFile, FileMode.Create)
-                For Each file In inputFiles
-                    Dim mp3Bytes As Byte() = System.IO.File.ReadAllBytes(file)
-                    outputStream.Write(mp3Bytes, 0, mp3Bytes.Length)
-                Next
-            End Using
-            Console.WriteLine("Podcast audio merged successfully!")
-        Catch ex As Exception
-            Debug.WriteLine($"Error merging audio files: {ex.Message}")
-        End Try
-    End Sub
 
     ' Function to save audio to a file
     Public Shared Sub SaveAudioToFile(audioData As Byte(), filePath As String)
@@ -20692,8 +20775,40 @@ ContinueLoop:
             End If
         End Sub
 
-
         Private Async Function LoadVoicesIntoComboBoxesAsync(languageCode As String,
+                                                           comboA As Forms.ComboBox,
+                                                           comboB As Forms.ComboBox) As System.Threading.Tasks.Task
+            Try
+                Dim allVoices As List(Of GoogleVoice) = Await GetVoicesByLanguageAsync(languageCode)
+                comboA.Items.Clear()
+                comboB.Items.Clear()
+                If allVoices Is Nothing Then Exit Function
+
+                ' STRICT FILTER:
+                ' Only keep voices whose Name starts with "<langCode>-"
+                ' (e.g. "de-DE-Wavenet-A"). This removes generic / multi‑locale
+                ' voices like "Schedar" etc.
+                Dim filtered = allVoices.Where(
+                    Function(v) Not String.IsNullOrEmpty(v.Name) AndAlso
+                                v.Name.StartsWith(languageCode & "-", StringComparison.OrdinalIgnoreCase)
+                ).ToList()
+
+                For Each v In filtered
+                    Dim displayName As String = $"{v.Name} ({v.SsmlGender.ToLower()})"
+                    comboA.Items.Add(displayName)
+                    comboB.Items.Add(displayName)
+                Next
+
+                If comboA.Items.Count > 0 Then comboA.SelectedIndex = 0
+                If comboB.Items.Count > 0 Then comboB.SelectedIndex = 0
+
+                ' If previously saved selections no longer exist, they will be ignored automatically.
+            Catch ex As System.Exception
+                ShowCustomMessageBox("When trying to load the voices from the Google server, an error occurred: " & ex.Message)
+            End Try
+        End Function
+
+        Private Async Function oldLoadVoicesIntoComboBoxesAsync(languageCode As String,
                                                            comboA As Forms.ComboBox,
                                                            comboB As Forms.ComboBox) As System.Threading.Tasks.Task
             Try

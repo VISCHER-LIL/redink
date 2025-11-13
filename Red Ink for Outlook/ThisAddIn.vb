@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 12.11.2025
+' 13.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -28,6 +28,7 @@ Option Explicit On
 
 Imports System.Diagnostics
 Imports System.Drawing
+Imports System.Globalization
 Imports System.IO
 Imports System.Net
 Imports System.Runtime.InteropServices
@@ -41,10 +42,10 @@ Imports DiffPlex.DiffBuilder
 Imports DiffPlex.DiffBuilder.Model
 Imports Markdig
 Imports Microsoft.Office.Interop
-Imports Microsoft.Office.Interop.Outlook
-Imports Microsoft.Office.Interop.Word
-Imports Microsoft.Office.Interop.Powerpoint
 Imports Microsoft.Office.Interop.Excel
+Imports Microsoft.Office.Interop.Outlook
+Imports Microsoft.Office.Interop.PowerPoint
+Imports Microsoft.Office.Interop.Word
 Imports Microsoft.VisualBasic.FileIO
 Imports Nito.AsyncEx
 Imports SharedLibrary.MarkdownToRtf
@@ -188,7 +189,7 @@ Public Class ThisAddIn
     Public Const AN2 As String = "red_ink"
     Public Const AN6 As String = "Inky"
 
-    Public Const Version As String = "V.121125 Gen2 Beta Test"
+    Public Const Version As String = "V.131125 Gen2 Beta Test"
 
     ' Hardcoded configuration
 
@@ -817,6 +818,16 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_ReplaceText2Override As String
+        Get
+            Return _context.INI_ReplaceText2Override
+        End Get
+        Set(value As String)
+            _context.INI_ReplaceText2Override = value
+        End Set
+    End Property
+
+
     Public Shared Property INI_DoMarkupOutlook As Boolean
         Get
             Return _context.INI_DoMarkupOutlook
@@ -1271,6 +1282,16 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Add_Chat_NoCommands As String
+        Get
+            Return _context.SP_Add_Chat_NoCommands
+        End Get
+        Set(value As String)
+            _context.SP_Add_Chat_NoCommands = value
+        End Set
+    End Property
+
+
     Public Shared Property SP_ChatExcel As String
         Get
             Return _context.SP_ChatExcel
@@ -1566,6 +1587,26 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_MarkupMethodWordOverride As String
+        Get
+            Return _context.INI_MarkupMethodWordOverride
+        End Get
+        Set(value As String)
+            _context.INI_MarkupMethodWordOverride = value
+        End Set
+    End Property
+
+
+    Public Shared Property INI_MarkupMethodOutlookOverride As String
+        Get
+            Return _context.INI_MarkupMethodOutlookOverride
+        End Get
+        Set(value As String)
+            _context.INI_MarkupMethodOutlookOverride = value
+        End Set
+    End Property
+
+
     Public Shared Property INI_ContextMenu As Boolean
         Get
             Return _context.INI_ContextMenu
@@ -1836,6 +1877,50 @@ Public Class ThisAddIn
             _context.SP_Add_MergePrompt = value
         End Set
     End Property
+
+    ' Return Original when OverrideValue is empty or not interpretable.
+    ' Overload for String originals.
+    Public Function Override(Original As String, OverrideValue As String) As String
+        If String.IsNullOrWhiteSpace(OverrideValue) Then
+            Return Original
+        End If
+        Return OverrideValue
+    End Function
+
+    ' Overload for Boolean originals.
+    ' Accepts (ignore case): True-set = 1, yes, ja, wahr, true; False-set = 0, no, nein, falsch, false.
+    Public Function Override(Original As Boolean, OverrideValue As String) As Boolean
+        If String.IsNullOrWhiteSpace(OverrideValue) Then
+            Return Original
+        End If
+
+        Dim s As String = OverrideValue.Trim().ToLowerInvariant()
+
+        If s = "1" OrElse s = "yes" OrElse s = "ja" OrElse s = "wahr" OrElse s = "true" Then
+            Return True
+        End If
+
+        If s = "0" OrElse s = "no" OrElse s = "nein" OrElse s = "falsch" OrElse s = "false" Then
+            Return False
+        End If
+
+        ' Not interpretable → keep original
+        Return Original
+    End Function
+
+    ' Overload for Integer originals.
+    ' Returns Original unless OverrideValue parses as a valid Int32.
+    Public Function Override(Original As Integer, OverrideValue As String) As Integer
+        If String.IsNullOrWhiteSpace(OverrideValue) Then
+            Return Original
+        End If
+        Dim parsed As Integer
+        If Integer.TryParse(OverrideValue.Trim(), Globalization.NumberStyles.Integer, CultureInfo.InvariantCulture, parsed) Then
+            Return parsed
+        End If
+        Return Original
+    End Function
+
 
 
 #End Region
@@ -2233,7 +2318,7 @@ Public Class ThisAddIn
                     TranslateLanguage = INI_Language1
                     Command_InsertAfter(InterpolateAtRuntime(SP_Translate), False, INI_KeepFormat1, INI_ReplaceText1)
                 Case "Correct"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Correct), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_Correct), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "Summarize"
 
                     Textlength = GetSelectedTextLength()
@@ -2264,9 +2349,9 @@ Public Class ThisAddIn
 
                     Command_InsertAfter(InterpolateAtRuntime(SP_Summarize), False)
                 Case "Improve"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Improve), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_Improve), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "NoFillers"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_NoFillers), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_NoFillers), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "ApplyMyStyle"
                     Dim StylePath As String = ExpandEnvironmentVariables(INI_MyStylePath)
 
@@ -2291,12 +2376,12 @@ Public Class ThisAddIn
                         Return
                     End If
 
-                    Command_InsertAfter(InterpolateAtRuntime(SP_MyStyle_Apply) & " " & MyStyleInsert, INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_MyStyle_Apply) & " " & MyStyleInsert, INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
 
                 Case "Friendly"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Friendly), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_Friendly), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "Convincing"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Convincing), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_Convincing), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "Shorten"
                     Textlength = GetSelectedTextLength()
                     If Textlength = 0 Then
@@ -2318,7 +2403,7 @@ Public Class ThisAddIn
                         End If
                     Loop
                     ShortenLength = (Textlength - (Textlength * (100 - ShortenPercent) / 100))
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Shorten), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_Shorten), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "Sumup"
 
                     Dim selectedText As String = mailItem.Body
@@ -2420,7 +2505,7 @@ Public Class ThisAddIn
                     TranslateLanguage = INI_Language1
                     Command_InsertAfter(InterpolateAtRuntime(SP_Translate), False, INI_KeepFormat1, INI_ReplaceText1)
                 Case "Correct"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Correct), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_Correct), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "Summarize"
 
                     Textlength = GetSelectedTextLength()
@@ -2451,9 +2536,9 @@ Public Class ThisAddIn
 
                     Command_InsertAfter(InterpolateAtRuntime(SP_Summarize), False)
                 Case "Improve"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Improve), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_Improve), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "NoFillers"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_NoFillers), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_NoFillers), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "ApplyMyStyle"
                     Dim StylePath As String = ExpandEnvironmentVariables(INI_MyStylePath)
 
@@ -2478,12 +2563,12 @@ Public Class ThisAddIn
                         Return
                     End If
 
-                    Command_InsertAfter(InterpolateAtRuntime(SP_MyStyle_Apply) & " " & MyStyleInsert, INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_MyStyle_Apply) & " " & MyStyleInsert, INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
 
                 Case "Friendly"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Friendly), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_Friendly), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "Convincing"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Convincing), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_Convincing), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "Shorten"
                     Textlength = GetSelectedTextLength()
                     If Textlength = 0 Then
@@ -2505,7 +2590,7 @@ Public Class ThisAddIn
                         End If
                     Loop
                     ShortenLength = (Textlength - (Textlength * (100 - ShortenPercent) / 100))
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Shorten), INI_DoMarkupOutlook, INI_KeepFormat2, INI_ReplaceText2, INI_MarkupMethodOutlook)
+                    Command_InsertAfter(InterpolateAtRuntime(SP_Shorten), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "Sumup"
 
                     Dim selectedText As String = mailItem.Body
@@ -3999,7 +4084,7 @@ Public Class ThisAddIn
             Dim DoInplace As Boolean = False
             Dim DoClipboard As Boolean = False
             Dim NoText As Boolean = False
-            Dim MarkupMethod As Integer = INI_MarkupMethodOutlook
+            Dim MarkupMethod As Integer = Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride)
             Dim KeepFormatCap = INI_KeepFormatCap ' currently not used
             Dim DoKeepFormat As Boolean = INI_KeepFormat2 ' currently not used
             Dim DoKeepParaFormat As Boolean = INI_KeepParaFormatInline ' currently not used
@@ -5268,8 +5353,10 @@ Public Class ThisAddIn
                         {"ReplaceText1", "Replace text (translations)"},
                         {"KeepFormat2", "Keep format (other commands)"},
                         {"ReplaceText2", "Replace text (other commands)"},
+                        {"ReplaceText2Override", "Replace text (other commands) [override]"},
                         {"DoMarkupOutlook", "Also do a markup (other commands)"},
                         {"MarkupMethodOutlook", "Markup method (1 = Word, 2 = Diff, 3 = DiffW)"},
+                        {"MarkupMethodOutlookOverride", "Markup method (1 = Word, 2 = Diff, 3 = DiffW) [override]"},
                         {"MarkupDiffCap", "Maximum characters for Diff Markup"},
                         {"PreCorrection", "Additional instruction for prompts"},
                         {"PostCorrection", "Prompt to apply after queries"},
@@ -5292,8 +5379,10 @@ Public Class ThisAddIn
                         {"ReplaceText1", "If selected, the response of the LLM for translations will replace the original text"},
                         {"KeepFormat2", "If selected, the original's text basic formatting of other text (other than translations) will be retained (by HTML encoding, takes time!)"},
                         {"ReplaceText2", "If selected, the response of the LLM for other commands (than translate) will replace the original text"},
+                        {"ReplaceText2Override", "Leave empty to not override the above value; use 0 or 'false' to disable and 1 or 'true' to enable 'Replace text' as a personal override"},
                         {"DoMarkupOutlook", "Whether a markup should be done for functions that change only parts of a text"},
                         {"MarkupMethodOutlook", "Markup method to use: 1 = Compare using the Word compare function, 2 = Simple Differ, 3 = Simple Diff shown in a window"},
+                        {"MarkupMethodOutlookOverride", "Leave empty to not override the above value; otherwise enter the personal override value for 'markup method'"},
                         {"MarkupDiffCap", "The maximum size of the text that should be processed using the Diff method (to avoid you having to wait too long)"},
                         {"PreCorrection", "Add prompting text that will be added to all basic requests (e.g., for special language tasks)"},
                         {"PostCorrection", "Add a prompt that will be applied to each result before it is further processed (slow!)"},

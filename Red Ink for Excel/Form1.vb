@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
 '
-' 12.11.2025
+' 13.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -243,7 +243,7 @@ Public Class frmAIChat
 
         Try
             ' Build entire conversation so far into one string for context
-            SystemPrompt = _context.SP_ChatExcel().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("MMMM dd, yyyy hh:mm tt")}. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland. " & If(chkIncludeDocText.Checked, "\nYou have access to the user's document. \n", "") & If(chkIncludeselection.Checked, "\nYou have access to a selection of user's document. \n ", "") & If(My.Settings.DoCommands, _context.SP_Add_ChatExcel_Commands, "")
+            SystemPrompt = _context.SP_ChatExcel().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("MMMM dd, yyyy hh:mm tt")}. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland. " & If(chkIncludeDocText.Checked, "\nYou have access to the user's document. \n", "") & If(chkIncludeselection.Checked, "\nYou have access to a selection of user's document. \n ", "") & If(My.Settings.DoCommands, _context.SP_Add_ChatExcel_Commands, _context.SP_Add_Chat_NoCommands)
             Dim conversationSoFar As String = BuildConversationString(_chatHistory)
             If Not String.IsNullOrWhiteSpace(OldChat) Then
                 conversationSoFar += "\n" & OldChat
@@ -390,7 +390,7 @@ Public Class frmAIChat
 
         Try
             ' Build entire conversation so far into one string for context
-            SystemPrompt = _context.SP_ChatExcel().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("F")}. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland. " & If(My.Settings.DoCommands And (chkIncludeDocText.Checked Or chkIncludeselection.Checked), _context.SP_Add_ChatExcel_Commands, "")
+            SystemPrompt = _context.SP_ChatExcel().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("F")}. "
             txtUserInput.Text = ""
 
             ' Call the LLM function asynchronously
