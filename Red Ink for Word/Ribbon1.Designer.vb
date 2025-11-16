@@ -73,7 +73,13 @@ Partial Class Ribbon1
         Me.RI_BalloonMergePartPrompt = Me.Factory.CreateRibbonButton
         Me.RI_BalloonMergeFullPrompt = Me.Factory.CreateRibbonButton
         Me.RI_Shorten = Me.Factory.CreateRibbonButton
+        Me.Menu5 = Me.Factory.CreateRibbonMenu
         Me.RI_Anonymize = Me.Factory.CreateRibbonButton
+        Me.RI_Anonymization = Me.Factory.CreateRibbonButton
+        Me.RI_PrepareRedactions = Me.Factory.CreateRibbonButton
+        Me.RI_FinalizeRedactions = Me.Factory.CreateRibbonButton
+        Me.RI_EditRedact = Me.Factory.CreateRibbonButton
+        Me.RI_CheckDocumentsII = Me.Factory.CreateRibbonButton
         Me.RI_SwitchParty = Me.Factory.CreateRibbonButton
         Me.Menu3 = Me.Factory.CreateRibbonMenu
         Me.RI_Summarize = Me.Factory.CreateRibbonButton
@@ -89,7 +95,6 @@ Partial Class Ribbon1
         Me.RI_WebAgent = Me.Factory.CreateRibbonButton
         Me.RI_EditWebAgent = Me.Factory.CreateRibbonButton
         Me.RI_FindHidden = Me.Factory.CreateRibbonButton
-        Me.RI_Anonymization = Me.Factory.CreateRibbonButton
         Me.RI_FreestyleNM = Me.Factory.CreateRibbonButton
         Me.RI_FreestyleAM = Me.Factory.CreateRibbonButton
         Me.RI_FreestyleRepeat = Me.Factory.CreateRibbonButton
@@ -105,8 +110,8 @@ Partial Class Ribbon1
         Me.RI_InsertClipboard = Me.Factory.CreateRibbonButton
         Me.RI_Chat2 = Me.Factory.CreateRibbonButton
         Me.RI_Transcriptor = Me.Factory.CreateRibbonButton
-        Me.Settings = Me.Factory.CreateRibbonButton
         Me.RI_HelpMe = Me.Factory.CreateRibbonButton
+        Me.Settings = Me.Factory.CreateRibbonButton
         Me.Group2 = Me.Factory.CreateRibbonGroup
         Me.RI_PrimLang2 = Me.Factory.CreateRibbonButton
         Me.RI_Correct2 = Me.Factory.CreateRibbonButton
@@ -143,7 +148,7 @@ Partial Class Ribbon1
         Me.Menu1.Items.Add(Me.RI_Correct)
         Me.Menu1.Items.Add(Me.Menu4)
         Me.Menu1.Items.Add(Me.RI_Shorten)
-        Me.Menu1.Items.Add(Me.RI_Anonymize)
+        Me.Menu1.Items.Add(Me.Menu5)
         Me.Menu1.Items.Add(Me.RI_SwitchParty)
         Me.Menu1.Items.Add(Me.Menu3)
         Me.Menu1.Items.Add(Me.RI_FreestyleNM)
@@ -296,13 +301,68 @@ Partial Class Ribbon1
         Me.RI_Shorten.ScreenTip = "Will shorten the selected text as indicated"
         Me.RI_Shorten.ShowImage = True
         '
+        'Menu5
+        '
+        Me.Menu5.Items.Add(Me.RI_Anonymize)
+        Me.Menu5.Items.Add(Me.RI_Anonymization)
+        Me.Menu5.Items.Add(Me.RI_PrepareRedactions)
+        Me.Menu5.Items.Add(Me.RI_FinalizeRedactions)
+        Me.Menu5.Items.Add(Me.RI_EditRedact)
+        Me.Menu5.Items.Add(Me.RI_CheckDocumentsII)
+        Me.Menu5.Label = "Anonymize"
+        Me.Menu5.Name = "Menu5"
+        Me.Menu5.OfficeImageId = "ApplyCoAuthoringLock"
+        Me.Menu5.ScreenTip = "Various tools for anonymization and redactions"
+        Me.Menu5.ShowImage = True
+        '
         'RI_Anonymize
         '
-        Me.RI_Anonymize.Label = "Anonymize"
+        Me.RI_Anonymize.Label = "Anonymize Text (AI)"
         Me.RI_Anonymize.Name = "RI_Anonymize"
         Me.RI_Anonymize.OfficeImageId = "ApplyCoAuthoringLock"
         Me.RI_Anonymize.ScreenTip = "Will anonymize the selected text"
         Me.RI_Anonymize.ShowImage = True
+        '
+        'RI_Anonymization
+        '
+        Me.RI_Anonymization.Label = "Anonymize Text (terms)"
+        Me.RI_Anonymization.Name = "RI_Anonymization"
+        Me.RI_Anonymization.OfficeImageId = "ApplyCoAuthoringLock"
+        Me.RI_Anonymization.ScreenTip = "Will anonymize the selected text using local means (e.g., redink-anon.txt)"
+        Me.RI_Anonymization.ShowImage = True
+        '
+        'RI_PrepareRedactions
+        '
+        Me.RI_PrepareRedactions.Label = "Propose PDF Redactions"
+        Me.RI_PrepareRedactions.Name = "RI_PrepareRedactions"
+        Me.RI_PrepareRedactions.OfficeImageId = "BlogPublishDraft"
+        Me.RI_PrepareRedactions.ScreenTip = "Will automatically create a PDF with AI proposed editable redactions based on you" &
+    "r instructions and parameters"
+        Me.RI_PrepareRedactions.ShowImage = True
+        '
+        'RI_FinalizeRedactions
+        '
+        Me.RI_FinalizeRedactions.Label = "Finalize PDF Redactions"
+        Me.RI_FinalizeRedactions.Name = "RI_FinalizeRedactions"
+        Me.RI_FinalizeRedactions.OfficeImageId = "WebControlSubmitWithImage"
+        Me.RI_FinalizeRedactions.ScreenTip = "Will create an image-based PDF to ensure that redactions cannot be uncovered"
+        Me.RI_FinalizeRedactions.ShowImage = True
+        '
+        'RI_EditRedact
+        '
+        Me.RI_EditRedact.Label = "Edit Instructions"
+        Me.RI_EditRedact.Name = "RI_EditRedact"
+        Me.RI_EditRedact.OfficeImageId = "WordArtEditTextClassic"
+        Me.RI_EditRedact.ScreenTip = "Edit the instructions for the automatic PDF redaction function"
+        Me.RI_EditRedact.ShowImage = True
+        '
+        'RI_CheckDocumentsII
+        '
+        Me.RI_CheckDocumentsII.Label = "Check Document"
+        Me.RI_CheckDocumentsII.Name = "RI_CheckDocumentsII"
+        Me.RI_CheckDocumentsII.OfficeImageId = "MenuTentativeInvitation"
+        Me.RI_CheckDocumentsII.ScreenTip = "Will check your document for identifiable content"
+        Me.RI_CheckDocumentsII.ShowImage = True
         '
         'RI_SwitchParty
         '
@@ -327,7 +387,6 @@ Partial Class Ribbon1
         Me.Menu3.Items.Add(Me.RI_WebAgent)
         Me.Menu3.Items.Add(Me.RI_EditWebAgent)
         Me.Menu3.Items.Add(Me.RI_FindHidden)
-        Me.Menu3.Items.Add(Me.RI_Anonymization)
         Me.Menu3.Label = "Analyze"
         Me.Menu3.Name = "Menu3"
         Me.Menu3.OfficeImageId = "PivotTableNonVisualTotals"
@@ -438,14 +497,6 @@ Partial Class Ribbon1
         Me.RI_FindHidden.ScreenTip = "Checks your selected text for hidden and malicious text (e.g., prompt injections)" &
     ""
         Me.RI_FindHidden.ShowImage = True
-        '
-        'RI_Anonymization
-        '
-        Me.RI_Anonymization.Label = "Anonymization"
-        Me.RI_Anonymization.Name = "RI_Anonymization"
-        Me.RI_Anonymization.OfficeImageId = "ApplyCoAuthoringLock"
-        Me.RI_Anonymization.ScreenTip = "Will anonymize the selected text using local means (e.g., redink-anon.txt)"
-        Me.RI_Anonymization.ShowImage = True
         '
         'RI_FreestyleNM
         '
@@ -579,14 +630,6 @@ Partial Class Ribbon1
         Me.RI_Transcriptor.OfficeImageId = "AudioRecordingInsert"
         Me.RI_Transcriptor.ShowImage = True
         '
-        'Settings
-        '
-        Me.Settings.Label = "Settings"
-        Me.Settings.Name = "Settings"
-        Me.Settings.OfficeImageId = "SetupClassicOffline"
-        Me.Settings.ScreenTip = "Allows you to temporarily change the settings"
-        Me.Settings.ShowImage = True
-        '
         'RI_HelpMe
         '
         Me.RI_HelpMe.Label = "Help me, Inky"
@@ -594,6 +637,14 @@ Partial Class Ribbon1
         Me.RI_HelpMe.OfficeImageId = "Help"
         Me.RI_HelpMe.ScreenTip = "This will call up a chatbot that answers your questions about Red Ink"
         Me.RI_HelpMe.ShowImage = True
+        '
+        'Settings
+        '
+        Me.Settings.Label = "Settings"
+        Me.Settings.Name = "Settings"
+        Me.Settings.OfficeImageId = "SetupClassicOffline"
+        Me.Settings.ScreenTip = "Allows you to temporarily change the settings"
+        Me.Settings.ShowImage = True
         '
         'Group2
         '
@@ -758,6 +809,12 @@ Partial Class Ribbon1
             Me.RI_Transcriptor.Visible = True
         End If
 
+        If Trim(ThisAddIn.INI_RedactionInstructionsPath) = "" And Trim(ThisAddIn.INI_RedactionInstructionsPathLocal) = "" Then
+            Me.RI_EditRedact.Visible = False
+        Else
+            Me.RI_EditRedact.Visible = True
+        End If
+
         If Trim(ThisAddIn.INI_SpecialServicePath) = "" Then
             Me.RI_SpecialModel.Visible = False
         Else
@@ -851,7 +908,6 @@ Partial Class Ribbon1
     Friend WithEvents RI_Friendly As RibbonButton
     Friend WithEvents RI_Convincing As RibbonButton
     Friend WithEvents RI_SpecialModel As RibbonButton
-    Friend WithEvents RI_Anonymization As RibbonButton
     Friend WithEvents RI_InsertClipboard As RibbonButton
     Friend WithEvents RI_BalloonMergePart As RibbonButton
     Friend WithEvents RI_BalloonMergeFull As RibbonButton
@@ -869,6 +925,12 @@ Partial Class Ribbon1
     Friend WithEvents RI_FindHidden As RibbonButton
     Friend WithEvents RI_ContentControls As RibbonButton
     Friend WithEvents RI_HelpMe As RibbonButton
+    Friend WithEvents Menu5 As RibbonMenu
+    Friend WithEvents RI_PrepareRedactions As RibbonButton
+    Friend WithEvents RI_FinalizeRedactions As RibbonButton
+    Friend WithEvents RI_CheckDocumentsII As RibbonButton
+    Friend WithEvents RI_Anonymization As RibbonButton
+    Friend WithEvents RI_EditRedact As RibbonButton
 End Class
 
 Partial Class ThisRibbonCollection

@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 13.11.2025
+' 16.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -22,6 +22,7 @@
 ' Includes Nito.AsyncEx in unchanged form; Copyright (c) 2021 Stephen Cleary; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/StephenCleary/AsyncEx
 ' Includes NetOffice libraries in unchanged form; Copyright (c) 2020 Sebastian Lange, Erika LeBlanc; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/netoffice/NetOffice-NuGet
 ' Includes NAudio.Lame in unchanged form; Copyright (c) 2019 Corey Murtagh; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/Corey-M/NAudio.Lame
+' Includes PdfiumViewer in unchanged form; Copyright (c) 2017 Pieter van Ginkel; licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://github.com/pvginkel/PdfiumViewer
 ' Includes also various Microsoft libraries copyrighted by Microsoft Corporation and available, among others, under the Microsoft EULA and the MIT License; Copyright (c) 2016- Microsoft Corp.
 
 Option Explicit On
@@ -189,7 +190,7 @@ Public Class ThisAddIn
     Public Const AN2 As String = "red_ink"
     Public Const AN6 As String = "Inky"
 
-    Public Const Version As String = "V.131125 Gen2 Beta Test"
+    Public Const Version As String = "V.161125 Gen2 Beta Test"
 
     ' Hardcoded configuration
 
@@ -1101,6 +1102,26 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Redact As String
+        Get
+            Return _context.SP_Redact
+        End Get
+        Set(value As String)
+            _context.SP_Redact = value
+        End Set
+    End Property
+
+    Public Shared Property SP_CheckforII As String
+        Get
+            Return _context.SP_CheckforII
+        End Get
+        Set(value As String)
+            _context.SP_CheckforII = value
+        End Set
+    End Property
+
+
+
     Public Shared Property SP_ContextSearch As String
         Get
             Return _context.SP_ContextSearch
@@ -1640,6 +1661,24 @@ Public Class ThisAddIn
         End Get
         Set(value As String)
             _context.INI_HelpMeInkyPath = value
+        End Set
+    End Property
+
+    Public Shared Property INI_RedactionInstructionsPath As String
+        Get
+            Return _context.INI_RedactionInstructionsPath
+        End Get
+        Set(value As String)
+            _context.INI_RedactionInstructionsPath = value
+        End Set
+    End Property
+
+    Public Shared Property INI_RedactionInstructionsPathLocal As String
+        Get
+            Return _context.INI_RedactionInstructionsPathLocal
+        End Get
+        Set(value As String)
+            _context.INI_RedactionInstructionsPathLocal = value
         End Set
     End Property
 
@@ -3352,8 +3391,8 @@ Public Class ThisAddIn
             ' 2) Call LLM (may attempt to read the current clipboard object internally)
             Dim result As String = Await LLM(
                 InterpolateAtRuntime(SP_InsertClipboard),
-                "", "", "", 0, False, False, "", "clipboard"
-            ).ConfigureAwait(False)
+                "", "", "", 0, False, False, "", "clipboard", Nothing, False
+            ).ConfigureAwait(True)  ' Changed to True to preserve context
 
             If String.IsNullOrWhiteSpace(result) Then Return
 
@@ -3401,7 +3440,7 @@ Public Class ThisAddIn
                             $"The content has been copied to the clipboard:{Environment.NewLine}{Environment.NewLine}{displayText}"
                         )
                     End Sub
-                ).ConfigureAwait(False)
+                ).ConfigureAwait(True)  ' Changed to True
 
                 Return
             End If
@@ -3418,7 +3457,7 @@ Public Class ThisAddIn
                         SafeSetClipboard(dobj)
                         SLib.ShowCustomMessageBox("Could not access the mail editor; result copied to clipboard instead.")
                     End Sub
-                )
+                ).ConfigureAwait(True)  ' Changed to True
                 Return
             End If
 
@@ -3450,75 +3489,6 @@ Public Class ThisAddIn
         End Try
     End Function
 
-    Private Async Function OldInsertClipboard() As System.Threading.Tasks.Task
-        Try
-            ' 1) Configure check
-            If System.String.IsNullOrWhiteSpace(INI_APICall_Object) Then
-                SLib.ShowCustomMessageBox($"Your model ({INI_Model}) is not configured to process clipboard data (i.e. binary objects).")
-                Return
-            End If
-
-            ' 2) Call LLM
-            Dim result As System.String = Await LLM(
-            InterpolateAtRuntime(SP_InsertClipboard),
-            "", "", "", 0, False, False, "", "clipboard"
-        ).ConfigureAwait(False)
-
-            If System.String.IsNullOrEmpty(result) Then Return
-
-            ' 3) Check for open MailItem (prefer the running instance)
-            Dim outlookApp As Microsoft.Office.Interop.Outlook.Application = Globals.ThisAddIn.Application
-            Dim inspector As Microsoft.Office.Interop.Outlook.Inspector = ComRetry(Function() outlookApp.ActiveInspector())
-
-            ' Guard Inspector and CurrentItem via ComRetry
-            Dim curr As Object = Nothing
-            If inspector IsNot Nothing Then
-                Try
-                    curr = ComRetry(Function() inspector.CurrentItem)
-                Catch
-                    curr = Nothing
-                End Try
-            End If
-
-            If inspector Is Nothing _
-               OrElse curr Is Nothing _
-               OrElse Not TypeOf curr Is Microsoft.Office.Interop.Outlook.MailItem Then
-
-                ' No open email: copy to clipboard (cut to 6000 chars + ellipsis)
-                Dim displayText As System.String = If(result.Length > 6000, result.Substring(0, 6000) & "…", result)
-
-                ' Ensure this runs on the Outlook UI STA thread:
-                Await SwitchToUi(
-                    Sub()
-                        Dim rtfText As System.String = MarkdownToRtfConverter.Convert(result)
-                        Dim dataObj As New System.Windows.Forms.DataObject()
-                        dataObj.SetData(System.Windows.Forms.DataFormats.Rtf, rtfText)
-                        dataObj.SetData(System.Windows.Forms.DataFormats.Text, result)
-                        System.Windows.Forms.Clipboard.SetDataObject(dataObj, True)
-                        SLib.ShowCustomMessageBox($"The content has been copied to the clipboard:{System.Environment.NewLine}{System.Environment.NewLine}{displayText}")
-                    End Sub
-                ).ConfigureAwait(True)
-
-                Return
-            End If
-
-            ' 4) Insert into the current email at the cursor
-            Dim wordEditor As Microsoft.Office.Interop.Word.Document =
-            ComRetry(Function() CType(inspector.WordEditor, Microsoft.Office.Interop.Word.Document))
-            Dim selection As Microsoft.Office.Interop.Word.Selection = wordEditor.Application.Selection
-
-            If selection.Start <> selection.End Then
-                selection.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-            End If
-
-            selection.TypeParagraph()
-            InsertTextWithMarkdown(selection, result, True)
-
-        Catch ex As System.Exception
-            ' Log and show a friendly message instead of crashing Outlook
-            SLib.ShowCustomMessageBox($"InsertClipboard failed: {ex.GetType().FullName}: {ex.Message}")
-        End Try
-    End Function
 
 
 
@@ -5649,58 +5619,6 @@ Public Class ThisAddIn
     End Function)
     End Sub
 
-    Friend Sub oldHandlePowerResumeAsync()
-        System.Threading.Tasks.Task.Run(
-    Async Function() As System.Threading.Tasks.Task
-        If Not Await TryEnterGateAsync().ConfigureAwait(False) Then Return
-        Try
-            ' Small cushion; never Thread.Sleep on resume paths
-            Await System.Threading.Tasks.Task.Delay(1500).ConfigureAwait(False)
-
-            ' Allow listener loop to run again
-            isShuttingDown = False
-
-            ' Hard-release any stale listener quickly
-            Try
-                If httpListener IsNot Nothing Then
-                    Try
-                        If httpListener.IsListening Then httpListener.Stop()
-                    Catch
-                    End Try
-                    Try : httpListener.Abort() : Catch : End Try
-                    Try : httpListener.Close() : Catch : End Try
-                End If
-            Catch
-            Finally
-                httpListener = Nothing
-            End Try
-
-            If wasListenerRunningBeforeSleep Then
-                Try
-                    Await System.Threading.Tasks.Task.Delay(3000).ConfigureAwait(False)
-                    StartupHttpListener()
-                Catch
-                End Try
-            End If
-
-            If wasLlmThreadAliveBeforeSleep Then
-                Try : EnsureLlmUiThread() : Catch : End Try
-            End If
-
-            ' Re-enable watchdog after we’ve (re)started things
-            Try : StartListenerWatchdog() : Catch : End Try
-
-            ' Increased cool-down window after resume
-            resumeCooldownUntilUtc = System.DateTime.UtcNow.AddSeconds(45)
-
-            Await SwitchToUi(Sub() EnableOleFilterFor(60000)).ConfigureAwait(False)
-
-        Finally
-            System.Threading.Interlocked.Exchange(powerChanging, 0)
-            suspendResumeGate.Release()
-        End Try
-    End Function)
-    End Sub
 
     Private Sub StopLlmUiThreadNonBlocking()
         Try
@@ -6043,6 +5961,8 @@ Public Class ThisAddIn
     Private Const InkyName As String = "Inky"               ' Fallback; AN6 preferred
 
     Private activeChatId As Integer = 1   ' 1 or 2 – in‑memory only (not persisted)
+
+    Private ReadOnly OriginalSecondaryModelName As String = INI_Model_2
 
     Private Class LlmJob
         Public Property Id As String
@@ -7156,6 +7076,8 @@ Public Class ThisAddIn
 
     ' ===== (D) EXTEND ProcessRequestInAddIn with the Inky commands =====
 
+    Private Shared ReadOnly AlternateModelLock As New Object
+
     Private Async Function ProcessRequestInAddIn(
         body As System.String,
         rawUrl As System.String) As System.Threading.Tasks.Task(Of System.String)
@@ -7511,103 +7433,120 @@ Public Class ThisAddIn
                         End Try
                         llmOperationCts = jobCts
 
+
+
+                        ' Replace the original System.Threading.Tasks.Task.Run(Sub() ... End Sub) block with this:
                         System.Threading.Tasks.Task.Run(
-                            Sub()
-                                Dim originalCfgLoaded As Boolean = False
-                                Dim usedAlternate As Boolean = False
-                                Dim localOutput As String = ""
-                                Try
-                                    ' (1) Alternate model application (moved from synchronous path)
-                                    If useSecondApiLocal AndAlso Not String.IsNullOrWhiteSpace(selectedModelKeyLocal) Then
+                                Sub()
+                                    Dim configSnapshot As Object = Nothing
+                                    Dim snapshotTaken As Boolean = False
+                                    Dim alternateApplied As Boolean = False
+                                    Dim localOutput As String = ""
+
+                                    Try
+                                        ' (1) Alternate model application (safer pattern)
+                                        If useSecondApiLocal AndAlso Not String.IsNullOrWhiteSpace(selectedModelKeyLocal) Then
+                                            Try
+                                                SyncLock AlternateModelLock
+                                                    configSnapshot = GetCurrentConfig(_context)
+                                                    snapshotTaken = True
+
+                                                    Dim alts = LoadAlternativeModels(INI_AlternateModelPath, _context)
+                                                    Dim sel = alts?.FirstOrDefault(
+                                                        Function(m)
+                                                            If m Is Nothing Then Return False
+                                                            If Not String.IsNullOrWhiteSpace(m.ModelDescription) AndAlso
+                                                               String.Equals(m.ModelDescription, selectedModelKeyLocal, StringComparison.OrdinalIgnoreCase) Then Return True
+                                                            If Not String.IsNullOrWhiteSpace(m.Model) AndAlso
+                                                               String.Equals(m.Model, selectedModelKeyLocal, StringComparison.OrdinalIgnoreCase) Then Return True
+                                                            Return False
+                                                        End Function)
+
+                                                    If sel IsNot Nothing Then
+                                                        ApplyModelConfig(_context, sel)
+                                                        alternateApplied = True
+                                                    End If
+                                                End SyncLock
+                                            Catch
+                                                ' Swallow – we will still attempt restore if snapshotTaken
+                                            End Try
+                                        End If
+
+                                        ' (2) Run LLM
+                                        localOutput = RunLlmAsync(
+                                            sysPromptBase,
+                                            sbDialog.ToString(),
+                                            useSecondApiLocal,
+                                            False,
+                                            finalFileObject,
+                                            jobCts.Token
+                                        ).GetAwaiter().GetResult()
+
+                                        If localOutput Is Nothing Then localOutput = String.Empty
+                                        localOutput = SanitizeModelOutputForBrowser(localOutput).Trim()
+
+                                        If localOutput.Length > 0 AndAlso
+                                           localOutput.Equals("Operation was canceled by the user.", StringComparison.OrdinalIgnoreCase) Then
+                                            localOutput = "Aborted by user."
+                                        End If
+
+                                        ' (3) Build assistant turn or error turn
+                                        Dim assistantText As String = localOutput
+                                        Dim wasCanceled As Boolean = jobCts.IsCancellationRequested
+
+                                        If assistantText.Length = 0 Then
+                                            assistantText = If(wasCanceled,
+                                                               "Aborted by user.",
+                                                               "Error: The model did not provide a response.")
+                                        End If
+
+                                        Dim htmlOut = MarkdownToHtml(assistantText)
+
+                                        ' Reload latest state (in case user switched chats meanwhile)
+                                        Dim stJob = LoadInkyState()
+
+                                        stJob.History.Add(New ChatTurn With {
+                                            .Role = "assistant",
+                                            .Markdown = assistantText,
+                                            .Html = htmlOut,
+                                            .Utc = Date.UtcNow
+                                        })
+                                        stJob.LastAssistantText = assistantText
+                                        SaveInkyState(stJob)
+
+                                        If wasCanceled AndAlso localOutput.Length = 0 Then
+                                            tcs.TrySetCanceled()
+                                        Else
+                                            tcs.TrySetResult(assistantText)
+                                        End If
+
+                                    Catch exOp As OperationCanceledException
+                                        tcs.TrySetCanceled()
+                                    Catch ex As System.Exception
+                                        tcs.TrySetException(ex)
+                                    Finally
+                                        ' (4) Cleanup temp upload
                                         Try
-                                            originalConfig = GetCurrentConfig(_context) : originalConfigLoaded = True
-                                            Dim alts = LoadAlternativeModels(INI_AlternateModelPath, _context)
-                                            Dim sel = alts?.FirstOrDefault(
-                                                Function(m)
-                                                    If m Is Nothing Then Return False
-                                                    If Not String.IsNullOrWhiteSpace(m.ModelDescription) AndAlso
-                                                       String.Equals(m.ModelDescription, selectedModelKeyLocal, StringComparison.OrdinalIgnoreCase) Then Return True
-                                                    If Not String.IsNullOrWhiteSpace(m.Model) AndAlso
-                                                       String.Equals(m.Model, selectedModelKeyLocal, StringComparison.OrdinalIgnoreCase) Then Return True
-                                                    Return False
-                                                End Function)
-                                            If sel IsNot Nothing Then
-                                                ApplyModelConfig(_context, sel)
-                                                usedAlternate = True
+                                            If Not String.IsNullOrWhiteSpace(tempUploadPathCopy) AndAlso IO.File.Exists(tempUploadPathCopy) Then
+                                                IO.File.Delete(tempUploadPathCopy)
                                             End If
                                         Catch
                                         End Try
-                                    End If
 
-                                    ' (2) Run LLM
-                                    localOutput = RunLlmAsync(sysPromptBase, sbDialog.ToString(),
-                                                              useSecondApiLocal,
-                                                              False,
-                                                              finalFileObject,
-                                                              jobCts.Token).GetAwaiter().GetResult()
+                                        ' (5) Restore original config unconditionally if snapshot was taken
+                                        Try
+                                            If snapshotTaken Then
+                                                SyncLock AlternateModelLock
+                                                    RestoreDefaults(_context, configSnapshot)
+                                                End SyncLock
+                                            End If
+                                        Catch
+                                            ' Ignore restore errors
+                                        End Try
 
-                                    If localOutput Is Nothing Then localOutput = String.Empty
-                                    localOutput = SanitizeModelOutputForBrowser(localOutput).Trim()
-
-                                    ' Normalize cancellation marker
-                                    If localOutput.Length > 0 AndAlso
-                                       localOutput.Equals("Operation was canceled by the user.", StringComparison.OrdinalIgnoreCase) Then
-                                        localOutput = "Aborted by user."
-                                    End If
-
-                                    ' (3) Build assistant turn or error turn
-                                    Dim assistantText As String = localOutput
-                                    Dim wasCanceled As Boolean = jobCts.IsCancellationRequested
-
-                                    If assistantText.Length = 0 Then
-                                        assistantText = If(wasCanceled,
-                                                           "Aborted by user.",
-                                                           "Error: The model did not provide a response.")
-                                    End If
-
-                                    Dim htmlOut = MarkdownToHtml(assistantText)
-
-                                    ' Reload latest state (in case user switched chats meanwhile)
-                                    Dim stJob = LoadInkyState()
-
-                                    stJob.History.Add(New ChatTurn With {
-                                        .Role = "assistant",
-                                        .Markdown = assistantText,
-                                        .Html = htmlOut,
-                                        .Utc = Date.UtcNow
-                                    })
-                                    stJob.LastAssistantText = assistantText
-                                    SaveInkyState(stJob)
-
-                                    If wasCanceled AndAlso localOutput.Length = 0 Then
-                                        tcs.TrySetCanceled()
-                                    Else
-                                        tcs.TrySetResult(assistantText)
-                                    End If
-
-                                Catch exOp As OperationCanceledException
-                                    tcs.TrySetCanceled()
-                                Catch ex As System.Exception
-                                    tcs.TrySetException(ex)
-                                Finally
-                                    ' (4) Cleanup temp upload
-                                    Try
-                                        If Not String.IsNullOrWhiteSpace(tempUploadPathCopy) AndAlso IO.File.Exists(tempUploadPathCopy) Then
-                                            IO.File.Delete(tempUploadPathCopy)
-                                        End If
-                                    Catch
+                                        Threading.Interlocked.Decrement(activeJobs)
                                     End Try
-                                    ' (5) Restore original config if needed
-                                    Try
-                                        If useSecondApiLocal AndAlso (usedAlternate OrElse originalCfgLoaded) AndAlso originalConfigLoaded Then
-                                            RestoreDefaults(_context, originalConfig)
-                                            originalConfigLoaded = False
-                                        End If
-                                    Catch
-                                    End Try
-                                    Threading.Interlocked.Decrement(activeJobs)
-                                End Try
-                            End Sub)
+                                End Sub)
 
                         ' ------------------ (F) Immediate response with job id ------------------
                         Return JsonOk(New With {

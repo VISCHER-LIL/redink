@@ -556,6 +556,42 @@ Namespace My
                 Me("LastChatHistoryHtml") = value
             End Set
         End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Redaction_ManualInstruction() As String
+            Get
+                Return CType(Me("Redaction_ManualInstruction"),String)
+            End Get
+            Set
+                Me("Redaction_ManualInstruction") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Redaction_OutputSubdir() As String
+            Get
+                Return CType(Me("Redaction_OutputSubdir"),String)
+            End Get
+            Set
+                Me("Redaction_OutputSubdir") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Redaction_OutputExtension() As String
+            Get
+                Return CType(Me("Redaction_OutputExtension"),String)
+            End Get
+            Set
+                Me("Redaction_OutputExtension") = value
+            End Set
+        End Property
     End Class
 End Namespace
 

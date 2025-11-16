@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 13.11.2025
+' 16.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -22,6 +22,7 @@
 ' Includes Nito.AsyncEx in unchanged form; Copyright (c) 2021 Stephen Cleary; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/StephenCleary/AsyncEx
 ' Includes NetOffice libraries in unchanged form; Copyright (c) 2020 Sebastian Lange, Erika LeBlanc; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/netoffice/NetOffice-NuGet
 ' Includes NAudio.Lame in unchanged form; Copyright (c) 2019 Corey Murtagh; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/Corey-M/NAudio.Lame
+' Includes PdfiumViewer in unchanged form; Copyright (c) 2017 Pieter van Ginkel; licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://github.com/pvginkel/PdfiumViewer
 ' Includes also various Microsoft libraries copyrighted by Microsoft Corporation and available, among others, under the Microsoft EULA and the MIT License; Copyright (c) 2016- Microsoft Corp.
 
 Option Explicit On
@@ -221,7 +222,7 @@ Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.131125 Gen2 Beta Test"
+    Public Const Version As String = "V.161125 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -1112,6 +1113,25 @@ Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Redact As String
+        Get
+            Return _context.SP_Redact
+        End Get
+        Set(value As String)
+            _context.SP_Redact = value
+        End Set
+    End Property
+
+    Public Shared Property SP_CheckforII As String
+        Get
+            Return _context.SP_CheckforII
+        End Get
+        Set(value As String)
+            _context.SP_CheckforII = value
+        End Set
+    End Property
+
+
     Public Shared Property SP_ContextSearch As String
         Get
             Return _context.SP_ContextSearch
@@ -1647,6 +1667,25 @@ Public Class ThisAddIn
             _context.INI_HelpMeInkyPath = value
         End Set
     End Property
+
+    Public Shared Property INI_RedactionInstructionsPath As String
+        Get
+            Return _context.INI_RedactionInstructionsPath
+        End Get
+        Set(value As String)
+            _context.INI_RedactionInstructionsPath = value
+        End Set
+    End Property
+
+    Public Shared Property INI_RedactionInstructionsPathLocal As String
+        Get
+            Return _context.INI_RedactionInstructionsPathLocal
+        End Get
+        Set(value As String)
+            _context.INI_RedactionInstructionsPathLocal = value
+        End Set
+    End Property
+
 
     Public Shared Property INI_SpeechModelPath As String
         Get
@@ -3317,6 +3356,66 @@ Public Class ThisAddIn
 
 
     Private Async Sub ShowPaneAsync(
+                          introLine As String,
+                          bodyText As String,
+                          finalRemark As String,
+                          header As String,
+                          Optional NoRtf As Boolean = False,
+                          Optional insertMarkdown As Boolean = False,
+                          Optional PreserveLiterals As Boolean = False
+                        )
+        Try
+            Dim OriginalText As String = bodyText
+
+            ' Ensure we're on the UI thread for the pane operation
+            Dim result As String = ""
+            If mainThreadControl.InvokeRequired Then
+                result = Await mainThreadControl.Invoke(
+                Function() As Task(Of String)
+                    Return PaneManager.ShowMyPane(introLine, bodyText, finalRemark, header, NoRtf, insertMarkdown, New IntelligentMergeCallback(AddressOf HandleIntelligentMerge), PreserveLiterals)
+                End Function
+            )
+            Else
+                result = Await PaneManager.ShowMyPane(introLine, bodyText, finalRemark, header, NoRtf, insertMarkdown, New IntelligentMergeCallback(AddressOf HandleIntelligentMerge), PreserveLiterals)
+            End If
+
+        Catch ex As Exception
+            MessageBox.Show("Error in ShowPaneAsync: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub HandleIntelligentMerge(selectedText As String)
+        ' Ensure UI operations happen on the main thread
+        If mainThreadControl.InvokeRequired Then
+            mainThreadControl.Invoke(Sub() IntelligentMerge(selectedText))
+        Else
+            IntelligentMerge(selectedText)
+        End If
+    End Sub
+
+    Public Async Sub IntelligentMerge(newtext As String)
+        ' Ensure we're on UI thread for Excel COM operations
+        If mainThreadControl.InvokeRequired Then
+            mainThreadControl.Invoke(
+            Sub()
+                Dim instructions As New List(Of String)
+                instructions = ParseLLMResponse(newtext)
+                ApplyLLMInstructions(instructions, True)  ' Always DoBubbles
+                ShowCustomMessageBox("Implementation of the instructions completed (to the extent possible). They are also in the clipboard.")
+                Dim result = Globals.Ribbons.Ribbon1.UpdateUndoButton()
+            End Sub
+        )
+        Else
+            Dim instructions As New List(Of String)
+            instructions = ParseLLMResponse(newtext)
+            ApplyLLMInstructions(instructions, True)  ' Always DoBubbles
+            ShowCustomMessageBox("Implementation of the instructions completed (to the extent possible). They are also in the clipboard.")
+            Dim result = Globals.Ribbons.Ribbon1.UpdateUndoButton()
+        End If
+    End Sub
+
+
+    Private Async Sub oldShowPaneAsync(
                               introLine As String,
                               bodyText As String,
                               finalRemark As String,
@@ -3337,11 +3436,11 @@ Public Class ThisAddIn
     End Sub
 
 
-    Private Sub HandleIntelligentMerge(selectedText As String)
+    Private Sub oldHandleIntelligentMerge(selectedText As String)
         IntelligentMerge(selectedText)
     End Sub
 
-    Public Async Sub IntelligentMerge(newtext As String)
+    Public Async Sub oldIntelligentMerge(newtext As String)
         Dim instructions As New List(Of String)
         instructions = ParseLLMResponse(newtext)
         ApplyLLMInstructions(instructions, True)  ' Always DoBubbles

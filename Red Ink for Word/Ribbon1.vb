@@ -278,4 +278,20 @@ Public Class Ribbon1
     Private Sub RI_HelpMe_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_HelpMe.Click
         Globals.ThisAddIn.HelpMeInky()
     End Sub
+
+    Private Sub Button1_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_PrepareRedactions.Click
+        Globals.ThisAddIn.PrepareRedactedPDF()
+    End Sub
+
+    Private Sub Button2_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_FinalizeRedactions.Click
+        Globals.ThisAddIn.FlattenRedactedPDF()
+    End Sub
+
+    Private Sub Button3_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_CheckDocumentsII.Click
+        Globals.ThisAddIn.CheckDocumentII()
+    End Sub
+
+    Private Sub RI_EditRedact_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_EditRedact.Click
+        Globals.ThisAddIn.EditRedactionInstructions()
+    End Sub
 End Class
