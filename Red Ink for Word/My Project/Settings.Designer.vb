@@ -592,6 +592,30 @@ Namespace My
                 Me("Redaction_OutputExtension") = value
             End Set
         End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Flatten_OutputSubdir() As String
+            Get
+                Return CType(Me("Flatten_OutputSubdir"),String)
+            End Get
+            Set
+                Me("Flatten_OutputSubdir") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Flatten_OutputExtension() As String
+            Get
+                Return CType(Me("Flatten_OutputExtension"),String)
+            End Get
+            Set
+                Me("Flatten_OutputExtension") = value
+            End Set
+        End Property
     End Class
 End Namespace
 

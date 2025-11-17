@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 16.11.2025
+' 17.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -156,6 +156,8 @@ Public Class ThisAddIn
             System.Diagnostics.Debug.WriteLine("ShutdownHttpListener failed: " & ex.Message)
         End Try
 
+
+
         ' 2) stop watchdog (if you added it)
         Try
             StopListenerWatchdog()
@@ -190,7 +192,7 @@ Public Class ThisAddIn
     Public Const AN2 As String = "red_ink"
     Public Const AN6 As String = "Inky"
 
-    Public Const Version As String = "V.161125 Gen2 Beta Test"
+    Public Const Version As String = "V.171125 Gen2 Beta Test"
 
     ' Hardcoded configuration
 
@@ -2010,28 +2012,7 @@ Public Class ThisAddIn
         Return tcs.Task
     End Function
 
-    '───────────────────────────────────────────────────────────────────────────
-    ' Runs a Sub on the UI thread and *waits* for it to complete.
-    '───────────────────────────────────────────────────────────────────────────
-    Private Function OldSwitchToUi(uiAction As System.Action) _
-        As System.Threading.Tasks.Task
 
-        Dim tcs As New System.Threading.Tasks.TaskCompletionSource(Of Object)()
-
-        mainThreadControl.Invoke(New MethodInvoker(
-        Sub()
-            Try
-                uiAction.Invoke()
-                tcs.SetResult(Nothing)
-            Catch ex As System.Exception
-                tcs.SetException(ex)
-            End Try
-        End Sub))
-
-        Return tcs.Task        ' completes only after uiAction finished
-    End Function
-
-    ' OLE message filter to auto-retry transient COM call rejections
     ' OLE message filter to auto-retry transient COM call rejections (chained)
     Friend NotInheritable Class OleMessageFilter
         <System.Runtime.InteropServices.DllImport("ole32.dll")>
@@ -2143,25 +2124,6 @@ Public Class ThisAddIn
         Return work() ' last try to surface real error
     End Function
 
-    '───────────────────────────────────────────────────────────────────────────
-    ' Runs a Function(Of T) on the UI thread and waits for its return value.
-    '───────────────────────────────────────────────────────────────────────────
-    Private Function OldSwitchToUi(Of T)(uiFunc As System.Func(Of T)) _
-        As System.Threading.Tasks.Task(Of T)
-
-        Dim tcs As New System.Threading.Tasks.TaskCompletionSource(Of T)()
-
-        mainThreadControl.Invoke(New MethodInvoker(
-        Sub()
-            Try
-                tcs.SetResult(uiFunc.Invoke())
-            Catch ex As System.Exception
-                tcs.SetException(ex)
-            End Try
-        End Sub))
-
-        Return tcs.Task        ' completes only after uiFunc returns
-    End Function
 
 
     '───────────────────────────────────────────────────────────────────────────
@@ -2470,188 +2432,6 @@ Public Class ThisAddIn
         End Try
     End Sub
 
-    Public Sub OldMainMenu(RI_Command As String)
-
-        If System.Threading.Interlocked.Exchange(inMainMenu, 1) = 1 Then Return
-
-        If IsInResumeCooldown() Then
-            SLib.ShowCustomMessageBox("Outlook is resuming from sleep. Please try again in a few seconds.")
-            Return
-        End If
-
-        If Not INIloaded Then
-            If Not StartupInitialized Then
-                Try
-                    DelayedStartupTasks()
-                    RemoveHandler outlookExplorer.Activate, AddressOf Explorer_Activate
-                Catch ex As System.Exception
-                End Try
-                If Not INIloaded Then Exit Sub
-            Else
-                InitializeConfig(False, False)
-                If Not INIloaded Then
-                    Exit Sub
-                End If
-            End If
-        End If
-
-        Try
-
-            InitializeConfig(False, False)
-
-            If GPTSetupError OrElse INIValuesMissing() Or Not INIloaded Then Return
-
-            ' Use fully qualified names to avoid ambiguity
-            Dim outlookApp As Microsoft.Office.Interop.Outlook.Application = Globals.ThisAddIn.Application
-            Dim inspector As Microsoft.Office.Interop.Outlook.Inspector = ComRetry(Function() outlookApp.ActiveInspector())
-
-            Dim Textlength As Long
-
-            If inspector Is Nothing Then
-
-                InspectorOpened = False
-
-                OpenInspectorAndReapplySelection(RI_Command)
-
-                If Not InspectorOpened Then Exit Sub
-
-                inspector = ComRetry(Function() outlookApp.ActiveInspector())
-                If inspector Is Nothing Then
-
-                    System.Windows.Forms.MessageBox.Show("Error in MainMenu: No active email item found.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-                    Return
-                End If
-            End If
-
-
-            Dim curr As Object = ComRetry(Function() inspector.CurrentItem)
-            If curr Is Nothing OrElse Not TypeOf curr Is Microsoft.Office.Interop.Outlook.MailItem Then
-                SLib.ShowCustomMessageBox($"Please open an email for editing for using {AN}.")
-                Return
-            End If
-
-            Dim mailItem As Microsoft.Office.Interop.Outlook.MailItem = CType(curr, Microsoft.Office.Interop.Outlook.MailItem)
-            Dim wordEditor As Microsoft.Office.Interop.Word.Document = ComRetry(Function() CType(inspector.WordEditor, Microsoft.Office.Interop.Word.Document))
-
-            Select Case RI_Command
-
-                Case "Translate"
-                    TranslateLanguage = ""
-                    TranslateLanguage = SLib.ShowCustomInputBox("Enter your target language:", $"{AN} Translate", True, INI_Language2)
-                    If String.IsNullOrEmpty(TranslateLanguage) Then Return
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Translate), False, INI_KeepFormat1, INI_ReplaceText1)
-                Case "PrimLang"
-                    TranslateLanguage = INI_Language1
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Translate), False, INI_KeepFormat1, INI_ReplaceText1)
-                Case "Correct"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Correct), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
-                Case "Summarize"
-
-                    Textlength = GetSelectedTextLength()
-
-                    If Textlength = 0 Then
-                        SLib.ShowCustomMessageBox("Please select the text to be processed.")
-                        Exit Sub
-                    End If
-
-                    Dim UserInput As String
-                    SummaryLength = 0
-
-                    Do
-                        UserInput = Trim(SLib.ShowCustomInputBox("Enter the number of words your summary shall have (the selected text has " & Textlength & " words; the proposal " & SummaryPercent & "%):", $"{AN} Summarizer", True, CStr(Math.Round(SummaryPercent * Textlength / 100 / 5) * 5)))
-
-                        If String.IsNullOrEmpty(UserInput) Then
-                            Exit Sub
-                        End If
-
-                        If Integer.TryParse(UserInput, SummaryLength) AndAlso SummaryLength >= 1 AndAlso SummaryLength <= Textlength Then
-                            Exit Do
-                        Else
-                            SLib.ShowCustomMessageBox("Please enter a valid word count between 1 and " & Textlength & ".")
-                        End If
-                    Loop
-                    If SummaryLength = 0 Then Exit Sub
-                    'SummaryLength = (Textlength - (Textlength * SummaryPercent / 100))'
-
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Summarize), False)
-                Case "Improve"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Improve), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
-                Case "NoFillers"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_NoFillers), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
-                Case "ApplyMyStyle"
-                    Dim StylePath As String = ExpandEnvironmentVariables(INI_MyStylePath)
-
-                    If String.IsNullOrWhiteSpace(StylePath) Then
-                        ShowCustomMessageBox("You have not defined a MyStyle prompt file. Please do so first in the configuration file or using 'Settings'.")
-                        Return
-                    End If
-                    If Not IO.File.Exists(StylePath) Then
-                        ShowCustomMessageBox("No MyStyle prompt file has been found. You may have to first create a MyStyle prompt. Go to 'Analyze' and use 'Define MyStyle' to do so - exiting.")
-                        Return
-                    End If
-
-                    Textlength = GetSelectedTextLength()
-                    If Textlength = 0 Then
-                        SLib.ShowCustomMessageBox("Please select the text to be processed.")
-                        Return
-                    End If
-
-                    MyStyleInsert = MyStyleHelpers.SelectPromptFromMyStyle(StylePath, "Outlook", 0, "Choose the style prompt to apply …", $"{AN} MyStyle", False)
-                    If MyStyleInsert = "ERROR" Then Return
-                    If MyStyleInsert = "NONE" OrElse String.IsNullOrWhiteSpace(MyStyleInsert) Then
-                        Return
-                    End If
-
-                    Command_InsertAfter(InterpolateAtRuntime(SP_MyStyle_Apply) & " " & MyStyleInsert, INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
-
-                Case "Friendly"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Friendly), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
-                Case "Convincing"
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Convincing), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
-                Case "Shorten"
-                    Textlength = GetSelectedTextLength()
-                    If Textlength = 0 Then
-                        SLib.ShowCustomMessageBox("Please select the text to be processed.")
-                        Exit Sub
-                    End If
-                    Dim UserInput As String
-                    Dim ShortenPercentValue As Integer = 0
-                    Do
-                        UserInput = Trim(SLib.ShowCustomInputBox("Enter the percentage by which your text should be shortened (it has " & Textlength & " words; " & ShortenPercent & "% will cut approx. " & (Textlength * ShortenPercent / 100) & " words)", $"{AN} Shortener", True, CStr(ShortenPercent) & "%"))
-                        If String.IsNullOrEmpty(UserInput) Then
-                            Exit Sub
-                        End If
-                        UserInput = UserInput.Replace("%", "").Trim()
-                        If Integer.TryParse(UserInput, ShortenPercentValue) AndAlso ShortenPercentValue >= 1 AndAlso ShortenPercentValue <= 99 Then
-                            Exit Do
-                        Else
-                            SLib.ShowCustomMessageBox("Please enter a valid percentage between 1 And 99.")
-                        End If
-                    Loop
-                    ShortenLength = (Textlength - (Textlength * (100 - ShortenPercent) / 100))
-                    Command_InsertAfter(InterpolateAtRuntime(SP_Shorten), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
-                Case "Sumup"
-
-                    Dim selectedText As String = mailItem.Body
-                    ShowSumup(selectedText)
-
-                        'FreeStyle_InsertBefore(SP_MailSumup, False)
-                Case "Answers"
-                    FreeStyle_InsertBefore(SP_MailReply, True)
-                Case "Freestyle"
-                    FreeStyle_InsertAfter()
-                Case "InsertClipboard"
-                    InsertClipboard()
-                Case Else
-                    System.Windows.Forms.MessageBox.Show("Error in MainMenu: Invalid internal command.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-            End Select
-
-            If inspector IsNot Nothing Then Marshal.ReleaseComObject(inspector) : inspector = Nothing
-            'If outlookApp IsNot Nothing Then Marshal.ReleaseComObject(outlookApp) : outlookApp = Nothing
-        Catch ex As System.Exception
-            System.Windows.Forms.MessageBox.Show("Error in MainMenu: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-        End Try
-    End Sub
 
     Private Function GetActiveInspector() As Outlook.Inspector
         Try
@@ -2877,217 +2657,6 @@ Public Class ThisAddIn
         End Try
     End Sub
 
-    Public Sub oldOpenInspectorAndReapplySelection(Command As String)
-        Try
-
-            If Command = "InsertClipboard" Then InsertClipboard() : Return
-
-            ' Grab Outlook instances
-            Dim oApp As Outlook.Application = Globals.ThisAddIn.Application
-            Dim oExplorer As Outlook.Explorer = oApp.ActiveExplorer()
-
-            Dim Sumup As Boolean = (Command = "Sumup")
-            Dim Translate As Boolean = (Command = "Translate" OrElse Command = "PrimLang")
-
-            If oExplorer Is Nothing Then
-                If Sumup Or Translate Then
-                    ShowCustomMessageBox("You can only use this function when you have selected an e-mail.")
-                Else
-                    ShowCustomMessageBox("You can only use this function when you are editing an e-mail.")
-                End If
-                Return
-            End If
-
-            ' Check for inline response
-            Dim inlineResponse As Object = oExplorer.ActiveInlineResponse
-            'If inlineResponse Is Nothing Then
-            If inlineResponse Is Nothing OrElse Sumup OrElse Translate Then
-
-
-                ' Get the current selection in the explorer
-                Dim selection As Outlook.Selection = oExplorer.Selection
-
-                ' Check if any item is selected
-                If selection.Count = 0 Then
-                    ShowCustomMessageBox("No email is selected.")
-                    Return
-                End If
-
-                If selection.Count > 1 Then
-                    If Not Sumup Then
-                        ShowCustomMessageBox("Multiple emails selected. Please select only one email when not using Sumup mode.")
-                        Return
-                    Else
-                        ' Combine texts from all selected emails.
-                        Dim mailItems As New List(Of Microsoft.Office.Interop.Outlook.MailItem)
-                        For Each item As Object In selection
-                            If TypeOf item Is Microsoft.Office.Interop.Outlook.MailItem Then
-                                mailItems.Add(CType(item, Microsoft.Office.Interop.Outlook.MailItem))
-                            End If
-                        Next
-
-                        If mailItems.Count = 0 Then
-                            ShowCustomMessageBox("None of the selected items are emails.")
-                            Return
-                        End If
-
-                        ' Order the emails: latest email first (descending order by ReceivedTime)
-                        mailItems = mailItems.OrderByDescending(Function(m) m.ReceivedTime).ToList()
-
-                        Const PR_LAST_VERB_EXECUTED As String = "http://schemas.microsoft.com/mapi/proptag/0x10810003"
-
-                        Dim selectedText As String = String.Empty
-                        Dim count As Integer = 1
-                        For Each mail As Microsoft.Office.Interop.Outlook.MailItem In mailItems
-
-                            Dim lastVerb As Integer = 0
-
-                            Try
-                                lastVerb = mail.PropertyAccessor.GetProperty(PR_LAST_VERB_EXECUTED)
-                            Catch comEx As COMException
-                                ' Property nicht gesetzt → noch nicht beantwortet
-                                lastVerb = 0
-                            Catch ex As System.Exception
-                                ' Sicherstellen, dass System.Exception voll qualifiziert ist
-                                lastVerb = 0
-                            End Try
-
-
-                            If lastVerb <> 102 AndAlso lastVerb <> 103 Then
-                                Dim tag As String = count.ToString("D4") ' Format count with four digits
-                                Dim latestBody As String = GetLatestMailBody(mail.Body)
-                                selectedText &= "<EMAIL" & tag & ">" & latestBody & "</EMAIL" & tag & ">"
-                                count += 1
-                            End If
-                        Next
-
-                        ShowSumup2(selectedText)
-                        Return
-                    End If
-                Else
-                    ' Only one email is selected.
-                    If Sumup Then
-                        Dim selectedItem As Object = selection(1)
-                        If TypeOf selectedItem Is Outlook.MailItem Then
-                            Dim mail As Outlook.MailItem = CType(selectedItem, Outlook.MailItem)
-                            Dim selectedText As String = mail.Body
-                            ShowSumup(selectedText)
-                            Return
-                        Else
-                            ShowCustomMessageBox("The selected item is not an email.")
-                            Return
-                        End If
-                    ElseIf Translate Then
-                        Dim selectedItem As Object = selection(1)
-                        If TypeOf selectedItem Is Outlook.MailItem Then
-
-                            If Command = "Translate" Then
-                                TranslateLanguage = ""
-                                TranslateLanguage = SLib.ShowCustomInputBox("Enter your target language:", $"{AN} Translate", True, INI_Language2)
-                                If String.IsNullOrEmpty(TranslateLanguage) Then Return
-                            Else
-                                TranslateLanguage = INI_Language1
-                            End If
-
-                            Dim mail As Outlook.MailItem = CType(selectedItem, Outlook.MailItem)
-                            Dim selectedText As String = mail.Body
-
-                            ShowTranslate(selectedText)
-                            Return
-
-                        Else
-                            ShowCustomMessageBox("The selected item is not an email.")
-                            Return
-                        End If
-                    Else
-                        ShowCustomMessageBox("You can only use this function when you are editing one (single) e-mail.")
-                        Return
-                    End If
-                End If
-
-            End If
-
-            ' Ensure it is a MailItem
-            Dim mailItem As MailItem = TryCast(inlineResponse, MailItem)
-            If mailItem Is Nothing Then
-                ShowCustomMessageBox("You can only use this function when you are editing an e-mail (currently, there is no valid e-mail item).")
-                Return
-            End If
-
-            ' Capture the user's current selection range (or caret) from the inline editor
-            Dim oldSelStart As Integer = 0
-            Dim oldSelEnd As Integer = 0
-            If Not GetSelectionOrCaretRangeFromInlineEditor(oExplorer, oldSelStart, oldSelEnd) Then
-                ' If this fails entirely (no Word editor, etc.), we can just open the window without reapplying.
-                ' But no error is shown for "empty selection" anymore – only true failures (e.g., no WordEditor).
-                ' We'll just continue and open the Inspector, albeit we can't set the cursor position.
-            End If
-
-            ' Open the Inspector modelessly
-            Dim inspector As Inspector = mailItem.GetInspector
-            If inspector Is Nothing Then
-                MessageBox.Show("Error in OpenInspectorAndReapplySelection: Failed to open the ActiveInspector.",
-                            "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-                Return
-            End If
-            inspector.Display(False) ' modeless - do not block
-
-            ' A short delay to let the new WordEditor initialize
-            System.Threading.Thread.Sleep(500)
-
-            ' Ensure it's still open and usable (guard COM with retries)
-            If inspector Is Nothing Then
-                inspector = ComRetry(Function() Globals.ThisAddIn.Application.ActiveInspector())
-                If inspector Is Nothing Then
-                    MessageBox.Show("Error in OpenInspectorAndReapplySelection: No active Inspector available.",
-                                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-                    Return
-                End If
-            End If
-
-            Dim curr As Object = ComRetry(Function() inspector.CurrentItem)
-            If curr Is Nothing OrElse Not TypeOf curr Is Microsoft.Office.Interop.Outlook.MailItem Then
-                MessageBox.Show("Error in OpenInspectorAndReapplySelection: The Inspector is not ready or no email item is active.",
-                                "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-                Return
-            End If
-
-            ' Reapply the original selection (or caret position) to the new Inspector's WordEditor
-            Try
-                Dim wordDoc As Word.Document = ComRetry(Function() TryCast(inspector.WordEditor, Word.Document))
-                If wordDoc IsNot Nothing Then
-                    Dim wordSel As Word.Selection = wordDoc.Application.Selection
-
-                    ' Only reapply if we successfully retrieved the inline offsets
-                    If oldSelStart <> 0 OrElse oldSelEnd <> 0 Then
-                        wordSel.SetRange(Start:=oldSelStart, End:=oldSelEnd)
-                        wordSel.Select()
-                    End If
-                End If
-
-            Catch ex As System.Exception
-                MessageBox.Show("Error in OpenInspectorAndReapplySelection: Failed to restore the original selection: " & ex.Message,
-                            "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-                Return
-            End Try
-
-            ' Bring the new Inspector window to the foreground
-
-            InspectorOpened = True
-
-            inspector.Activate()
-
-            ' Clean up COM references
-            Marshal.ReleaseComObject(inspector)
-            Marshal.ReleaseComObject(oExplorer)
-
-            Return
-
-        Catch ex As System.Exception
-            MessageBox.Show("Error in OpenInspectorAndReapplySelection: " & ex.Message,
-                        "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-        End Try
-    End Sub
 
     Private Function GetLatestMailBody(ByVal fullBody As String) As String
         Try
@@ -3193,33 +2762,6 @@ Public Class ThisAddIn
         End Try
     End Function
 
-    Private Function oldGetSelectionOrCaretRangeFromInlineEditor(oExplorer As Outlook.Explorer, ByRef selStart As Integer, ByRef selEnd As Integer) As Boolean
-        Try
-            Dim inlineWordEditor As Object = oExplorer.ActiveInlineResponseWordEditor
-            If inlineWordEditor Is Nothing Then
-                ' No inline Word editor, so we can't read a selection/caret
-                Return False
-            End If
-
-            Dim wordSel As Word.Selection =
-            ComRetry(Function() TryCast(inlineWordEditor.Application.Selection, Word.Selection))
-            If wordSel Is Nothing Then
-                Return False
-            End If
-
-            ' Even if there's no highlighted text, there's always a caret position
-            ' So we record them (could be equal if there's no actual selection)
-            selStart = wordSel.Start
-            selEnd = wordSel.End
-
-            Return True
-
-        Catch ex As System.Exception
-            MessageBox.Show("Failed to retrieve the selection: " & ex.Message,
-                        "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-            Return False
-        End Try
-    End Function
 
     Private Async Sub ShowSumup(selectedtext As String)
 
@@ -5317,7 +4859,7 @@ Public Class ThisAddIn
                         {"Timeout_2", "Timeout of {model2}"},
                         {"DoubleS", "Convert '" & ChrW(223) & "' to 'ss'"},
                         {"Clean", "Clean the LLM response"},
-                        {"NoDash", "Convert em to en dash"},
+                        {"NoEmDash", "Convert em to en dash"},
                         {"MarkdownConvert", "Keep character formatting"},
                         {"KeepFormat1", "Keep format (translations)"},
                         {"ReplaceText1", "Replace text (translations)"},
@@ -5343,7 +4885,7 @@ Public Class ThisAddIn
                         {"Timeout_2", "In milliseconds"},
                         {"DoubleS", "For Switzerland"},
                         {"Clean", "To remove double-spaces and hidden markers that may have been inserted by the LLM"},
-                        {"NoDash", "This will convert long dashes typically generated by LLMs but that are not commonly used (thus suggesting that the text has been AI generated)"},
+                        {"NoEmDash", "This will convert long dashes typically generated by LLMs but that are not commonly used (thus suggesting that the text has been AI generated)"},
                         {"MarkdownConvert", "If selected, bold, italic, underline and some more formatting will be preserved converting it to Markdown coding before passing it to the LLM (most LLM support it)"},
                         {"KeepFormat1", "If selected, the original's text basic formatting of a translated text will be retained (by HTML encoding, takes time!)"},
                         {"ReplaceText1", "If selected, the response of the LLM for translations will replace the original text"},
@@ -5408,10 +4950,111 @@ Public Class ThisAddIn
     Private resumeCooldownUntilUtc As System.DateTime = System.DateTime.MinValue
     Private inMainMenu As System.Int32 = 0
 
-    ' Add a helper
+    Private lastSuccessfulOperationUtc As System.DateTime = System.DateTime.UtcNow
+    Private Const StuckDetectionMinutes As Integer = 15  ' If no successful op for 15 min, consider stuck
+
+
     Private Function IsInResumeCooldown() As System.Boolean
         Return System.DateTime.UtcNow < resumeCooldownUntilUtc
     End Function
+
+
+
+
+    Private Sub PerformRecovery()
+        System.Diagnostics.Debug.WriteLine("Performing recovery actions...")
+
+        ' 1. Cancel all long-running jobs
+        Dim now = System.DateTime.UtcNow
+        Dim stuckJobs = jobMap.Values.Where(Function(j)
+                                                Return j IsNot Nothing AndAlso
+               Not j.Tcs.Task.IsCompleted AndAlso
+               (now - j.CreatedUtc).TotalMinutes > 10
+                                            End Function).ToList()
+
+        For Each job In stuckJobs
+            Try
+                System.Diagnostics.Debug.WriteLine($"Cancelling stuck job: {job.Id}")
+                If Not job.Cts.IsCancellationRequested Then
+                    job.Cts.Cancel()
+                End If
+                ' Force completion after a grace period
+                System.Threading.Tasks.Task.Run(Async Function()
+                                                    Await System.Threading.Tasks.Task.Delay(5000)
+                                                    If Not job.Tcs.Task.IsCompleted Then
+                                                        job.Tcs.TrySetResult("Operation timed out during recovery.")
+                                                    End If
+                                                End Function)
+            Catch
+            End Try
+        Next
+
+        ' 2. Reset the HTTP listener if needed
+        Dim listenerAge = (System.DateTime.UtcNow - lastListenerProgressUtc).TotalMinutes
+        If listenerAge > 10 Then
+            System.Diagnostics.Debug.WriteLine("Resetting HTTP listener due to inactivity")
+            System.Threading.Tasks.Task.Run(Async Function()
+                                                Try
+                                                    Await ShutdownHttpListener(stopUiThread:=False)
+                                                    Await System.Threading.Tasks.Task.Delay(2000)
+                                                    StartupHttpListener()
+                                                Catch
+                                                End Try
+                                            End Function)
+        End If
+
+        ' 3. Re-register OLE message filter (helps with COM issues)
+        Try
+            SwitchToUi(Sub()
+                           OleMessageFilter.Revoke()
+                           OleMessageFilter.Register()
+                           EnableOleFilterFor(30000)
+                       End Sub).Wait(5000) ' Don't wait forever
+        Catch
+        End Try
+
+        ' Mark recovery as successful
+        lastSuccessfulOperationUtc = System.DateTime.UtcNow
+    End Sub
+
+    Private Sub CleanupOrphanedJobs()
+        Dim now = System.DateTime.UtcNow
+        Dim toRemove As New List(Of String)()
+
+        For Each kv In jobMap
+            Dim job = kv.Value
+            If job Is Nothing Then
+                toRemove.Add(kv.Key)
+                Continue For
+            End If
+
+            ' Remove completed jobs older than 5 minutes
+            If job.Tcs.Task.IsCompleted AndAlso (now - job.CreatedUtc).TotalMinutes > 5 Then
+                toRemove.Add(kv.Key)
+                ' Force-remove jobs older than TTL regardless of state
+            ElseIf (now - job.CreatedUtc).TotalMinutes > JobTtlMinutes Then
+                toRemove.Add(kv.Key)
+                Try
+                    If Not job.Cts.IsCancellationRequested Then job.Cts.Cancel()
+                    If Not job.Tcs.Task.IsCompleted Then
+                        job.Tcs.TrySetResult("Job expired.")
+                    End If
+                Catch
+                End Try
+            End If
+        Next
+
+        For Each key In toRemove
+            Dim removed As LlmJob = Nothing
+            If jobMap.TryRemove(key, removed) Then
+                Try
+                    removed?.Cts?.Dispose()
+                Catch
+                End Try
+                System.Threading.Interlocked.Decrement(activeJobs)
+            End If
+        Next
+    End Sub
 
 
     Private NotInheritable Class PowerNotificationWindow
@@ -5495,122 +5138,131 @@ Public Class ThisAddIn
     ' Ensure only one suspend/resume sequence runs at a time
     Private suspendResumeGate As New System.Threading.SemaphoreSlim(1, 1)
 
+
     Friend Sub HandlePowerSuspendAsync()
         System.Threading.Tasks.Task.Run(
-        Async Function() As System.Threading.Tasks.Task
-            If Not Await TryEnterGateAsync().ConfigureAwait(False) Then Return
-            System.Threading.Interlocked.Exchange(powerChanging, 1)
-            Try
+    Async Function() As System.Threading.Tasks.Task
+        If Not Await TryEnterGateAsync().ConfigureAwait(False) Then Return
+        System.Threading.Interlocked.Exchange(powerChanging, 1)
+        Try
 
-                ' cancel all jobs
-                For Each kv In jobMap
-                    Try
-                        kv.Value.Cts.Cancel()
-                    Catch
-                    End Try
-                Next
 
-                ' Mute watchdog during suspend
-                Try : StopListenerWatchdog() : Catch : End Try
-
-                ' Remember state
+            ' Cancel all jobs FIRST and wait for them briefly
+            Dim cancelTasks As New List(Of System.Threading.Tasks.Task)()
+            For Each kv In jobMap
                 Try
-                    wasListenerRunningBeforeSleep =
-                        (httpListener IsNot Nothing AndAlso httpListener.IsListening)
-                Catch
-                    wasListenerRunningBeforeSleep = False
-                End Try
-                Try
-                    wasLlmThreadAliveBeforeSleep =
-                        (llmThread IsNot Nothing AndAlso llmThread.IsAlive)
-                Catch
-                    wasLlmThreadAliveBeforeSleep = False
-                End Try
-
-                ' Proactively cancel any in-flight LLM op (prevents wake-up on dead STA)
-                Try
-                    If llmOperationCts IsNot Nothing Then
-                        If Not llmOperationCts.IsCancellationRequested Then llmOperationCts.Cancel()
-                        llmOperationCts.Dispose()
+                    kv.Value.Cts.Cancel()
+                    ' Add a wait for the task to complete
+                    If kv.Value.Tcs IsNot Nothing AndAlso Not kv.Value.Tcs.Task.IsCompleted Then
+                        cancelTasks.Add(kv.Value.Tcs.Task.ContinueWith(Sub(t)
+                                                                           ' Swallow exceptions
+                                                                       End Sub, TaskContinuationOptions.ExecuteSynchronously))
                     End If
                 Catch
-                Finally
-                    llmOperationCts = Nothing
                 End Try
+            Next
 
-                ' Force any stale listener loop to exit quickly
-                System.Threading.Interlocked.Increment(listenerGeneration)
-
-                ' Listener stoppen – OHNE UI-STA zu stoppen
+            ' Wait briefly for jobs to terminate
+            If cancelTasks.Count > 0 Then
                 Try
-                    Dim t As System.Threading.Tasks.Task = ShutdownHttpListener(stopUiThread:=False)
                     Await System.Threading.Tasks.Task.WhenAny(
-                        t,
-                        System.Threading.Tasks.Task.Delay(1000)
+                        System.Threading.Tasks.Task.WhenAll(cancelTasks),
+                        System.Threading.Tasks.Task.Delay(2000)
                     ).ConfigureAwait(False)
                 Catch
+                    ' Ignore exceptions from cancelled tasks
                 End Try
+            End If
 
-                ' LLM-STA: request exit without waiting (no Join while suspending)
-                Try
-                    If wasLlmThreadAliveBeforeSleep Then
-                        StopLlmUiThreadNonBlocking()
-                    End If
-                Catch
-                End Try
+            ' Clear the job map after cancellation
+            jobMap.Clear()
+            System.Threading.Interlocked.Exchange(activeJobs, 0)
 
-            Finally
-                suspendResumeGate.Release()
+            ' Mute watchdog during suspend
+            Try : StopListenerWatchdog() : Catch : End Try
+
+            ' Remember state
+            Try
+                wasListenerRunningBeforeSleep =
+                    (httpListener IsNot Nothing AndAlso httpListener.IsListening)
+            Catch
+                wasListenerRunningBeforeSleep = False
             End Try
-        End Function)
+            Try
+                wasLlmThreadAliveBeforeSleep =
+                    (llmThread IsNot Nothing AndAlso llmThread.IsAlive)
+            Catch
+                wasLlmThreadAliveBeforeSleep = False
+            End Try
+
+            ' Proactively cancel any in-flight LLM op (prevents wake-up on dead STA)
+            Try
+                If llmOperationCts IsNot Nothing Then
+                    If Not llmOperationCts.IsCancellationRequested Then llmOperationCts.Cancel()
+                    llmOperationCts.Dispose()
+                End If
+            Catch
+            Finally
+                llmOperationCts = Nothing
+            End Try
+
+            ' Force any stale listener loop to exit quickly
+            System.Threading.Interlocked.Increment(listenerGeneration)
+
+            ' Listener stoppen – OHNE UI-STA zu stoppen
+            Try
+                Dim t As System.Threading.Tasks.Task = ShutdownHttpListener(stopUiThread:=False)
+                Await System.Threading.Tasks.Task.WhenAny(
+                    t,
+                    System.Threading.Tasks.Task.Delay(1000)
+                ).ConfigureAwait(False)
+            Catch
+            End Try
+
+            ' LLM-STA: request exit without waiting (no Join while suspending)
+            Try
+                If wasLlmThreadAliveBeforeSleep Then
+                    StopLlmUiThreadNonBlocking()
+                End If
+            Catch
+            End Try
+
+        Finally
+            suspendResumeGate.Release()
+        End Try
+    End Function)
     End Sub
 
 
     Friend Sub HandlePowerResumeAsync(userPresent As Boolean)
         System.Threading.Tasks.Task.Run(
     Async Function() As System.Threading.Tasks.Task
-        If Not Await TryEnterGateAsync().ConfigureAwait(False) Then Return
+        ' Don't wait for gate - if we can't get it immediately, skip
+        If Not suspendResumeGate.Wait(0) Then Return
+
         Try
-            Await System.Threading.Tasks.Task.Delay(1500).ConfigureAwait(False)
+            ' Minimal delay before restart
+            Await System.Threading.Tasks.Task.Delay(500).ConfigureAwait(False)
 
             isShuttingDown = False
 
-            ' Tear down any stale listener
-            Try
-                If httpListener IsNot Nothing Then
-                    Try
-                        If httpListener.IsListening Then httpListener.Stop()
-                    Catch
-                    End Try
-                    Try : httpListener.Abort() : Catch : End Try
-                    Try : httpListener.Close() : Catch : End Try
-                End If
-            Catch
-            Finally
-                httpListener = Nothing
-            End Try
+            ' Clean up old listener without complex teardown
+            httpListener = Nothing
 
-            ' Only start listener once the user is present
+            ' Only restart if user is present and it was running before
             If userPresent AndAlso wasListenerRunningBeforeSleep Then
                 Try
-                    Await System.Threading.Tasks.Task.Delay(3000).ConfigureAwait(False)
+                    ' Simple restart without complex delays
                     StartupHttpListener()
                 Catch
                 End Try
             End If
 
-            ' Do NOT recreate the legacy STA LLM thread anymore
-            ' If you leave this field in place it stays unused by design.
-            'If wasLlmThreadAliveBeforeSleep Then
-            '    Try : EnsureLlmUiThread() : Catch : End Try
-            'End If
+            ' Set a simple cooldown
+            resumeCooldownUntilUtc = System.DateTime.UtcNow.AddSeconds(30)
 
-            Try : StartListenerWatchdog() : Catch : End Try
-
-            ' Longer post-resume cooldown
-            resumeCooldownUntilUtc = System.DateTime.UtcNow.AddSeconds(60)
-
-            Await SwitchToUi(Sub() EnableOleFilterFor(60000)).ConfigureAwait(False)
+            ' Don't update UI here - it may not be ready yet
+            ' Remove the SwitchToUi call that was causing the freeze
 
         Finally
             System.Threading.Interlocked.Exchange(powerChanging, 0)
@@ -5909,36 +5561,39 @@ Public Class ThisAddIn
         watchdog = New System.Threading.Timer(
     Sub(stateObj As System.Object)
         Try
-            ' Skip while suspend/resume is in progress
+            ' Skip during power transitions
             If System.Threading.Interlocked.CompareExchange(powerChanging, 0, 0) <> 0 Then Return
 
-            ' do not kill the listener if a request is currently being processed
+            ' Skip if we're in cooldown after resume
+            If IsInResumeCooldown() Then Return
+
+            ' Check active work
             Dim inFlight As Integer = Threading.Interlocked.CompareExchange(activeRequests, 0, 0)
             Dim jobsInFlight As Integer = Threading.Interlocked.CompareExchange(activeJobs, 0, 0)
-            If inFlight > 0 OrElse jobsInFlight > 0 Then Return
+            If inFlight > 0 OrElse jobsInFlight > 0 Then
+                lastListenerProgressUtc = System.DateTime.UtcNow
+                Return
+            End If
 
-            Dim age As System.Double =
-                (System.DateTime.UtcNow - lastListenerProgressUtc).TotalSeconds
+            ' Simple timeout check
+            Dim age As System.Double = (System.DateTime.UtcNow - lastListenerProgressUtc).TotalSeconds
 
-            ' Be more lenient to avoid false positives with slow models
-            If age > ModelTimeout + 15 AndAlso httpListener IsNot Nothing Then
-                If Not isShuttingDown Then
-                    Try : httpListener.Abort() : Catch : End Try
-                    Try : httpListener.Close() : Catch : End Try
+            ' Only restart if genuinely stuck (not just idle)
+            If age > 300 AndAlso httpListener IsNot Nothing Then ' 5 minutes
+                Try
                     httpListener = Nothing
-
-                    ' Only restart if our CTS is alive
-                    If cts IsNot Nothing AndAlso Not cts.IsCancellationRequested Then
+                    If Not isShuttingDown Then
                         StartupHttpListener()
                     End If
-                End If
+                Catch
+                End Try
             End If
         Catch
         End Try
     End Sub,
     state:=Nothing,
-    dueTime:=System.TimeSpan.FromSeconds(20),
-    period:=System.TimeSpan.FromSeconds(5))
+    dueTime:=System.TimeSpan.FromSeconds(30),
+    period:=System.TimeSpan.FromSeconds(10))
     End Sub
 
     Private Sub StopListenerWatchdog()
@@ -5965,12 +5620,25 @@ Public Class ThisAddIn
     Private ReadOnly OriginalSecondaryModelName As String = INI_Model_2
 
     Private Class LlmJob
+
+        Implements IDisposable
+
         Public Property Id As String
         Public Property CreatedUtc As DateTime
         Public Property Tcs As TaskCompletionSource(Of String)
         Public Property Cts As CancellationTokenSource
         Public Property UseSecond As Boolean
         Public Property FileObject As String
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            Try
+                Cts?.Cancel()
+                Cts?.Dispose()
+                Tcs?.TrySetCanceled()
+            Catch
+            End Try
+        End Sub
+
     End Class
 
     Private ReadOnly jobMap As New System.Collections.Concurrent.ConcurrentDictionary(Of String, LlmJob)()
@@ -6245,41 +5913,86 @@ Public Class ThisAddIn
 
 
     Public Function RunLlmAsync(
-        ByVal sysPrompt As System.String,
-        ByVal userPrompt As System.String,
-        Optional ByVal UseSecondAPI As System.Boolean = False,
-        Optional ByVal ShowTimer As System.Boolean = True,
-        Optional ByVal FileObject As System.String = "",
-        Optional ByVal cancellationToken As System.Threading.CancellationToken = Nothing
-    ) As System.Threading.Tasks.Task(Of System.String)
+    ByVal sysPrompt As System.String,
+    ByVal userPrompt As System.String,
+    Optional ByVal UseSecondAPI As System.Boolean = False,
+    Optional ByVal ShowTimer As System.Boolean = True,
+    Optional ByVal FileObject As System.String = "",
+    Optional ByVal cancellationToken As System.Threading.CancellationToken = Nothing
+) As System.Threading.Tasks.Task(Of System.String)
 
         ' Use the thread pool – no STA message loop
         Dim effectiveTimeout As Integer = If(UseSecondAPI, INI_Timeout_2, INI_Timeout)
         ModelTimeout = effectiveTimeout
 
         Return System.Threading.Tasks.Task.Run(
-            Async Function() As System.Threading.Tasks.Task(Of System.String)
-                Using linkedCts As System.Threading.CancellationTokenSource =
-                    System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+        Async Function() As System.Threading.Tasks.Task(Of System.String)
+            ' Check if we're in a power transition BEFORE starting
+            If System.Threading.Interlocked.CompareExchange(powerChanging, 0, 0) <> 0 Then
+                Return "Operation cancelled due to power transition."
+            End If
 
-                    Try
-                        Dim llmOut As String =
-                            Await LLM(sysPrompt, userPrompt, "", "", 0, UseSecondAPI, Not ShowTimer, "", FileObject, linkedCts.Token, EnsureUI:=False).
-                                ConfigureAwait(False)
+            Using linkedCts As System.Threading.CancellationTokenSource =
+                System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
 
-                        If UseSecondAPI AndAlso originalConfigLoaded Then
-                            RestoreDefaults(_context, originalConfig)
-                            originalConfigLoaded = False
-                        End If
+                ' Create a separate timeout CTS that we can control
+                Using timeoutCts As New System.Threading.CancellationTokenSource()
+                    ' Add a generous buffer to the model timeout
+                    Dim totalTimeout = effectiveTimeout + 60 ' 60 second buffer
+                    timeoutCts.CancelAfter(TimeSpan.FromSeconds(totalTimeout))
 
-                        Return If(llmOut, String.Empty)
+                    Using combinedCts As System.Threading.CancellationTokenSource =
+                        System.Threading.CancellationTokenSource.CreateLinkedTokenSource(linkedCts.Token, timeoutCts.Token)
 
-                    Catch ex As OperationCanceledException
-                        Return "Operation was canceled by the user."
-                    End Try
+                        Try
+                            Dim llmTask = LLM(sysPrompt, userPrompt, "", "", 0, UseSecondAPI,
+                                            Not ShowTimer, "", FileObject, combinedCts.Token, EnsureUI:=False)
+
+                            ' Wait for either completion or cancellation
+                            Dim llmOut As String = Await llmTask.ConfigureAwait(False)
+
+                            ' Mark successful completion
+                            lastSuccessfulOperationUtc = System.DateTime.UtcNow
+
+                            If UseSecondAPI AndAlso originalConfigLoaded Then
+                                RestoreDefaults(_context, originalConfig)
+                                originalConfigLoaded = False
+                            End If
+
+                            Return If(llmOut, String.Empty)
+
+                        Catch ex As OperationCanceledException When timeoutCts.IsCancellationRequested
+                            ' This was a timeout, not user cancellation
+                            System.Diagnostics.Debug.WriteLine($"LLM operation timed out after {totalTimeout}s")
+                            Return "Operation timed out. Please try again with a shorter prompt or different model."
+
+                        Catch ex As OperationCanceledException
+                            ' Check if this is due to power transition
+                            If System.Threading.Interlocked.CompareExchange(powerChanging, 0, 0) <> 0 Then
+                                Return "Operation cancelled due to power transition."
+                            End If
+                            Return "Operation was canceled by the user."
+
+                        Catch ex As System.Exception
+                            ' Log the exception for debugging
+                            System.Diagnostics.Debug.WriteLine($"LLM Error: {ex.Message}")
+                            Return "An error occurred during processing."
+
+                        Finally
+                            ' Ensure cleanup happens even during power transitions
+                            Try
+                                If UseSecondAPI AndAlso originalConfigLoaded Then
+                                    RestoreDefaults(_context, originalConfig)
+                                    originalConfigLoaded = False
+                                End If
+                            Catch
+                            End Try
+                        End Try
+                    End Using
                 End Using
-            End Function,
-            cancellationToken)
+            End Using
+        End Function,
+        cancellationToken)
     End Function
 
 
@@ -6305,37 +6018,6 @@ Public Class ThisAddIn
         Return accepted
     End Function
 
-    Private Function oldCompareAndInsertSyncConfirm(
-        originalText As String,
-        llmResult As String) _
-        As System.Threading.Tasks.Task(Of Boolean)
-
-        Dim tcs As New System.Threading.Tasks.TaskCompletionSource(Of Boolean)
-
-        ' marshal to UI thread with BeginInvoke so listener thread never blocks
-        mainThreadControl.BeginInvoke(New MethodInvoker(
-        Sub()
-
-            ' 1) show compare window (modal for this thread)
-            CompareAndInsertText(originalText, llmResult, True)
-
-            ' 2) pump one message cycle so the Esc keystroke is processed
-            System.Windows.Forms.Application.DoEvents()
-
-            ' 3) read Esc status exactly like the old code
-            Dim escNow As Boolean =
-                (GetAsyncKeyState(System.Windows.Forms.Keys.Escape) And &H8000) <> 0
-            Dim escDown As Boolean =
-                (GetAsyncKeyState(System.Windows.Forms.Keys.Escape) And 1) <> 0
-
-            Dim accepted As Boolean = Not (escNow Or escDown)
-
-            tcs.SetResult(accepted)      ' unblock the awaiting thread
-        End Sub))
-
-        Return tcs.Task       ' caller awaits without blocking the listener
-    End Function
-    ' ---------------------------------------------------------------------------
 
 
     '───────────────────────────────────────────────────────────────────────────
@@ -6869,200 +6551,6 @@ Public Class ThisAddIn
         Return html.ToString()
     End Function
 
-    Private Function oldBuildInkyHtmlPage() As System.String
-        Dim botName As String = GetBotName()
-        Dim brandName As String = If(Not String.IsNullOrWhiteSpace(AN), AN, botName)
-        Dim logoUrl As String = GetLogoDataUrl()
-        Dim greet As String = GetFriendlyGreeting()
-
-        Dim html As New System.Text.StringBuilder()
-
-        html.AppendLine("<!doctype html>")
-        html.AppendLine("<html lang=""en""><head><meta charset=""utf-8"">")
-        html.AppendLine("<meta name=""viewport"" content=""width=device-width, initial-scale=1"">")
-        html.AppendLine("<link rel=""shortcut icon"" type=""image/png"" href=""" & System.Net.WebUtility.HtmlEncode(logoUrl) & """>")
-        html.AppendLine("<link rel=""icon"" type=""image/png"" href=""" & System.Net.WebUtility.HtmlEncode(logoUrl) & """>")
-        html.AppendLine("<title>" & System.Net.WebUtility.HtmlEncode(brandName) & " — Local Chat</title>")
-
-        ' CSS
-        html.AppendLine("<style>")
-        html.AppendLine(":root{--bg:#0b0f14;--card:#11161d;--fg:#e8eef6;--muted:#9aa8b7;--border:#1b2430;--border-strong:#2d3744;--elev:#1a222c;--press-shadow:inset 0 2px 6px rgba(0,0,0,.45);}")
-        html.AppendLine(":root.light{--bg:#f6f7f9;--card:#ffffff;--fg:#0e1116;--muted:#5d6a77;--border:#e2e5e9;--border-strong:#c9cfd6;--elev:#eef1f4;--press-shadow:inset 0 2px 5px rgba(0,0,0,.08);}")
-        html.AppendLine("html,body{height:100%;margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--fg);}")
-        html.AppendLine(".wrap{display:flex;flex-direction:column;height:100%;}")
-        html.AppendLine(".topbar{display:flex;gap:.5rem;align-items:center;padding:.75rem 1rem;border-bottom:1px solid var(--border);background:var(--card);position:sticky;top:0;z-index:5}")
-        html.AppendLine(".topline{display:flex;align-items:center;gap:.6rem}")
-        html.AppendLine(".topline img.logo{width:24px;height:24px;border-radius:6px;display:block}")
-        html.AppendLine(".topline .brandbig{font-weight:700}")
-        html.AppendLine(".topline .sub{color:var(--muted);font-size:.9rem}")
-        html.AppendLine(".muted{color:var(--muted);font-size:.85rem}")
-        html.AppendLine(".spacer{flex:1}")
-        html.AppendLine("select,button,input,textarea{background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:.6rem;font:inherit;}")
-        html.AppendLine("select,button,input{padding:.5rem .7rem;}")
-        html.AppendLine("button{cursor:pointer;transition:background .16s,filter .12s,transform .08s,box-shadow .18s;}")
-        html.AppendLine("button:hover{filter:brightness(1.07)}")
-        html.AppendLine("button:disabled{opacity:.5;cursor:not-allowed}")
-        html.AppendLine("button.is-pressed, .chatTab.is-pressed{transform:translateY(1px);box-shadow:var(--press-shadow);filter:brightness(.92);}")
-        html.AppendLine("button:active:not(:disabled){transform:translateY(1px);box-shadow:var(--press-shadow);filter:brightness(.9);}")
-        html.AppendLine(".chat{flex:1;overflow:auto;padding:1rem;}")
-        html.AppendLine(".row{display:flex;margin:0 auto 1rem auto;max-width:1000px;padding:0 .25rem;}")
-        html.AppendLine(".row.bot{justify-content:flex-start}")
-        html.AppendLine(".row.user{justify-content:flex-end}")
-        html.AppendLine(".bubble{max-width:75%;padding:1rem;border:1px solid var(--border);background:var(--card);border-radius:1rem;box-shadow:0 1px 3px rgba(0,0,0,.25)}")
-        html.AppendLine(".bot .bubble{border-top-right-radius:.35rem}")
-        html.AppendLine(".user .bubble{border-top-left-radius:.35rem}")
-        html.AppendLine(".role{font-size:.75rem;color:var(--muted);margin-bottom:.25rem}")
-        html.AppendLine(".inputbar{display:flex;gap:.5rem;padding:1rem;border-top:1px solid var(--border);background:var(--card)}")
-        html.AppendLine("textarea{flex:1;resize:vertical;min-height:52px;max-height:220px;border-radius:.8rem;padding:.75rem;line-height:1.25;}")
-        html.AppendLine(".hint{font-size:.7rem;letter-spacing:.3px;color:var(--muted);padding:.25rem 1rem 1rem}")
-        html.AppendLine("a{color:inherit;text-decoration:underline;text-decoration-color:rgba(255,255,255,.35)}")
-        html.AppendLine(":root.light a{text-decoration-color:rgba(0,0,0,.4)}")
-        html.AppendLine("a:hover{filter:brightness(1.15)}")
-        html.AppendLine("code,pre{font-family:ui-monospace,Consolas,monospace;font-size:.85rem}")
-        html.AppendLine("pre{overflow:auto;padding:.75rem;border:1px solid var(--border);border-radius:.6rem;position:relative;background:var(--elev);}")
-        html.AppendLine(".code-copy-btn{position:absolute;top:6px;right:6px;padding:4px 8px;font-size:.65rem;line-height:1;border:1px solid var(--border);border-radius:4px;background:rgba(0,0,0,.45);backdrop-filter:blur(3px);cursor:pointer;display:flex;align-items:center;gap:6px;color:var(--fg);opacity:0;transition:opacity .18s,background .18s;}")
-        html.AppendLine("pre:hover .code-copy-btn{opacity:1}")
-        html.AppendLine(".code-copy-btn svg{width:16px;height:16px;display:block}")
-        html.AppendLine(".code-copy-btn.copied{background:#2c3440;color:#fff}")
-        html.AppendLine(":root.light .code-copy-btn.copied{background:#d5d9dd;color:#111}")
-        html.AppendLine(".code-copy-btn:focus{outline:2px solid var(--border-strong);}")
-        html.AppendLine(".chatTab{padding:.45rem .55rem;min-width:32px;font-size:.7rem;font-weight:600;line-height:1;border:1px solid var(--border);background:var(--card);color:var(--muted);transition:background .18s,border-color .18s,color .18s,transform .08s,box-shadow .18s;}")
-        html.AppendLine(".chatTab:hover:not(:disabled){background:var(--elev);color:var(--fg);}")
-        html.AppendLine(".chatTab.active{background:#222b35;border-color:var(--border-strong);color:#fff;box-shadow:inset 0 0 0 1px #303c46;}")
-        html.AppendLine(":root.light .chatTab.active{background:#e2e5e9;border-color:var(--border-strong);color:#0e1116;box-shadow:inset 0 0 0 1px #c9cfd6;}")
-        html.AppendLine(".chatTab:focus{outline:2px solid var(--border-strong);outline-offset:1px;}")
-        ' Typing + elapsed
-        html.AppendLine(".typing-dots{display:inline-flex;gap:6px;align-items:center;}")
-        html.AppendLine(".typing-dots span{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.35;animation:tdots 1.2s infinite ease-in-out;}")
-        html.AppendLine(".typing-dots span:nth-child(2){animation-delay:.2s}")
-        html.AppendLine(".typing-dots span:nth-child(3){animation-delay:.4s}")
-        html.AppendLine("@keyframes tdots{0%,80%,100%{transform:translateY(0);opacity:.3}40%{transform:translateY(-5px);opacity:.85}}")
-        html.AppendLine(".typing-elapsed{margin-left:8px;font-size:.65rem;color:var(--muted);font-family:ui-monospace,monospace;opacity:.8;}")
-        html.AppendLine(".actions{display:flex;flex-direction:row;gap:.5rem;align-items:stretch;}")
-        html.AppendLine(".actions .stack{display:flex;flex-direction:column;gap:.5rem;}")
-        html.AppendLine("#cancelBtn{display:none;align-self:stretch;height:auto;}")
-        html.AppendLine("@media (max-width:640px){.actions{flex-direction:column;}.actions .stack{flex-direction:row;}.actions .stack button{flex:1;}#cancelBtn{align-self:auto;height:auto;}}")
-        html.AppendLine("</style>")
-
-        html.AppendLine("</head><body>")
-        html.AppendLine("<div class=""wrap"">")
-
-        ' Top bar
-        html.AppendLine("  <div class=""topbar"">")
-        html.AppendLine("    <div class=""topline"">")
-        If Not String.IsNullOrWhiteSpace(logoUrl) Then
-            html.AppendLine("      <img class=""logo"" src=""" & System.Net.WebUtility.HtmlEncode(logoUrl) & """ alt=""logo"">")
-        End If
-        html.AppendLine("      <div class=""brandbig"">" & System.Net.WebUtility.HtmlEncode(brandName) & "</div>")
-        html.AppendLine("      <div class=""sub"">Local Chat</div>")
-        html.AppendLine("    </div>")
-        html.AppendLine("    <div class=""spacer""></div>")
-        html.AppendLine("    <select id=""modelSel"" title=""Model""></select>")
-        html.AppendLine("    <button id=""copyBtn"" title=""Copy last answer to clipboard"">Copy last</button>")
-        html.AppendLine("    <button id=""clearBtn"" title=""Clear current conversation"">Clear</button>")
-        html.AppendLine("    <button id=""chat1Btn"" class=""chatTab"" data-chat=""1"" title=""Chat 1"">1</button>")
-        html.AppendLine("    <button id=""chat2Btn"" class=""chatTab"" data-chat=""2"" title=""Chat 2"">2</button>")
-        html.AppendLine("    <button id=""themeBtn"" title=""Toggle theme"">Theme</button>")
-        html.AppendLine("  </div>")
-
-        html.AppendLine("  <div id=""chat"" class=""chat""></div>")
-
-        html.AppendLine("  <div class=""inputbar"">")
-        html.AppendLine("    <textarea id=""msg"" placeholder=""" & System.Net.WebUtility.HtmlEncode(greet) & """ autofocus></textarea>")
-        html.AppendLine("    <div class=""actions"">" &
-                            "<div class=""stack"">" &
-                                "<button id=""sendBtn"">Send</button>" &
-                                "<button id=""pureBtn"" title=""Send only this raw text (no system prompt, no history)"">Pure</button>" &
-                            "</div>" &
-                            "<button id=""cancelBtn"" style=""display:none;"">Cancel</button>" &
-                        "</div>")
-        html.AppendLine("  </div>")
-        html.AppendLine("  <div class=""hint"">Drag & drop a file • Enter=send • Shift+Enter=newline • Ctrl+L=clear</div>")
-        html.AppendLine("</div>")
-
-        ' JS
-        html.AppendLine("<script>")
-        html.AppendLine("window.__botName=" & Newtonsoft.Json.JsonConvert.SerializeObject(botName) & ";")
-        html.AppendLine("let __supportsFiles=false;")
-        html.AppendLine("let __pendingFilePath='';")
-        html.AppendLine("let dark=false;")
-        html.AppendLine("let __currentJobId=null;")
-        html.AppendLine("let __jobCanceled=false;")
-        html.AppendLine("let __typingBubbleId=null;")
-        html.AppendLine("let __jobStartTs=0;")
-        html.AppendLine("let __elapsedTimer=null;")
-
-        ' Press feedback
-        html.AppendLine("(function(){const pressOn=e=>{const b=e.target.closest('button');if(!b||b.disabled)return;b.classList.add('is-pressed');};const pressOff=()=>{document.querySelectorAll('button.is-pressed').forEach(b=>b.classList.remove('is-pressed'));};['mousedown','touchstart'].forEach(ev=>document.addEventListener(ev,pressOn,{passive:true}));['mouseup','mouseleave','blur'].forEach(ev=>document.addEventListener(ev,pressOff));document.addEventListener('keydown',e=>{if((e.key===' '||e.key==='Enter')){const b=e.target.closest('button');if(b&&!b.disabled)b.classList.add('is-pressed');}});document.addEventListener('keyup',e=>{if(e.key===' '||e.key==='Enter')pressOff();});})();")
-
-        ' Helpers
-        html.AppendLine("function copyText(t){if(navigator.clipboard){return navigator.clipboard.writeText(t);}return new Promise((res,rej)=>{try{const ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();res();}catch(e){rej(e);}});}")
-        html.AppendLine("function enhanceCodeBlocks(scope){(scope||document).querySelectorAll('pre').forEach(pre=>{if(pre.dataset.enhanced==='1')return;const btn=document.createElement('button');btn.type='button';btn.className='code-copy-btn';btn.innerHTML='<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" stroke-linecap=""round"" stroke-linejoin=""round""><rect x=""9"" y=""9"" width=""13"" height=""13"" rx=""2"" ry=""2""/><path d=""M5 15H4a2 2 0 0 1-2-2V4c0-1.1.9-2 2-2h9a2 2 0 0 1 2 2v1""/></svg>';btn.addEventListener('click',()=>{const code=pre.querySelector('code');const txt=code?code.innerText:pre.innerText;copyText(txt).then(()=>{btn.classList.add('copied');setTimeout(()=>btn.classList.remove('copied'),1500);});});pre.appendChild(btn);pre.dataset.enhanced='1';});}")
-        html.AppendLine("const api=async(cmd,data={})=>{try{const r=await fetch('/inky/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({Command:cmd},data))});const txt=await r.text();try{return JSON.parse(txt);}catch{return{ok:false,error:txt}}}catch(e){return{ok:false,error:e.message||'Network error'}}};")
-
-        html.AppendLine("const chatEl=document.getElementById('chat');")
-        html.AppendLine("const msgEl=document.getElementById('msg');")
-        html.AppendLine("const modelSel=document.getElementById('modelSel');")
-        html.AppendLine("const copyBtn=document.getElementById('copyBtn');")
-        html.AppendLine("const clearBtn=document.getElementById('clearBtn');")
-        html.AppendLine("const themeBtn=document.getElementById('themeBtn');")
-        html.AppendLine("const cancelBtn=document.getElementById('cancelBtn');")
-        html.AppendLine("const chat1Btn=document.getElementById('chat1Btn');")
-        html.AppendLine("const chat2Btn=document.getElementById('chat2Btn');")
-        html.AppendLine("const sendBtn=document.getElementById('sendBtn');")
-        html.AppendLine("const pureBtn=document.getElementById('pureBtn');") ' NEW
-
-        html.AppendLine("function setTheme(isDark){dark=!!isDark;document.documentElement.classList.toggle('light',!dark);} ")
-        html.AppendLine("function forceExternalLinks(scope){try{(scope||document).querySelectorAll('a[href]').forEach(a=>{a.target='_blank';a.rel='noopener noreferrer';});}catch{}}")
-        html.AppendLine("function setActiveChatBtn(id){document.querySelectorAll('.chatTab').forEach(b=>b.classList.toggle('active',b.dataset.chat==String(id)));}")
-        html.AppendLine("function disableChatSwitch(dis){chat1Btn.disabled=dis;chat2Btn.disabled=dis;}")
-
-        html.AppendLine("function render(turns){chatEl.innerHTML='';for(const t of (turns||[])){const row=document.createElement('div');row.className='row '+(t.role==='user'?'user':'bot');const bub=document.createElement('div');bub.className='bubble';const rl=document.createElement('div');rl.className='role';rl.textContent=(t.role==='user'?'You':(window.__botName||'Bot'));bub.appendChild(rl);const cont=document.createElement('div');if(t && t.html){cont.innerHTML=t.html;forceExternalLinks(cont);}else if(t && t.markdown){const safe=t.markdown.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('\n','<br>');cont.innerHTML=safe;}bub.appendChild(cont);row.appendChild(bub);chatEl.appendChild(row);}chatEl.scrollTop=chatEl.scrollHeight;enhanceCodeBlocks(chatEl);} ")
-        html.AppendLine("function addTempAssistantBubble(html){const id='tmp-'+Math.random().toString(36).slice(2);chatEl.insertAdjacentHTML('beforeend',`<div class=""row bot"" id=""${id}""><div class=""bubble""><div class=""role"">${window.__botName||'Bot'}</div><div class=""tmpContent"">${html}</div></div></div>`);chatEl.scrollTop=chatEl.scrollHeight;return id;}")
-        html.AppendLine("function removeTempBubble(id){const el=document.getElementById(id);if(el)el.remove();}")
-        html.AppendLine("function replaceAssistantBubble(id,html){const row=document.getElementById(id);if(!row)return;const c=row.querySelector('.tmpContent');if(c){c.innerHTML=html;forceExternalLinks(row);enhanceCodeBlocks(row);}}")
-
-        ' Typing + elapsed
-        html.AppendLine("function ensureTypingBubble(){if(__typingBubbleId)return;const content='<div class=""typing-container""><span class=""typing-dots""><span></span><span></span><span></span></span><span id=""typingElapsed"" class=""typing-elapsed"" style=""display:none;"">(0s)</span></div>';__typingBubbleId=addTempAssistantBubble(content);}")
-        html.AppendLine("function updateElapsed(){if(!__typingBubbleId)return;const el=document.getElementById('typingElapsed');if(!el)return;const sec=Math.floor((Date.now()-__jobStartTs)/1000);if(sec>=10){el.style.display='inline-block';el.textContent='(' + sec + 's)';}}")
-        html.AppendLine("function startElapsedTimer(){stopElapsedTimer();__jobStartTs=Date.now();__elapsedTimer=setInterval(updateElapsed,1000);}")
-        html.AppendLine("function stopElapsedTimer(){if(__elapsedTimer){clearInterval(__elapsedTimer);__elapsedTimer=null;}const el=document.getElementById('typingElapsed');if(el)el.style.display='none';}")
-        html.AppendLine("function removeTypingBubble(){if(__typingBubbleId){removeTempBubble(__typingBubbleId);__typingBubbleId=null;}stopElapsedTimer();}")
-
-        ' boot
-        html.AppendLine("async function boot(){const st=await api('inky_getstate');if(!st.ok){alert(st.error||'Init failed');return;}__supportsFiles=(st.supportsFiles===true);setTheme(st.darkMode!==false);render(st.history||[]);modelSel.innerHTML='';for(const m of (st.models||[])){const o=document.createElement('option');o.value=m.key||'';o.textContent=m.label||'';o.disabled=!!m.disabled;if(m.selected&&!o.disabled)o.selected=true;modelSel.appendChild(o);}if(!modelSel.value){const fe=[...modelSel.options].find(o=>!o.disabled&&o.value);if(fe)fe.selected=true;}if(st.greeting && (!Array.isArray(st.history)||st.history.length===0)){msgEl.placeholder=st.greeting;}setActiveChatBtn(st.activeChat||1);} ")
-
-        ' pollJob
-        html.AppendLine("async function pollJob(jobId){if(!jobId)return;__currentJobId=jobId;__jobCanceled=false;ensureTypingBubble();startElapsedTimer();cancelBtn.style.display='inline-block';disableChatSwitch(true);try{for(;;){await new Promise(r=>setTimeout(r,2000));if(__jobCanceled)break;const s=await api('inky_jobstatus',{Job:jobId});if(!s.ok){console.warn('job status error',s.error);break;}if(s.status==='running'){continue;}const st=await api('inky_getstate');if(st.ok){render(st.history||[]);}break;} }finally{cancelBtn.style.display='none';removeTypingBubble();sendBtn.disabled=false;pureBtn.disabled=false;disableChatSwitch(false);__currentJobId=null;}}")
-
-        ' send (normal)
-        html.AppendLine("async function send(){if(__currentJobId){return;}const t=msgEl.value.trim();if(!t)return;msgEl.value='';sendBtn.disabled=true;pureBtn.disabled=true;chatEl.insertAdjacentHTML('beforeend',`<div class=""row user""><div class=""bubble""><div class=""role"">You</div><div>${t.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('\n','<br>')}</div></div></div>`);let typingId=addTempAssistantBubble('<span class=""typing-dots""><span></span><span></span><span></span></span>');const payload={Text:t};if(__pendingFilePath)payload.FileObject=__pendingFilePath;let r;try{r=await api('inky_send',payload);}catch(e){r={ok:false,error:e.message||'Network error'};}if(!r||!r.ok){removeTempBubble(typingId);sendBtn.disabled=false;pureBtn.disabled=false;alert(r&&r.error||'Error');__pendingFilePath='';return;}__pendingFilePath='';if(r.job){if(r.history){render(r.history||[]);}removeTempBubble(typingId);__typingBubbleId=null;ensureTypingBubble();startElapsedTimer();cancelBtn.style.display='inline-block';disableChatSwitch(true);pollJob(r.job);}else{removeTempBubble(typingId);sendBtn.disabled=false;pureBtn.disabled=false;if(r.history){render(r.history||[]);}}}")
-
-        ' pureSend (NEW)
-        html.AppendLine("async function pureSend(){if(__currentJobId){return;}const t=msgEl.value.trim();if(!t)return;msgEl.value='';sendBtn.disabled=true;pureBtn.disabled=true;chatEl.insertAdjacentHTML('beforeend',`<div class=""row user""><div class=""bubble""><div class=""role"">You</div><div>${('Pure: '+t).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('\n','<br>')}</div></div></div>`);let typingId=addTempAssistantBubble('<span class=""typing-dots""><span></span><span></span><span></span></span>');const payload={Text:t};if(__pendingFilePath)payload.FileObject=__pendingFilePath;let r;try{r=await api('inky_pure',payload);}catch(e){r={ok:false,error:e.message||'Network error'};}if(!r||!r.ok){removeTempBubble(typingId);sendBtn.disabled=false;pureBtn.disabled=false;alert(r&&r.error||'Error');__pendingFilePath='';return;}__pendingFilePath='';if(r.job){if(r.history){render(r.history||[]);}removeTempBubble(typingId);__typingBubbleId=null;ensureTypingBubble();startElapsedTimer();cancelBtn.style.display='inline-block';disableChatSwitch(true);pollJob(r.job);}else{removeTempBubble(typingId);sendBtn.disabled=false;pureBtn.disabled=false;if(r.history){render(r.history||[]);}}}")
-
-        ' drag/drop
-        html.AppendLine("(function(){const stop=e=>{e.preventDefault();e.stopPropagation();};['dragenter','dragover','dragleave','drop'].forEach(ev=>document.addEventListener(ev,stop,false));document.addEventListener('drop',async e=>{const files=[...(e.dataTransfer&&e.dataTransfer.files)||[]];if(!files.length)return;const f=files[0];if(!__supportsFiles){addTempAssistantBubble('File uploads are not supported for the current model.');return;}const tempId=addTempAssistantBubble(`Uploading <b>${f.name.replaceAll('&','&amp;')}</b> (${(f.size/1024).toFixed(1)} KB)…`);try{const fr=new FileReader();const dataUrl=await new Promise((res,rej)=>{fr.onerror=()=>rej(new Error('read error'));fr.onload=()=>res(fr.result);fr.readAsDataURL(f);});const r=await api('inky_upload',{Name:f.name,DataUrl:String(dataUrl||'')});if(!r.ok){replaceAssistantBubble(tempId,'Upload failed: '+(r.error||'unknown'));return;}if(r.supported===false){replaceAssistantBubble(tempId,'File uploads are not supported for this model.');return;}__pendingFilePath=r.path||'';replaceAssistantBubble(tempId,`Added file: <b>${(r.name||f.name).replaceAll('&','&amp;')}</b>`);}catch(err){replaceAssistantBubble(tempId,'Upload failed: '+(err&&err.message?err.message:'unknown'));}} ,false);})();")
-
-        ' events
-        html.AppendLine("modelSel.addEventListener('change',async()=>{if(__currentJobId)return;const opt=modelSel.options[modelSel.selectedIndex];if(!opt||opt.disabled||!opt.value){const fe=[...modelSel.options].find(o=>!o.disabled&&o.value);if(fe)fe.selected=true;return;}const r=await api('inky_setmodel',{Key:opt.value});if(!r.ok){alert(r.error||'Failed to set model');return;}if(typeof r.supportsFiles==='boolean')__supportsFiles=r.supportsFiles;});")
-        html.AppendLine("clearBtn.addEventListener('click',async()=>{if(__currentJobId)return;const r=await api('inky_clear');if(r.ok){render([]);if(r.greeting)msgEl.placeholder=r.greeting;}else{alert(r.error||'Failed to clear');}});")
-        html.AppendLine("copyBtn.addEventListener('click',async()=>{const r=await api('inky_copylast');if(!r.ok){alert(r.error||'Nothing to copy')}});")
-        html.AppendLine("themeBtn.addEventListener('click',async()=>{if(__currentJobId)return;const target=!dark;setTheme(target);const r=await api('inky_toggletheme');if(!r.ok){setTheme(!target);alert(r.error||'Theme switch failed');return;}if(typeof r.darkMode==='boolean')setTheme(r.darkMode===true);});")
-        html.AppendLine("msgEl.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}if(e.ctrlKey&&e.key.toLowerCase()==='l'){e.preventDefault();clearBtn.click();}});")
-        html.AppendLine("sendBtn.addEventListener('click',send);")
-        html.AppendLine("pureBtn.addEventListener('click',pureSend);") ' NEW
-        html.AppendLine("cancelBtn.addEventListener('click',async()=>{if(!__currentJobId)return;__jobCanceled=true;await api('inky_cancel',{Job:__currentJobId});});")
-        html.AppendLine("chatEl.addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a)return;if(a.target!=='_blank'){a.target='_blank';a.rel='noopener noreferrer';}});")
-        html.AppendLine("async function switchChat(n){if(__currentJobId)return;const r=await api('inky_switch',{Chat:String(n)});if(!r.ok){alert(r.error||'Switch failed');return;}setActiveChatBtn(r.activeChat||n);render(r.history||[]);if(r.greeting){msgEl.placeholder=r.greeting;}}")
-        html.AppendLine("chat1Btn.addEventListener('click',()=>switchChat(1));")
-        html.AppendLine("chat2Btn.addEventListener('click',()=>switchChat(2));")
-
-        html.AppendLine("boot();")
-        html.AppendLine("</script>")
-        html.AppendLine("</body></html>")
-        Return html.ToString()
-    End Function
 
 
 
@@ -8168,7 +7656,11 @@ Public Class ThisAddIn
         ' --- 2) Gather availability info based on (potentially updated) state ---
         Dim hasPrimary As Boolean = Not String.IsNullOrWhiteSpace(INI_Model)
         Dim hasSecondApi As Boolean = INI_SecondAPI
-        Dim hasSecondModelName As Boolean = Not String.IsNullOrWhiteSpace(INI_Model_2)
+
+        ' IMPORTANT FIX: Always use the ORIGINAL secondary model name for display
+        ' not whatever alternate model might be currently active
+        Dim secondaryModelName As String = OriginalSecondaryModelName ' Use your ReadOnly field
+        Dim hasSecondModelName As Boolean = Not String.IsNullOrWhiteSpace(secondaryModelName)
         Dim hasSecondary As Boolean = hasSecondApi AndAlso hasSecondModelName
 
         Dim alts As System.Collections.Generic.List(Of SharedLibrary.SharedLibrary.ModelConfig) = Nothing
@@ -8232,19 +7724,19 @@ Public Class ThisAddIn
 
         If hasSecondary Then
             list.Add(New With {
-                .key = "__hdr_secondary__",
-                .label = "Secondary model:",
-                .selected = False,
-                .disabled = True,
-                .isSeparator = False
-            })
+            .key = "__hdr_secondary__",
+            .label = "Secondary model:",
+            .selected = False,
+            .disabled = True,
+            .isSeparator = False
+        })
             list.Add(New With {
-                .key = "__second__",
-                .label = INI_Model_2,
-                .selected = (st.UseSecondApi AndAlso String.IsNullOrWhiteSpace(st.SelectedModelKey)),
-                .disabled = False,
-                .isSeparator = False
-            })
+            .key = "__second__",
+            .label = secondaryModelName,  ' Use the original name, not INI_Model_2 which might be changed
+            .selected = (st.UseSecondApi AndAlso String.IsNullOrWhiteSpace(st.SelectedModelKey)),
+            .disabled = False,
+            .isSeparator = False
+        })
         End If
 
         If altCount > 0 AndAlso alts IsNot Nothing Then

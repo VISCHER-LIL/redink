@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 16.11.2025
+' 17.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -510,7 +510,6 @@ Namespace SharedLibrary
 
     End Class
 
-
     Friend Module NativeClipboard
         Friend Const CF_ENHMETAFILE As UInteger = 14
 
@@ -865,199 +864,6 @@ Namespace SharedLibrary
         End Function
 
     End Module
-
-    Friend Module OldClipboardHelper
-
-        Friend Function OldTryGetClipboardObject(ByRef mimeType As String, ByRef base64 As String) As Boolean
-            Dim succeeded As Boolean = False
-            Dim localMimeType As String = Nothing
-            Dim localBase64 As String = Nothing
-
-            Dim t As New System.Threading.Thread(
-    Sub()
-        Try
-            ' 1) Outlook attachment (FileGroupDescriptorW / FileGroupDescriptor + FileContents)
-            Dim hasW = System.Windows.Forms.Clipboard.ContainsData("FileGroupDescriptorW")
-            Dim hasA = System.Windows.Forms.Clipboard.ContainsData("FileGroupDescriptor")
-            If hasW OrElse hasA Then
-                Dim fmt = If(hasW, "FileGroupDescriptorW", "FileGroupDescriptor")
-                Dim fgObj = System.Windows.Forms.Clipboard.GetData(fmt)
-                Dim fgStream = TryCast(fgObj, System.IO.MemoryStream)
-                If fgStream IsNot Nothing Then
-                    Using reader As New System.IO.BinaryReader(fgStream, System.Text.Encoding.Unicode)
-                        ' skip itemCount + fixed fields
-                        reader.ReadInt32() ' itemCount
-                        reader.BaseStream.Seek(4 + 16 + 8 + 8 + 8 + 4 + 4, System.IO.SeekOrigin.Current)
-                        ' read filename (up to 260 WCHARs)
-                        Dim nameChars As New System.Collections.Generic.List(Of Char)
-                        For i = 0 To 259
-                            Dim ch As Char = reader.ReadChar()
-                            If ch = ChrW(0) Then Exit For
-                            nameChars.Add(ch)
-                        Next
-                        Dim fileName As String = New String(nameChars.ToArray())
-
-                        ' pull the raw attachment bytes
-                        Dim contentObj = System.Windows.Forms.Clipboard.GetData("FileContents")
-                        Dim contentStream = TryCast(contentObj, System.IO.Stream)
-                        If contentStream IsNot Nothing Then
-                            Using ms As New System.IO.MemoryStream()
-                                contentStream.CopyTo(ms)
-                                Dim bytes() As Byte = ms.ToArray()
-
-                                ' 2) WAV-header sniff
-                                If bytes.Length >= 12 AndAlso
-                       System.Text.Encoding.ASCII.GetString(bytes, 0, 4) = "RIFF" AndAlso
-                       System.Text.Encoding.ASCII.GetString(bytes, 8, 4) = "WAVE" Then
-
-                                    localMimeType = "audio/wav"
-
-                                Else
-                                    ' 3) fallback to extension-based mapping
-                                    Dim ext = System.IO.Path.GetExtension(fileName).ToLowerInvariant()
-                                    Select Case ext
-                                        Case ".wav" : localMimeType = "audio/wav"
-                                        Case ".mp3" : localMimeType = "audio/mpeg"
-                                        Case ".txt" : localMimeType = "text/plain"
-                                        Case ".png" : localMimeType = "image/png"
-                                        Case ".jpg", ".jpeg" : localMimeType = "image/jpeg"
-                                        Case Else : localMimeType = "application/octet-stream"
-                                    End Select
-                                End If
-
-                                localBase64 = System.Convert.ToBase64String(bytes)
-                                succeeded = True
-                                Exit Sub
-                            End Using
-                        End If
-                    End Using
-                End If
-            End If
-
-            ' 2) File-drop (Explorer copy)
-            If System.Windows.Forms.Clipboard.ContainsFileDropList() Then
-                Dim files = System.Windows.Forms.Clipboard.GetFileDropList()
-                If files.Count > 0 Then
-                    Dim path = files(0)
-                    Dim mresult = MimeHelper.GetFileMimeTypeAndBase64(path)
-                    localMimeType = mresult.MimeType.Trim()
-                    localBase64 = mresult.EncodedData.Trim()
-                    succeeded = True
-                    Exit Sub
-                End If
-            End If
-
-            ' 3) Raw WAV stream
-            If System.Windows.Forms.Clipboard.ContainsAudio() Then
-                Using audioStream As System.IO.Stream = System.Windows.Forms.Clipboard.GetAudioStream()
-                    Using ms As New System.IO.MemoryStream()
-                        audioStream.CopyTo(ms)
-                        localBase64 = System.Convert.ToBase64String(ms.ToArray())
-                        localMimeType = "audio/wav"
-                        succeeded = True
-                        Exit Sub
-                    End Using
-                End Using
-            End If
-
-            ' 4) RTF  
-            If System.Windows.Forms.Clipboard.ContainsText(System.Windows.Forms.TextDataFormat.Rtf) Then
-                localMimeType = "application/rtf"
-                localBase64 = System.Convert.ToBase64String(
-                                    System.Text.Encoding.UTF8.GetBytes(
-                                        System.Windows.Forms.Clipboard.GetText(System.Windows.Forms.TextDataFormat.Rtf)))
-                succeeded = True : Exit Sub
-            End If
-
-            ' 5) HTML  
-            If System.Windows.Forms.Clipboard.ContainsText(System.Windows.Forms.TextDataFormat.Html) Then
-                localMimeType = "text/html"
-                localBase64 = System.Convert.ToBase64String(
-                                    System.Text.Encoding.UTF8.GetBytes(
-                                        System.Windows.Forms.Clipboard.GetText(System.Windows.Forms.TextDataFormat.Html)))
-                succeeded = True : Exit Sub
-            End If
-
-            ' 6) CSV  
-            If System.Windows.Forms.Clipboard.ContainsText(System.Windows.Forms.TextDataFormat.CommaSeparatedValue) Then
-                localMimeType = "text/csv"
-                localBase64 = System.Convert.ToBase64String(
-                                    System.Text.Encoding.UTF8.GetBytes(
-                                        System.Windows.Forms.Clipboard.GetText(System.Windows.Forms.TextDataFormat.CommaSeparatedValue)))
-                succeeded = True : Exit Sub
-            End If
-
-            ' 7) Plain text  
-            If System.Windows.Forms.Clipboard.ContainsText() Then
-                localMimeType = "text/plain"
-                localBase64 = System.Convert.ToBase64String(
-                                    System.Text.Encoding.UTF8.GetBytes(
-                                        System.Windows.Forms.Clipboard.GetText()))
-                succeeded = True : Exit Sub
-            End If
-
-            ' 8) Image (Bitmap → PNG)  
-            If System.Windows.Forms.Clipboard.ContainsImage() Then
-                Using img As System.Drawing.Image = System.Windows.Forms.Clipboard.GetImage()
-                    Using ms As New System.IO.MemoryStream()
-                        img.Save(ms, System.Drawing.Imaging.ImageFormat.Png)
-                        localMimeType = "image/png"
-                        localBase64 = System.Convert.ToBase64String(ms.ToArray())
-                        succeeded = True : Exit Sub
-                    End Using
-                End Using
-            End If
-
-            ' 9) EMF → Bitmap → PNG  
-            If NativeClipboard.OpenClipboard(IntPtr.Zero) Then
-                Try
-                    If NativeClipboard.IsClipboardFormatAvailable(NativeClipboard.CF_ENHMETAFILE) Then
-                        Dim src As IntPtr = NativeClipboard.GetClipboardData(NativeClipboard.CF_ENHMETAFILE)
-                        If src <> IntPtr.Zero Then
-                            Dim clone As IntPtr = NativeClipboard.CopyEnhMetaFile(src, Nothing)
-                            Using emf As New System.Drawing.Imaging.Metafile(clone, False)
-                                Using bmp As New System.Drawing.Bitmap(emf.Width, emf.Height)
-                                    Using g As System.Drawing.Graphics = System.Drawing.Graphics.FromImage(bmp)
-                                        g.DrawImage(emf, 0, 0)
-                                        Using out As New System.IO.MemoryStream()
-                                            bmp.Save(out, System.Drawing.Imaging.ImageFormat.Png)
-                                            localMimeType = "image/png"
-                                            localBase64 = System.Convert.ToBase64String(out.ToArray())
-                                            succeeded = True
-                                        End Using
-                                    End Using
-                                End Using
-                            End Using
-                            NativeClipboard.DeleteEnhMetaFile(clone)
-                            If succeeded Then Exit Sub
-                        End If
-                    End If
-                Finally
-                    NativeClipboard.CloseClipboard()
-                End Try
-            End If
-
-        Catch ex As System.Exception
-            ' suppress all exceptions
-        End Try
-    End Sub)
-
-            t.SetApartmentState(System.Threading.ApartmentState.STA)
-            t.Start()
-            t.Join()
-
-            If succeeded Then
-                mimeType = localMimeType
-                base64 = localBase64
-            End If
-
-            Return succeeded
-        End Function
-
-
-
-    End Module
-
 
     Public Class SplashScreenCountDown
         Inherits System.Windows.Forms.Form
@@ -1697,8 +1503,6 @@ Namespace SharedLibrary
         End Function
 
 
-
-
         Public Class SplashScreen
 
             Inherits Form
@@ -2151,11 +1955,6 @@ Namespace SharedLibrary
             Dim wordSelection As Microsoft.Office.Interop.Word.Selection = CType(selection, Microsoft.Office.Interop.Word.Selection)
             Dim wordRange As Microsoft.Office.Interop.Word.Range = wordSelection.Range
 
-            'Dim markdownPipeline As MarkdownPipeline = New MarkdownPipelineBuilder().Build()
-            'Dim htmlText As String = Markdown.ToHtml(gptResult, markdownPipeline)
-
-            'htmlText = htmlText.Replace(vbCrLf, "<br>").Replace(vbCr, "<br>").Replace(vbLf, "<br>")
-
             Debug.WriteLine("ITWM: " & gptResult)
 
             gptResult = gptResult.Replace(vbLf & " " & vbLf, vbLf & vbLf)
@@ -2180,17 +1979,6 @@ Namespace SharedLibrary
                                                               End If
                                                           End Function)
 
-            ' 1) Nur doppelte CRLF zwischen sichtbaren Zeichen erwischen:
-            'Dim pattern As String = "(?m)(?<=\S)(\r\n\r\n|\n\n)(?=\S)"
-
-            ' 2) Ersetze durch: Leerzeile, &nbsp;-Zeile, Leerzeile
-            'Dim replacement As String = vbCrLf & vbCrLf & "&nbsp;" & vbCrLf & vbCrLf
-
-            'Try
-            'gptResult = Regex.Replace(gptResult, pattern, replacement)
-            'Catch ex As System.Exception
-            ' Falls hier etwas schiefgeht, kannst Du es loggen oder weiterwerfen
-            'End Try
 
             Dim builder As New MarkdownPipelineBuilder()
 
@@ -2511,8 +2299,6 @@ Namespace SharedLibrary
         End Sub
 
 
-
-        ' Full namespace usage as requested.
         Public NotInheritable Class ClipboardSnapshot
 
             Private Sub New()
@@ -2568,17 +2354,6 @@ Namespace SharedLibrary
                             End If
                         Catch
                         End Try
-
-                        ' If you ever need images, prefer explicit opt-in; images can be heavy.
-                        'Try
-                        '    If System.Windows.Forms.Clipboard.ContainsImage() Then
-                        '        Dim img = System.Windows.Forms.Clipboard.GetImage()
-                        '        If img IsNot Nothing Then
-                        '            result.SetImage(New System.Drawing.Bitmap(img))
-                        '        End If
-                        '    End If
-                        'Catch
-                        'End Try
 
                         captured = result
                     Catch
@@ -2714,190 +2489,6 @@ Namespace SharedLibrary
 
 
 
-        Public Shared Sub OldInsertTextWithFormat(formattedText As String, ByRef range As Microsoft.Office.Interop.Word.Range, ReplaceSelection As Boolean, Optional NoTrailingCR As Boolean = False)
-            Try
-                If formattedText Is Nothing OrElse formattedText.Trim() = "" Then
-                    Return
-                End If
-
-                ' --- 0) Ursprünglichen Range-Anfang klonen und auf Start kollabieren ---
-                Dim origRange As Microsoft.Office.Interop.Word.Range = range.Duplicate()
-                origRange.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseStart)
-
-                Debug.WriteLine("PreFinalHTML=" & formattedText)
-
-                ' --- 1) HTML laden und <br> in eigene <p>-Elemente aufsplitten ---
-                Dim doc As New HtmlAgilityPack.HtmlDocument()
-                doc.LoadHtml(formattedText)
-
-                ' Alle <p> UND <li>-Knoten auswählen
-                Dim nodes = doc.DocumentNode.SelectNodes("//p | //li")
-                If nodes IsNot Nothing Then
-                    For Each node As HtmlAgilityPack.HtmlNode In nodes.ToList()
-                        Dim segments = System.Text.RegularExpressions.Regex _
-                           .Split(node.InnerHtml, "<br\s*/?>",
-                                  System.Text.RegularExpressions.RegexOptions.IgnoreCase)
-                        If segments.Length <= 1 Then Continue For
-
-                        If node.Name.Equals("p", StringComparison.OrdinalIgnoreCase) Then
-                            Dim parent As HtmlAgilityPack.HtmlNode = node.ParentNode
-                            If parent Is Nothing Then Continue For  ' ← hier der Null-Check!
-
-                            For Each seg As String In segments
-                                Dim txt = seg.Trim()
-                                If String.IsNullOrEmpty(txt) Then Continue For
-                                Dim newP As HtmlAgilityPack.HtmlNode = doc.CreateElement("p")
-                                newP.InnerHtml = txt
-                                parent.InsertBefore(newP, node)
-                            Next
-                            parent.RemoveChild(node)
-
-                        ElseIf node.Name.Equals("li", StringComparison.OrdinalIgnoreCase) Then
-                            node.RemoveAllChildren()
-                            For Each seg As String In segments
-                                Dim txt = seg.Trim()
-                                If String.IsNullOrEmpty(txt) Then Continue For
-                                Dim newP As HtmlAgilityPack.HtmlNode = doc.CreateElement("p")
-                                newP.InnerHtml = txt
-                                node.AppendChild(newP)
-                            Next
-                        End If
-                    Next
-                End If
-
-
-                formattedText = doc.DocumentNode.OuterHtml
-
-                ' --- 2) Schrift- und Absatz-Eigenschaften vom Range-Start auslesen ---
-                Dim fontName As String = origRange.Font.Name
-                Dim fontSize As Single = origRange.Font.Size
-                Dim isBold As Boolean = (origRange.Font.Bold = 1)
-                Dim isItalic As Boolean = (origRange.Font.Italic = 1)
-                Dim fontColor As Integer = origRange.Font.Color
-                ' BGR → RGB → HEX
-                Dim bgr As Integer = fontColor And &HFFFFFF
-                Dim r As Integer = (bgr And &HFF)
-                Dim g As Integer = ((bgr >> 8) And &HFF)
-                Dim b As Integer = ((bgr >> 16) And &HFF)
-                Dim hexColor As String = String.Format("#{0:X2}{1:X2}{2:X2}", r, g, b)
-
-                Dim para As Microsoft.Office.Interop.Word.ParagraphFormat = origRange.ParagraphFormat
-                Dim spaceBefore As Single = para.SpaceBefore
-                Dim spaceAfter As Single = para.SpaceAfter
-                Dim lineRule As Microsoft.Office.Interop.Word.WdLineSpacing = para.LineSpacingRule
-                Dim rawLineSpacing As Single = para.LineSpacing
-
-                Dim lineHeightCss As String
-                Select Case lineRule
-                    Case Microsoft.Office.Interop.Word.WdLineSpacing.wdLineSpaceSingle
-                        lineHeightCss = "normal"
-                    Case Microsoft.Office.Interop.Word.WdLineSpacing.wdLineSpace1pt5
-                        lineHeightCss = "1.5"
-                    Case Microsoft.Office.Interop.Word.WdLineSpacing.wdLineSpaceDouble
-                        lineHeightCss = "2"
-                    Case Microsoft.Office.Interop.Word.WdLineSpacing.wdLineSpaceMultiple
-                        lineHeightCss = rawLineSpacing.ToString() & "pt"
-                    Case Microsoft.Office.Interop.Word.WdLineSpacing.wdLineSpaceExactly,
-                 Microsoft.Office.Interop.Word.WdLineSpacing.wdLineSpaceAtLeast
-                        lineHeightCss = rawLineSpacing.ToString() & "pt"
-                    Case Else
-                        lineHeightCss = "normal"
-                End Select
-
-                ' --- 3) CSS-String bauen ---
-                Dim css As String = $"font-family:'{fontName}'; font-size:{fontSize}pt; color:{hexColor};"
-                If isBold Then css &= " font-weight:bold;"
-                If isItalic Then css &= " font-style:italic;"
-                css &= $" line-height:{lineHeightCss}; margin-top:{spaceBefore}pt; margin-bottom:{spaceAfter}pt;"
-
-                ' --- 4) Inline-Style auf alle <p>-Elemente anwenden ---
-                'Dim allPs = doc.DocumentNode.SelectNodes("//p")
-                'If allPs IsNot Nothing Then
-                'For Each pNode As HtmlAgilityPack.HtmlNode In allPs
-                'pNode.SetAttributeValue("style", css)
-                'Next
-                'End If
-                Dim allTextContainers = doc.DocumentNode.SelectNodes("//p | //li")
-                If allTextContainers IsNot Nothing Then
-                    For Each node As HtmlNode In allTextContainers
-                        node.SetAttributeValue("style", css)
-                    Next
-                End If
-
-                formattedText = doc.DocumentNode.OuterHtml
-
-                ' --- 5) HTML-Fragment zusammensetzen ---
-                Dim htmlHeader As String =
-            "<html><head><meta charset=""UTF-8""></head>" &
-            "<body><!--StartFragment-->"
-                Dim htmlFooter As String =
-            "<!--EndFragment--></body></html>"
-
-                Dim cleanedHtml As String = htmlHeader & formattedText.Trim() & htmlFooter
-                cleanedHtml = CreateProperHtml(cleanedHtml) _
-                        .Replace(vbCr, "") _
-                        .Replace(vbLf, "") _
-                        .Replace(vbCrLf, "")
-
-                ' --- 6) Clipboard-Formattierung für HTML ---
-                Dim dummyHtml As String =
-            $"Version:0.9{vbCrLf}" &
-            $"StartHTML:00000000{vbCrLf}" &
-            $"EndHTML:00000000{vbCrLf}" &
-            $"StartFragment:00000000{vbCrLf}" &
-            $"EndFragment:00000000{vbCrLf}" &
-            cleanedHtml
-
-                Dim startHtmlOffset As Integer = dummyHtml.IndexOf("<html>")
-                Dim startFragmentOffset As Integer = dummyHtml.IndexOf("<!--StartFragment-->") + "<!--StartFragment-->".Length
-                Dim endFragmentOffset As Integer = dummyHtml.IndexOf("<!--EndFragment-->")
-                Dim endHtmlOffset As Integer = dummyHtml.Length
-
-                Dim finalHtml = dummyHtml _
-            .Replace("StartHTML:00000000", $"StartHTML:{startHtmlOffset:D8}") _
-            .Replace("EndHTML:00000000", $"EndHTML:{endHtmlOffset:D8}") _
-            .Replace("StartFragment:00000000", $"StartFragment:{startFragmentOffset:D8}") _
-            .Replace("EndFragment:00000000", $"EndFragment:{endFragmentOffset:D8}")
-
-                Debug.WriteLine("FinalHTML=" & finalHtml)
-
-                ' --- 7) Clipboard auf STA-Thread setzen ---
-                Dim clipboardThread As New System.Threading.Thread(Sub()
-                                                                       System.Windows.Forms.Clipboard.SetText(finalHtml, System.Windows.Forms.TextDataFormat.Html)
-                                                                   End Sub)
-                clipboardThread.SetApartmentState(System.Threading.ApartmentState.STA)
-                clipboardThread.Start()
-                clipboardThread.Join()
-
-                ' --- 8) Einfügen in den Word-Range ---
-                range.Select()
-                If ReplaceSelection Then
-                    range.Application.Selection.PasteAndFormat(Microsoft.Office.Interop.Word.WdRecoveryType.wdFormatOriginalFormatting)
-                Else
-                    range.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-                    range.Select()
-                    range.Application.Selection.PasteAndFormat(Microsoft.Office.Interop.Word.WdRecoveryType.wdFormatOriginalFormatting)
-                End If
-
-                System.Threading.Thread.Sleep(100)
-                range = range.Application.Selection.Range
-
-                ' --- 9) Optional: letztes Newline-Zeichen entfernen ---
-                If ReplaceSelection AndAlso NoTrailingCR Then
-                    Dim insertedRange As Microsoft.Office.Interop.Word.Range = range.Application.Selection.Range
-                    Dim delRng As Microsoft.Office.Interop.Word.Range = insertedRange.Duplicate()
-                    delRng.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-                    delRng.MoveStart(Microsoft.Office.Interop.Word.WdUnits.wdCharacter, -1)
-                    delRng.Delete()
-                    insertedRange.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-                    insertedRange.Select()
-                End If
-
-            Catch ex As System.Exception
-                System.Windows.Forms.MessageBox.Show("InsertTextWithFormat Error: " & ex.Message)
-            End Try
-        End Sub
-
 
         Public Shared Sub RemoveTrailingCr(ByRef range As Microsoft.Office.Interop.Word.Range)
             Try
@@ -2915,80 +2506,6 @@ Namespace SharedLibrary
             Catch ex As System.Exception
                 System.Windows.Forms.MessageBox.Show("RemoveTrailingCr Error: " & ex.Message)
             End Try
-        End Sub
-
-
-        Public Shared Sub OldInsertTextWithFormat(formattedText As String, ByRef range As Microsoft.Office.Interop.Word.Range, ReplaceSelection As Boolean)
-
-            Try
-
-                If formattedText Is Nothing OrElse formattedText.Trim() = "" Then
-                    Return
-                End If
-
-                Debug.WriteLine("FormattedText=" & formattedText & vbCrLf & vbCrLf)
-
-                Dim htmlHeader As String = "<html><head><meta charset=""UTF-8""></head><body><!--StartFragment-->"
-                Dim htmlFooter As String = "<!--EndFragment--></body></html>"
-
-                Dim cleanedHtml As String = $"{htmlHeader}{formattedText}{htmlFooter}"
-
-                cleanedHtml = CreateProperHtml(cleanedHtml).Replace(vbCr, "").Replace(vbLf, "").Replace(vbCrLf, "")
-
-                ' Combine into the full HTML content
-                Dim dummyHtml As String = $"Version:0.9{vbCrLf}" &
-                      $"StartHTML:00000000{vbCrLf}" &
-                      $"EndHTML:00000000{vbCrLf}" &
-                      $"StartFragment:00000000{vbCrLf}" &
-                      $"EndFragment:00000000{vbCrLf}" & cleanedHtml
-
-                ' Calculate offsets
-                Dim startHtmlOffset As Integer = dummyHtml.IndexOf("<html>")
-                Dim endHtmlOffset As Integer = dummyHtml.Length
-                Dim startFragmentOffset As Integer = dummyHtml.IndexOf("<!--StartFragment-->") + "<!--StartFragment-->".Length
-                Dim endFragmentOffset As Integer = dummyHtml.IndexOf("<!--EndFragment-->")
-
-                ' Replace placeholders
-                Dim finalHtml As String = dummyHtml.Replace("StartHTML:00000000", $"StartHTML:{startHtmlOffset:D8}") _
-                               .Replace("EndHTML:00000000", $"EndHTML:{endHtmlOffset:D8}") _
-                               .Replace("StartFragment:00000000", $"StartFragment:{startFragmentOffset:D8}") _
-                               .Replace("EndFragment:00000000", $"EndFragment:{endFragmentOffset:D8}")
-
-                Debug.WriteLine("FinalHTML=" & finalHtml)
-
-                ' Perform the clipboard operation on an STA thread
-                Dim clipboardThread As New Threading.Thread(Sub()
-                                                                ClipboardSet(finalHtml)
-                                                            End Sub)
-                clipboardThread.SetApartmentState(Threading.ApartmentState.STA)
-                clipboardThread.Start()
-                clipboardThread.Join()
-
-                ' Move the selection to the specified range
-                range.Select()
-
-                ' Replace the selected text if needed
-                If ReplaceSelection Then
-                    'range.Text = ""
-                    'range.Application.Selection.PasteAndFormat(Microsoft.Office.Interop.Word.WdRecoveryType.wdFormatSurroundingFormattingWithEmphasis)
-                    range.Application.Selection.PasteAndFormat(Microsoft.Office.Interop.Word.WdRecoveryType.wdFormatOriginalFormatting)
-                Else
-                    range.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-                    range.Select()
-                    'range.Application.Selection.PasteAndFormat(Microsoft.Office.Interop.Word.WdRecoveryType.wdFormatSurroundingFormattingWithEmphasis)
-                    range.Application.Selection.PasteAndFormat(Microsoft.Office.Interop.Word.WdRecoveryType.wdFormatOriginalFormatting)
-                End If
-
-                ' After the paste
-                System.Threading.Thread.Sleep(100)
-
-                range = range.Application.Selection.Range
-
-
-            Catch ex As System.Exception
-                MessageBox.Show("InsertTextWithFormat Error: " & ex.Message)
-            End Try
-
         End Sub
 
 
@@ -3165,46 +2682,6 @@ Namespace SharedLibrary
         End Function
 
 
-
-
-
-        Public Shared Function OldCreateProperHtml(inputHtml As String) As String
-            ' Create a new HtmlDocument
-
-            inputHtml = inputHtml.Replace("<TEXTTOPROCESS>", "").Replace("</TEXTTOPROCESS>", "")
-
-            Dim htmlDoc As New HtmlAgilityPack.HtmlDocument()
-
-            ' Load the input HTML string into the document
-            htmlDoc.LoadHtml(inputHtml)
-
-            Dim headTag = htmlDoc.DocumentNode.SelectSingleNode("//head")
-            If headTag Is Nothing Then
-                headTag = HtmlAgilityPack.HtmlNode.CreateNode("<head></head>")
-                Dim htmlTag = htmlDoc.DocumentNode.SelectSingleNode("//html")
-                If htmlTag Is Nothing Then
-                    htmlTag = HtmlAgilityPack.HtmlNode.CreateNode("<html></html>")
-                    htmlDoc.DocumentNode.AppendChild(htmlTag)
-                End If
-                htmlTag.PrependChild(headTag)
-            End If
-
-            If Not headTag.InnerHtml.Contains("charset") Then
-                headTag.InnerHtml = "<meta charset=""UTF-8"">" & headTag.InnerHtml
-            End If
-
-            ' Process text nodes
-            For Each textNode As HtmlAgilityPack.HtmlNode In htmlDoc.DocumentNode.DescendantsAndSelf().Where(Function(node) node.NodeType = HtmlAgilityPack.HtmlNodeType.Text)
-                ' Only encode text that does not already contain valid HTML entities
-                Dim originalText = textNode.InnerHtml
-                If Not originalText.Contains("&") Then
-                    textNode.InnerHtml = System.Net.WebUtility.HtmlEncode(originalText)
-                End If
-            Next
-
-            ' Return the cleaned-up, well-formed HTML
-            Return htmlDoc.DocumentNode.OuterHtml
-        End Function
 
         Public Shared Function GetRangeHtml(ByVal range As Microsoft.Office.Interop.Word.Range) As String
             Dim htmlContent As String = String.Empty
@@ -4926,82 +4403,6 @@ Namespace SharedLibrary
         End Function
 
 
-        Public Shared Function OldRemoveMarkdownFormatting(ByVal input As String) As String
-            Try
-                Dim output As String = input
-
-                ' 1) Fett+Kursiv: ***Text*** → Text
-                output = Regex.Replace(output, "\*\*\*(.+?)\*\*\*", "$1", RegexOptions.Singleline)
-
-                ' 2) Fett: **Text** → Text
-                output = Regex.Replace(output, "\*\*(.+?)\*\*", "$1", RegexOptions.Singleline)
-
-                ' 3) Kursiv: *Text* → Text
-                output = Regex.Replace(output, "(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", "$1", RegexOptions.Singleline)
-
-                ' 4) Durchgestrichen: ~~Text~~ → Text
-                output = Regex.Replace(output, "~~(.+?)~~", "$1", RegexOptions.Singleline)
-
-                Dim headingPattern As String = "^[ \t]*#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*(\r?\n|$)"
-                output = System.Text.RegularExpressions.Regex.Replace(
-                        output, headingPattern, "$1$2",
-                        System.Text.RegularExpressions.RegexOptions.Multiline)
-
-                Return output
-
-            Catch ex As System.Exception
-                ' Hier könntest Du Logging oder eine Meldung einfügen
-                Throw New System.Exception("Error in RemoveMarkdownFormatting: " & ex.Message, ex)
-            End Try
-        End Function
-
-
-        Private Shared Sub OldProcessGroundingSupports(jsonObj As JObject,
-                                           ByRef citationList As List(Of String),
-                                           ByRef sourceUris As HashSet(Of String))
-            Try
-                Dim supports As JToken = jsonObj.SelectToken("candidates[0].groundingMetadata.groundingSupports")
-                Dim chunks As JToken = jsonObj.SelectToken("candidates[0].groundingMetadata.groundingChunks")
-                If supports Is Nothing OrElse chunks Is Nothing _
-           OrElse supports.Type <> JTokenType.Array _
-           OrElse chunks.Type <> JTokenType.Array Then Exit Sub
-
-                For Each support As JObject In supports
-                    Dim segText As String = support.SelectToken("segment.text")?.ToString()
-                    Dim idxTokens As JToken = support.SelectToken("groundingChunkIndices")
-                    If String.IsNullOrWhiteSpace(segText) _
-               OrElse idxTokens Is Nothing _
-               OrElse idxTokens.Type <> JTokenType.Array Then Continue For
-
-                    Dim sb As New System.Text.StringBuilder()
-                    sb.AppendLine("... " & segText.Replace(vbCrLf, " ").Replace(vbCr, " ").Replace(vbLf, " ").Trim() & " ...")
-
-                    ' nur noch _segmentintern_ deduplizieren,
-                    ' damit dieselbe URL in einem anderen Segment erneut erscheinen darf
-                    Dim localUris As New System.Collections.Generic.HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
-
-                    For Each idxTok In idxTokens
-                        Dim idx As Integer
-                        If Integer.TryParse(idxTok.ToString(), idx) = False Then Continue For
-
-                        Dim webObj As Newtonsoft.Json.Linq.JObject = chunks(idx).SelectToken("web")
-                        If webObj Is Nothing Then Continue For
-
-                        Dim uri As String = webObj("uri")?.ToString()
-                        Dim title As String = webObj("title")?.ToString()
-                        If String.IsNullOrWhiteSpace(uri) OrElse Not localUris.Add(uri) Then Continue For ' nur innerhalb desselben Segments filtern
-                        Dim url As String = System.Text.RegularExpressions.Regex.Replace(uri, "^\[|\]$", "")
-                        If String.IsNullOrWhiteSpace(title) Then title = "No title"
-                        sb.AppendLine($"  [{title}]({url})")
-                    Next
-
-                    citationList.Add(sb.ToString().TrimEnd())
-                Next
-
-            Catch ex As System.Exception
-                System.Diagnostics.Debug.WriteLine("Error processing groundingSupports: " & ex.Message)
-            End Try
-        End Sub
 
         ''' <summary>
         ''' Returns a standards-compliant MIME type for a given (possibly legacy or vendor-prefixed) MIME type.
@@ -6255,6 +5656,8 @@ Namespace SharedLibrary
             Return mc
         End Function
 
+
+
         ' Extracts the current configuration from the shared context using the same style.
         Public Shared Function GetCurrentConfig(ByVal context As ISharedContext) As ModelConfig
             Dim mc As New ModelConfig()
@@ -6463,6 +5866,8 @@ Namespace SharedLibrary
             End Try
         End Function
 
+
+
         ' Retrieves and applies the first model whose section contains a flag parameter named Task
         ' with a truthy value (True/Yes/Wahr/Ja/1). Returns True if applied; False if none found.
         Public Shared Function GetSpecialTaskModel(ByVal context As ISharedContext,
@@ -6554,7 +5959,6 @@ Namespace SharedLibrary
         End Function
 
 
-
         Public Shared Function RenameFileToBak(filePath As String) As Boolean
             Try
                 ' Rename the file to a .bak file
@@ -6570,6 +5974,7 @@ Namespace SharedLibrary
             End Try
 
         End Function
+
 
         Public Shared Sub WriteToRegistry(ByVal regPath As String, ByVal regValue As String)
             Try
@@ -7157,205 +6562,12 @@ Namespace SharedLibrary
         End Function
 
 
-        Public Shared Function oldProcessParameterPlaceholders(ByRef script As String) As Boolean
-            Dim defRx As New System.Text.RegularExpressions.Regex("\{\s*parameter(\d+)\s*=\s*(.*?)\}", RegexOptions.IgnoreCase Or RegexOptions.Singleline)
-            Dim refRx As New System.Text.RegularExpressions.Regex("\{\s*parameter(\d+)\s*\}", RegexOptions.IgnoreCase)
-
-            ' Collect definition matches first
-            Dim defMatches = defRx.Matches(script)
-            If defMatches.Count = 0 Then
-                ' No definitions -> nothing to prompt for; still OK (references stay literal)
-                Return True
-            End If
-
-            ' First definition wins per parameter number
-            Dim paramDefs As New Dictionary(Of Integer, (MatchObj As Match, Definition As String))()
-            For Each m As Match In defMatches
-                Dim num = Integer.Parse(m.Groups(1).Value)
-                If Not paramDefs.ContainsKey(num) Then
-                    paramDefs(num) = (m, m.Groups(2).Value.Trim())
-                End If
-            Next
-
-            ' Prepare UI parameter list
-            Dim parameterDefs As New List(Of SharedLibrary.SharedMethods.InputParameter)()
-            Dim metaList As New List(Of (ParamNumber As Integer,
-                                     TypeName As String,
-                                     RangeTuple As (Integer?, Integer?),
-                                     DisplayOptions As List(Of String),
-                                     CodeOptions As List(Of String)))()
-
-            For Each num In paramDefs.Keys.OrderBy(Function(i) i)
-                Dim definition = paramDefs(num).Definition
-                Dim segments = definition.Split(";"c).
-                                      Select(Function(s) s.Trim()).
-                                      Where(Function(s) s.Length > 0).ToArray()
-                If segments.Length = 0 Then Continue For
-
-                Dim desc = segments(0)
-                Dim t = If(segments.Length > 1, segments(1).ToLowerInvariant(), "string")
-                Dim defaultStr = If(segments.Length > 2, segments(2), "")
-
-                Dim rangeTuple As (Integer?, Integer?) = (Nothing, Nothing)
-                Dim optsRaw As List(Of String) = Nothing
-
-                If (t = "integer" OrElse t = "long" OrElse t = "double") AndAlso segments.Length > 3 Then
-                    If System.Text.RegularExpressions.Regex.IsMatch(segments(3), "^\d+\s*-\s*\d+$") Then
-                        Dim parts = segments(3).Split("-"c)
-                        Dim minVal = Integer.Parse(parts(0))
-                        Dim maxVal = Integer.Parse(parts(1))
-                        rangeTuple = (minVal, maxVal)
-                        If segments.Length > 4 Then
-                            optsRaw = segments(4).Split(","c).Select(Function(o) o.Trim()).
-                                                 Where(Function(o) o.Length > 0).ToList()
-                        End If
-                    Else
-                        optsRaw = segments(3).Split(","c).Select(Function(o) o.Trim()).
-                                             Where(Function(o) o.Length > 0).ToList()
-                    End If
-                ElseIf t = "string" AndAlso segments.Length > 3 Then
-                    optsRaw = segments(3).Split(","c).Select(Function(o) o.Trim()).
-                                         Where(Function(o) o.Length > 0).ToList()
-                End If
-
-                Dim displayList As List(Of String) = Nothing
-                Dim codeList As List(Of String) = Nothing
-                If optsRaw IsNot Nothing AndAlso optsRaw.Count > 0 Then
-                    displayList = New List(Of String)()
-                    codeList = New List(Of String)()
-                    For Each o In optsRaw
-                        If String.IsNullOrWhiteSpace(o) Then Continue For
-                        Dim lbl = o
-                        Dim code = o
-                        Dim idx1 = o.IndexOf("<"c)
-                        Dim idx2 = o.IndexOf(">"c)
-                        If idx1 >= 0 AndAlso idx2 > idx1 Then
-                            lbl = o.Substring(0, idx1).Trim()
-                            code = o.Substring(idx1 + 1, idx2 - idx1 - 1).Trim()
-                        End If
-                        displayList.Add(lbl)
-                        codeList.Add(code)
-                    Next
-                End If
-
-                Dim defaultDisplay As Object = defaultStr
-                If codeList IsNot Nothing Then
-                    Dim idxDef = codeList.IndexOf(defaultStr)
-                    If idxDef >= 0 Then defaultDisplay = displayList(idxDef)
-                End If
-
-                Dim typedDefault As Object
-                Select Case t
-                    Case "boolean"
-                        Dim b As Boolean : Boolean.TryParse(defaultStr, b) : typedDefault = b
-                    Case "integer"
-                        Dim i As Integer : Integer.TryParse(defaultStr, i) : typedDefault = i
-                    Case "long"
-                        Dim l As Long : Long.TryParse(defaultStr, l) : typedDefault = l
-                    Case "double"
-                        Dim d As Double : Double.TryParse(defaultStr, d) : typedDefault = d
-                    Case Else
-                        typedDefault = defaultDisplay
-                End Select
-
-                If displayList IsNot Nothing Then
-                    parameterDefs.Add(New SharedLibrary.SharedMethods.InputParameter(desc, typedDefault, displayList))
-                Else
-                    parameterDefs.Add(New SharedLibrary.SharedMethods.InputParameter(desc, typedDefault))
-                End If
-
-                metaList.Add((num, t, rangeTuple, displayList, codeList))
-            Next
-
-            If parameterDefs.Count = 0 Then Return True
-
-            Dim prmArray = parameterDefs.ToArray()
-            If Not ShowCustomVariableInputForm("Please configure your parameters:", $"{AN} Parameters", prmArray) Then
-                Return False
-            End If
-
-            ' Build final value map
-            Dim valueByParam As New Dictionary(Of Integer, String)()
-            For i = 0 To metaList.Count - 1
-                Dim meta = metaList(i)
-                Dim p = prmArray(i)
-                Dim rawValue = If(p.Value Is Nothing, "", p.Value.ToString()).Trim()
-                Dim finalValue As String
-
-                If meta.TypeName = "boolean" Then
-                    finalValue = rawValue.ToLowerInvariant()
-                Else
-                    ' Map display -> code
-                    If meta.DisplayOptions IsNot Nothing Then
-                        Dim idx = meta.DisplayOptions.IndexOf(rawValue)
-                        If idx >= 0 Then
-                            finalValue = meta.CodeOptions(idx)
-                        Else
-                            finalValue = rawValue
-                        End If
-                    Else
-                        Dim rvLower = rawValue.ToLowerInvariant()
-                        If rvLower.StartsWith("(keine auswahl)") OrElse rvLower.StartsWith("(no selection)") OrElse rawValue.StartsWith("---") Then
-                            finalValue = ""
-                        Else
-                            finalValue = rawValue
-                        End If
-                    End If
-
-                    ' Clamp numeric
-                    If (meta.TypeName = "integer" OrElse meta.TypeName = "long" OrElse meta.TypeName = "double") AndAlso (meta.RangeTuple.Item1.HasValue OrElse meta.RangeTuple.Item2.HasValue) Then
-                        Dim num As Double
-                        If Double.TryParse(finalValue, num) Then
-                            If meta.RangeTuple.Item1.HasValue AndAlso num < meta.RangeTuple.Item1.Value Then num = meta.RangeTuple.Item1.Value
-                            If meta.RangeTuple.Item2.HasValue AndAlso num > meta.RangeTuple.Item2.Value Then num = meta.RangeTuple.Item2.Value
-                            If meta.TypeName = "integer" OrElse meta.TypeName = "long" Then
-                                finalValue = CLng(System.Math.Round(num)).ToString()
-                            Else
-                                finalValue = num.ToString()
-                            End If
-                        End If
-                    End If
-                End If
-
-                ' Minimal JSON escaping (keep consistent with old behavior)
-                Dim jsonEscaped = finalValue.Replace("\", "\\").Replace("""", "\""")
-                valueByParam(meta.ParamNumber) = jsonEscaped
-            Next
-
-            ' Positional replacement (definitions first)
-            Dim sb As New System.Text.StringBuilder(script)
-
-            ' Replace definitions (remove braces + template)
-            For Each m As Match In defMatches.Cast(Of Match)().OrderByDescending(Function(mm) mm.Index)
-                Dim paramNumber = Integer.Parse(m.Groups(1).Value)
-                Dim repl = If(valueByParam.ContainsKey(paramNumber), valueByParam(paramNumber), "")
-                sb.Remove(m.Index, m.Length)
-                sb.Insert(m.Index, repl)
-            Next
-
-            ' Replace references {parameterN}
-            Dim refMatches = refRx.Matches(sb.ToString())
-            For Each m As Match In refMatches.Cast(Of Match)().OrderByDescending(Function(mm) mm.Index)
-                ' Skip those that were definitions (already replaced)
-                If m.Groups.Count > 0 AndAlso m.Value.Contains("=") Then Continue For
-                Dim paramNumber = Integer.Parse(m.Groups(1).Value)
-                If valueByParam.ContainsKey(paramNumber) Then
-                    sb.Remove(m.Index, m.Length)
-                    sb.Insert(m.Index, valueByParam(paramNumber))
-                End If
-            Next
-
-            script = sb.ToString()
-            Return True
-        End Function
-
-
 
         Public Shared Function ShowSelectionForm(
-    prompt As String,
-    title As String,
-    options As IEnumerable(Of String)
-) As String
+                                            prompt As String,
+                                            title As String,
+                                            options As IEnumerable(Of String)
+                                        ) As String
 
             Dim selectedOption As String = "ESC"
 
@@ -8019,222 +7231,6 @@ Namespace SharedLibrary
             End If
         End Function
 
-        Public Shared Function oldShowCustomInputBox(
-                                                    prompt As String,
-                                                    title As String,
-                                                    SimpleInput As Boolean,
-                                                    Optional DefaultValue As String = "",
-                                                    Optional CtrlP As String = "",
-                                                    Optional OptionalButtons As System.Tuple(Of System.String, System.String, System.String)() = Nothing
-                                                ) As String
-
-            ' Create and configure the form
-            Dim inputForm As New Form() With {
-        .Opacity = 0,
-        .Text = title,
-        .FormBorderStyle = FormBorderStyle.FixedDialog,
-        .StartPosition = FormStartPosition.CenterScreen,
-        .MaximizeBox = False,
-        .MinimizeBox = False,
-        .ShowInTaskbar = False,
-        .TopMost = True,
-        .AutoScaleMode = AutoScaleMode.Font,
-        .AutoSize = True,
-        .AutoSizeMode = AutoSizeMode.GrowAndShrink
-    }
-
-            ' Set the icon
-            Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
-            inputForm.Icon = Icon.FromHandle(bmp.GetHicon())
-
-            ' Standard font
-            Dim standardFont As New System.Drawing.Font("Segoe UI", 9.0F, FontStyle.Regular, GraphicsUnit.Point)
-            inputForm.Font = standardFont
-
-            ' Main flow panel (vertical stack, auto‐sized, padding)
-            Dim mainFlow As New FlowLayoutPanel() With {
-        .FlowDirection = FlowDirection.TopDown,
-        .Dock = DockStyle.Fill,
-        .AutoSize = True,
-        .AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        .Padding = New Padding(20),
-        .MaximumSize = New Size(640 + 100, 0)   ' Limit total width
-    }
-
-            ' Prompt label
-            Dim promptLabel As New System.Windows.Forms.Label() With {
-        .Text = prompt,
-        .Font = standardFont,
-        .AutoSize = True,
-        .MaximumSize = New Size(600 + 100, 0)   ' Wrap at 600px
-    }
-            mainFlow.Controls.Add(promptLabel)
-
-            ' Input TextBox
-            Dim inputTextBox As New TextBox() With {
-        .Font = standardFont,
-        .Multiline = Not SimpleInput,
-        .WordWrap = True,
-        .ScrollBars = If(SimpleInput, ScrollBars.None, ScrollBars.Vertical),
-        .Width = 600 + 100,
-        .Text = DefaultValue
-    }
-            If SimpleInput Then
-                ' Single‐line height
-                inputTextBox.Height = TextRenderer.MeasureText("Wy", standardFont).Height + 6
-            Else
-                ' Multi‐line height
-                inputTextBox.Height = 150
-            End If
-            mainFlow.Controls.Add(inputTextBox)
-
-            ' KeyDown handlers for Enter/Escape
-            If SimpleInput Then
-                AddHandler inputTextBox.KeyDown, Sub(sender, e)
-                                                     If e.KeyCode = Keys.Enter Then
-                                                         inputForm.DialogResult = DialogResult.OK
-                                                         inputForm.Close()
-                                                         e.SuppressKeyPress = True
-                                                     End If
-                                                 End Sub
-            Else
-                AddHandler inputTextBox.KeyDown, Sub(sender, e)
-                                                     If e.KeyCode = Keys.Enter AndAlso e.Modifiers = Keys.Control Then
-                                                         inputForm.DialogResult = DialogResult.OK
-                                                         inputForm.Close()
-                                                         e.SuppressKeyPress = True
-                                                     ElseIf e.KeyCode = Keys.Escape Then
-                                                         inputForm.DialogResult = DialogResult.Cancel
-                                                         inputForm.Close()
-                                                         e.SuppressKeyPress = True
-                                                     End If
-                                                 End Sub
-            End If
-
-            ' Ctrl+P insertion, if provided
-            If Not String.IsNullOrEmpty(CtrlP) Then
-                AddHandler inputTextBox.KeyDown, Sub(sender, e)
-                                                     If e.KeyCode = Keys.P AndAlso e.Modifiers = Keys.Control Then
-                                                         Dim selPos = inputTextBox.SelectionStart
-                                                         inputTextBox.Text = inputTextBox.Text.Insert(selPos, CtrlP)
-                                                         inputTextBox.SelectionStart = selPos + CtrlP.Length
-                                                         e.SuppressKeyPress = True
-                                                     End If
-                                                 End Sub
-            End If
-
-            Dim selectedPrefix As System.String = Nothing
-
-            ' OK and Cancel buttons
-            Dim okButton As New Button() With {
-        .Text = "OK",
-        .AutoSize = True,
-        .Font = standardFont
-    }
-            Dim cancelButton As New Button() With {
-        .Text = "Cancel",
-        .AutoSize = True,
-        .Font = standardFont
-    }
-
-            AddHandler okButton.Click, Sub()
-                                           inputForm.DialogResult = DialogResult.OK
-                                           inputForm.Close()
-                                       End Sub
-            AddHandler cancelButton.Click, Sub()
-                                               inputForm.DialogResult = DialogResult.Cancel
-                                               inputForm.Close()
-                                           End Sub
-
-            ' Bottom flow panel for buttons
-            Dim bottomFlow As New FlowLayoutPanel() With {
-        .FlowDirection = FlowDirection.LeftToRight,
-        .AutoSize = True,
-        .AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        .Margin = New Padding(0, 20, 0, 0)
-    }
-            bottomFlow.Controls.Add(okButton)
-            bottomFlow.Controls.Add(cancelButton)
-
-            ' Optional extra buttons (max 5): label, tooltip (description), and prefix
-            If OptionalButtons IsNot Nothing AndAlso OptionalButtons.Length > 0 Then
-                Dim tip As New System.Windows.Forms.ToolTip()
-                Dim count As System.Int32 = System.Math.Min(5, OptionalButtons.Length)
-                For i As System.Int32 = 0 To count - 1
-                    Dim item = OptionalButtons(i)
-                    Dim extraBtn As New System.Windows.Forms.Button() With {
-                    .Text = item.Item1,
-                    .AutoSize = True,
-                    .Font = standardFont
-                }
-                    ' Tooltip shows description
-                    tip.SetToolTip(extraBtn, item.Item2)
-                    ' First extra button: double padding to the Cancel button
-                    If i = 0 Then
-                        extraBtn.Margin = New System.Windows.Forms.Padding(cancelButton.Margin.Left * 2, cancelButton.Margin.Top, cancelButton.Margin.Right, cancelButton.Margin.Bottom)
-                    End If
-                    AddHandler extraBtn.Click,
-                    Sub()
-                        selectedPrefix = item.Item3
-                        inputForm.DialogResult = System.Windows.Forms.DialogResult.OK
-                        inputForm.Close()
-                    End Sub
-                    bottomFlow.Controls.Add(extraBtn)
-                Next
-            End If
-
-            mainFlow.Controls.Add(bottomFlow)
-
-            ' Add layout to form
-            inputForm.Controls.Add(mainFlow)
-
-            ' Ensure the form is top‐most and focused
-            inputForm.TopMost = True
-            inputForm.BringToFront()
-            inputForm.Focus()
-
-            ' Show the dialog, optionally owned by Outlook
-            Dim Result As DialogResult
-            If title.Contains("Browser") Then
-                Dim outlookApp As Object = CreateObject("Outlook.Application")
-                If outlookApp IsNot Nothing Then
-                    Dim explorer As Object = outlookApp.GetType().InvokeMember(
-                "ActiveExplorer",
-                BindingFlags.GetProperty, Nothing, outlookApp, Nothing
-            )
-                    If explorer IsNot Nothing Then
-                        explorer.GetType().InvokeMember(
-                    "WindowState",
-                    BindingFlags.SetProperty, Nothing, explorer, New Object() {1})
-                        explorer.GetType().InvokeMember(
-                    "Activate",
-                    BindingFlags.InvokeMethod, Nothing, explorer, Nothing)
-                    End If
-                End If
-                inputForm.Opacity = 1
-                Dim outlookHwnd As IntPtr = FindWindow("rctrl_renwnd32", Nothing)
-                Result = inputForm.ShowDialog(New WindowWrapper(outlookHwnd))
-            Else
-                inputForm.Opacity = 1
-                Result = inputForm.ShowDialog()
-            End If
-
-            ' Return the entered text or appropriate default
-            If Result = DialogResult.OK Then
-                'Return inputTextBox.Text
-                Dim finalText As System.String = inputTextBox.Text
-                If Not System.String.IsNullOrEmpty(selectedPrefix) AndAlso Not finalText.StartsWith(selectedPrefix, StringComparison.OrdinalIgnoreCase) Then
-                    finalText = selectedPrefix & " " & finalText
-                End If
-                Debug.WriteLine("Final text: " & finalText)
-                Return finalText
-            Else
-                Return If(Not SimpleInput, "ESC", "")
-            End If
-        End Function
-
-
-
 
 
         Public Shared Function ShowCustomYesNoBox(
@@ -8355,13 +7351,6 @@ Namespace SharedLibrary
             If (Not autoCloseSeconds.HasValue) AndAlso
        (Not String.IsNullOrEmpty(extraButtonText)) AndAlso
        (extraButtonAction IsNot Nothing) Then
-
-                'Dim extraButton As New System.Windows.Forms.Button() With {
-                '.Text = extraButtonText,
-                '.AutoSize = True,
-                '.Font = standardFont,
-                '.Margin = New System.Windows.Forms.Padding(10, 0, 0, 0)
-                '           }
 
 
                 Dim extraButton As New System.Windows.Forms.Button() With {
@@ -8486,12 +7475,6 @@ Namespace SharedLibrary
        (Not System.String.IsNullOrEmpty(extraButtonText)) AndAlso
        (extraButtonAction IsNot Nothing) Then
 
-                '   Dim extraButton As New System.Windows.Forms.Button() With {
-                '.Text = extraButtonText,
-                ' .AutoSize = True,
-                '  .Font = standardFont,
-                '   .Margin = New System.Windows.Forms.Padding(8, 0, 0, 0)
-                '}
 
                 Dim extraButton As New System.Windows.Forms.Button() With {
                             .Text = extraButtonText,
@@ -9419,6 +8402,8 @@ Namespace SharedLibrary
             inputForm.Dispose()
             Return (result = DialogResult.OK)
         End Function
+
+
 
         <DllImport("user32.dll", CharSet:=CharSet.Auto)>
         Private Shared Function SendMessage(
@@ -11014,416 +9999,6 @@ Namespace SharedLibrary
             settingsForm.ShowDialog()
         End Sub
 
-        Public Shared Sub oldShowSettingsWindow(Settings As Dictionary(Of String, String), SettingsTips As Dictionary(Of String, String), ByRef context As ISharedContext)
-
-            InitializeConfig(context, False, False)
-
-            If context.INIloaded = False Then Return
-
-            ' Create the form
-            Dim settingsForm As New System.Windows.Forms.Form()
-            settingsForm.Text = $"{AN} Settings"
-            settingsForm.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog
-            settingsForm.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen
-            settingsForm.MaximizeBox = False
-            settingsForm.MinimizeBox = False
-            settingsForm.ShowInTaskbar = False
-            settingsForm.TopMost = True
-
-            ' Set the icon
-            Dim bmp As New System.Drawing.Bitmap(My.Resources.Red_Ink_Logo)
-            settingsForm.Icon = System.Drawing.Icon.FromHandle(bmp.GetHicon())
-
-            ' Set a predefined font for consistent layout
-            Dim standardFont As New System.Drawing.Font("Segoe UI", 9.0F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point)
-            settingsForm.Font = standardFont
-
-            ' Add description label
-            Dim descriptionLabel As New System.Windows.Forms.Label()
-            descriptionLabel.Text = "You can temporarily change the following values (save to keep them):"
-            descriptionLabel.AutoSize = True
-            descriptionLabel.Location = New System.Drawing.Point(10, 20)
-            settingsForm.Controls.Add(descriptionLabel)
-
-            ' Define controls for labels and inputs
-            Dim labelControls As New Dictionary(Of String, System.Windows.Forms.Label)
-            Dim settingControls As New Dictionary(Of String, System.Windows.Forms.Control)
-
-            ' Dynamically calculate label width
-            Dim maxLabelWidth As Integer = 0
-
-
-            ' Calculate maximum label width
-            For Each setting In Settings
-                Dim textSize As System.Drawing.Size
-                If context.INI_SecondAPI Then
-                    textSize = TextRenderer.MeasureText(setting.Value.Replace("{model}", context.INI_Model).Replace("{model2}", context.INI_Model_2) & ":", standardFont)
-                Else
-                    textSize = TextRenderer.MeasureText(setting.Value.Replace("{model}", context.INI_Model).Replace("{model2}", "2nd model (none)") & ":", standardFont)
-                End If
-
-                maxLabelWidth = Math.Max(maxLabelWidth, textSize.Width)
-            Next
-
-            Dim controlXOffset As Integer = maxLabelWidth + 20
-            Dim defaultControlWidth As Integer = 350  '240
-            Dim lineSpacing As Integer = CInt(TextRenderer.MeasureText("Sample", standardFont).Height * 1.5)
-            Dim yPos As Integer = descriptionLabel.Bottom + 20
-
-            ' Add labels and input controls
-            For Each setting In Settings
-                Dim label As New System.Windows.Forms.Label()
-                Dim ToolTip As New System.Windows.Forms.ToolTip()
-                If context.INI_SecondAPI Then
-                    label.Text = setting.Value.Replace("{model}", context.INI_Model).Replace("{model2}", context.INI_Model_2) & ":"
-                Else
-                    label.Text = setting.Value.Replace("{model}", context.INI_Model).Replace("{model2}", "2nd model (none)") & ":"
-                End If
-                label.AutoSize = True
-                label.Font = standardFont
-                label.Location = New System.Drawing.Point(10, yPos)
-                settingsForm.Controls.Add(label)
-                labelControls.Add(setting.Key, label)
-                Dim ToolTipText As String = SettingsTips(setting.Key)
-                ToolTip.SetToolTip(label, ToolTipText)
-
-                If IsBooleanSetting(setting.Key) Then
-                    Dim checkBox As New System.Windows.Forms.CheckBox()
-                    checkBox.Checked = Boolean.Parse(GetSettingValue(setting.Key, context))
-                    checkBox.Location = New System.Drawing.Point(controlXOffset, yPos)
-                    If setting.Key.Contains("_2") AndAlso Not context.INI_SecondAPI Then
-                        checkBox.Enabled = False
-                    Else
-                        checkBox.Enabled = True
-                    End If
-                    settingsForm.Controls.Add(checkBox)
-                    settingControls.Add(setting.Key, checkBox)
-                    ToolTip.SetToolTip(checkBox, ToolTipText)
-                Else
-                    Dim textBox As New System.Windows.Forms.TextBox()
-                    textBox.Text = GetSettingValue(setting.Key, context)
-                    textBox.Size = New System.Drawing.Size(defaultControlWidth, 20)
-                    textBox.Location = New System.Drawing.Point(controlXOffset, yPos)
-                    If setting.Key.Contains("_2") AndAlso Not context.INI_SecondAPI Then
-                        textBox.Enabled = False
-                    Else
-                        textBox.Enabled = True
-                    End If
-                    settingsForm.Controls.Add(textBox)
-                    settingControls.Add(setting.Key, textBox)
-                    ToolTip.SetToolTip(textBox, ToolTipText)
-                End If
-
-                yPos += lineSpacing
-            Next
-
-            ' Add buttons
-            Dim buttonYPos As Integer = yPos + 20
-            Dim buttonSpacing As Integer = 10
-
-            Dim switchButton As New System.Windows.Forms.Button()
-            switchButton.Text = "Switch Model"
-            Dim switchButtonSize As System.Drawing.Size = TextRenderer.MeasureText(switchButton.Text, standardFont)
-            switchButton.Size = New System.Drawing.Size(switchButtonSize.Width + 20, switchButtonSize.Height + 10)
-            switchButton.Location = New System.Drawing.Point(10, buttonYPos)
-            switchButton.Enabled = context.INI_SecondAPI
-            settingsForm.Controls.Add(switchButton)
-
-            Dim SwitchButtonToolTip As New System.Windows.Forms.ToolTip()
-            SwitchButtonToolTip.SetToolTip(switchButton, "Will accept the current settings and switch the primary model with the secondary model.")
-
-            Dim expertConfigButton As New System.Windows.Forms.Button()
-            expertConfigButton.Text = "Expert Config"
-            Dim expertButtonSize As System.Drawing.Size = TextRenderer.MeasureText(expertConfigButton.Text, standardFont)
-            expertConfigButton.Size = New System.Drawing.Size(expertButtonSize.Width + 20, expertButtonSize.Height + 10)
-            expertConfigButton.Location = New System.Drawing.Point(switchButton.Right + buttonSpacing, buttonYPos)
-            settingsForm.Controls.Add(expertConfigButton)
-
-            Dim expertConfigButtonToolTip As New System.Windows.Forms.ToolTip()
-            expertConfigButtonToolTip.SetToolTip(expertConfigButton, $"Will accept the current settings and in a separate window let you amend all configuration variables from '{AN2}.ini'.")
-
-
-            Dim saveConfigButton As New System.Windows.Forms.Button()
-            saveConfigButton.Text = "Save Configuration"
-            Dim saveButtonSize As System.Drawing.Size = TextRenderer.MeasureText(saveConfigButton.Text, standardFont)
-            saveConfigButton.Size = New System.Drawing.Size(saveButtonSize.Width + 20, saveButtonSize.Height + 10)
-            saveConfigButton.Location = New System.Drawing.Point(expertConfigButton.Right + buttonSpacing, buttonYPos)
-            settingsForm.Controls.Add(saveConfigButton)
-
-            Dim saveConfigToolTip As New System.Windows.Forms.ToolTip()
-            saveConfigToolTip.SetToolTip(saveConfigButton, $"Will save the current configuration to a local copy of '{AN2}.ini' (overwriting any existing such file).")
-
-            Dim CentralConfigAvailable As Boolean = System.IO.File.Exists(System.IO.Path.Combine(ExpandEnvironmentVariables(GetFromRegistry(RegPath_Base, RegPath_IniPath, True)), $"{AN2}.ini"))
-            Dim delLocalConfigButton As New System.Windows.Forms.Button()
-            If CentralConfigAvailable Then
-                delLocalConfigButton.Text = "Give Up Local Config"
-            Else
-                delLocalConfigButton.Text = "Reset Optional Values"
-            End If
-            Dim delLocalButtonSize As System.Drawing.Size = TextRenderer.MeasureText(delLocalConfigButton.Text, standardFont)
-            delLocalConfigButton.Size = New System.Drawing.Size(delLocalButtonSize.Width + 20, delLocalButtonSize.Height + 10)
-            delLocalConfigButton.Location = New System.Drawing.Point(saveConfigButton.Right + buttonSpacing, buttonYPos)
-            settingsForm.Controls.Add(delLocalConfigButton)
-
-            Dim delLocalConfigToolTip As New System.Windows.Forms.ToolTip()
-            If CentralConfigAvailable Then
-                If Left(context.RDV, 4) = "Word" Then
-                    delLocalConfigToolTip.SetToolTip(delLocalConfigButton, $"This will deactivate the local configuration in '{AN2}.ini' (by renaming it to '.bak', overwriting any existing such file) and have the central configuration file applied going forward.")
-                Else
-                    delLocalConfigToolTip.SetToolTip(delLocalConfigButton, $"This will deactivate the local configuration in '{AN2}.ini' (by renaming it to '.bak', overwriting any existing such file), and have the configuration file of your 'Word' add-in (if available) and otherwise the central one applied going forward.")
-                End If
-            Else
-                delLocalConfigToolTip.SetToolTip(delLocalConfigButton, $"This will reset all parameters that are not mandatory by removing them from your local configuration file '{AN2}.ini'. A copy will be saved beforhand to '.bak', overwriting any existing such file.")
-            End If
-
-            Dim okButton As New System.Windows.Forms.Button()
-            okButton.Text = "OK"
-            Dim okButtonSize As System.Drawing.Size = TextRenderer.MeasureText(okButton.Text, standardFont)
-            okButton.Size = New System.Drawing.Size(okButtonSize.Width + 20, okButtonSize.Height + 10)
-            okButton.Location = New System.Drawing.Point(10, buttonYPos + 50)
-            settingsForm.Controls.Add(okButton)
-
-            Dim cancelButton As New System.Windows.Forms.Button()
-            cancelButton.Text = "Cancel"
-            Dim cancelButtonSize As System.Drawing.Size = TextRenderer.MeasureText(cancelButton.Text, standardFont)
-            cancelButton.Size = New System.Drawing.Size(cancelButtonSize.Width + 20, cancelButtonSize.Height + 10)
-            cancelButton.Location = New System.Drawing.Point(okButton.Right + buttonSpacing, buttonYPos + 50)
-            settingsForm.Controls.Add(cancelButton)
-
-            Dim aboutButton As New System.Windows.Forms.Button()
-            aboutButton.Text = $"About {AN}"
-            Dim aboutButtonSize As System.Drawing.Size = TextRenderer.MeasureText(aboutButton.Text, standardFont)
-            aboutButton.Size = New System.Drawing.Size(aboutButtonSize.Width + 20, aboutButtonSize.Height + 10)
-            aboutButton.Location = New System.Drawing.Point(cancelButton.Right + buttonSpacing, cancelButton.Top)
-            settingsForm.Controls.Add(aboutButton)
-
-            Dim RightSide As Integer = aboutButton.Right
-
-            Dim updateButton As New System.Windows.Forms.Button()
-            updateButton.Text = "Check for Updates"
-            If Not String.IsNullOrWhiteSpace(context.INI_UpdatePath) Then
-                updateButton.Text = "Do local update"
-            End If
-            Dim updateButtonSize As System.Drawing.Size = TextRenderer.MeasureText(updateButton.Text, standardFont)
-            updateButton.Size = New System.Drawing.Size(updateButtonSize.Width + 20, updateButtonSize.Height + 10)
-            updateButton.Location = New System.Drawing.Point(aboutButton.Right + buttonSpacing, cancelButton.Top)
-            If ApplicationDeployment.IsNetworkDeployed OrElse Not String.IsNullOrWhiteSpace(context.INI_UpdatePath) Then
-                settingsForm.Controls.Add(updateButton)
-                RightSide = updateButton.Right
-            End If
-
-            Dim FilePath As String = ""
-            Dim IsExcel As Boolean = True
-            If context.RDV.Contains("Word") Then
-                FilePath = ExpandEnvironmentVariables(HelperPaths("Word"))
-                IsExcel = False
-            ElseIf context.RDV.Contains("Excel") Then
-                FilePath = ExpandEnvironmentVariables(HelperPaths("Excel"))
-            End If
-            Debug.WriteLine("Filepath=" & FilePath)
-
-            Dim helperButton As New System.Windows.Forms.Button()
-            If Not String.IsNullOrEmpty(FilePath) Then
-                If File.Exists(FilePath) Then
-                    helperButton.Text = "Remove Helper"
-                Else
-                    helperButton.Text = "Install Helper"
-                End If
-                Dim HelperButtonSize As System.Drawing.Size = TextRenderer.MeasureText(helperButton.Text, standardFont)
-                helperButton.Size = New System.Drawing.Size(HelperButtonSize.Width + 20, HelperButtonSize.Height + 10)
-                helperButton.Location = New System.Drawing.Point(RightSide + buttonSpacing, cancelButton.Top)
-                settingsForm.Controls.Add(helperButton)
-            End If
-            Dim CapturedContext As ISharedContext = context
-
-            ' Attach handlers to buttons
-            AddHandler switchButton.Click, Sub(sender, e)
-                                               If CapturedContext.INI_SecondAPI Then
-                                                   For Each settingKey In settingControls.Keys
-                                                       Dim control = settingControls(settingKey)
-                                                       If TypeOf control Is System.Windows.Forms.TextBox Then
-                                                           ' Handle TextBox settings
-                                                           Dim textValue As String = DirectCast(control, System.Windows.Forms.TextBox).Text
-                                                           SetSettingValue(settingKey, textValue, CapturedContext)
-                                                       ElseIf TypeOf control Is System.Windows.Forms.CheckBox Then
-                                                           ' Handle CheckBox settings
-                                                           Dim boolValue As Boolean = DirectCast(control, System.Windows.Forms.CheckBox).Checked
-                                                           SetSettingValue(settingKey, boolValue.ToString(), CapturedContext)
-                                                       Else
-                                                           MessageBox.Show($"Error in ShowSettingsWindow - unsupported control type for setting '{settingKey}' in ShowSettingsWindow (Switch).", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-                                                       End If
-                                                   Next
-                                                   SwitchModels(CapturedContext)
-                                                   RefreshFormValues(settingControls, labelControls, CapturedContext, Settings)
-                                                   switchButton.Enabled = CapturedContext.INI_SecondAPI
-                                               End If
-                                               CapturedContext.MenusAdded = False
-                                           End Sub
-
-            AddHandler expertConfigButton.Click, Sub(sender, e)
-                                                     For Each settingKey In settingControls.Keys
-                                                         Dim control = settingControls(settingKey)
-                                                         If TypeOf control Is System.Windows.Forms.TextBox Then
-                                                             ' Handle TextBox settings
-                                                             Dim textValue As String = DirectCast(control, System.Windows.Forms.TextBox).Text
-                                                             SetSettingValue(settingKey, textValue, CapturedContext)
-                                                         ElseIf TypeOf control Is System.Windows.Forms.CheckBox Then
-                                                             ' Handle CheckBox settings
-                                                             Dim boolValue As Boolean = DirectCast(control, System.Windows.Forms.CheckBox).Checked
-                                                             SetSettingValue(settingKey, boolValue.ToString(), CapturedContext)
-                                                         Else
-                                                             MessageBox.Show($"Error in ShowSettingsWindow - unsupported control type for setting '{settingKey}' in ShowSettingsWindow (ExpertConfig).", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-                                                         End If
-                                                     Next
-                                                     ShowExpertConfiguration(CapturedContext, settingsForm)
-                                                     RefreshFormValues(settingControls, labelControls, CapturedContext, Settings)
-                                                     switchButton.Enabled = CapturedContext.INI_SecondAPI
-                                                     CapturedContext.MenusAdded = False
-                                                 End Sub
-
-            AddHandler saveConfigButton.Click, Sub(sender, e)
-                                                   For Each settingKey In settingControls.Keys
-                                                       Dim control = settingControls(settingKey)
-                                                       If TypeOf control Is System.Windows.Forms.TextBox Then
-                                                           ' Handle TextBox settings
-                                                           Dim textValue As String = DirectCast(control, System.Windows.Forms.TextBox).Text
-                                                           SetSettingValue(settingKey, textValue, CapturedContext)
-                                                       ElseIf TypeOf control Is System.Windows.Forms.CheckBox Then
-                                                           ' Handle CheckBox settings
-                                                           Dim boolValue As Boolean = DirectCast(control, System.Windows.Forms.CheckBox).Checked
-                                                           SetSettingValue(settingKey, boolValue.ToString(), CapturedContext)
-                                                       Else
-                                                           MessageBox.Show($"Error in ShowSettingsWindow - unsupported control type for setting '{settingKey}' in ShowSettingsWindow (Save).", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-                                                       End If
-                                                   Next
-                                                   UpdateAppConfig(CapturedContext)
-                                                   CapturedContext.MenusAdded = False
-                                               End Sub
-
-            AddHandler delLocalConfigButton.Click, Sub(sender, e)
-                                                       If CentralConfigAvailable Then
-                                                           If ShowCustomYesNoBox($"Do you really want to deactivate your local configuration file? The file '{AN2}.ini' will be renamed to '.bak' overwriting any existing such file", "Yes", "No") = 1 Then
-                                                               If RenameFileToBak(GetDefaultINIPath(CapturedContext.RDV)) Then
-                                                                   ShowCustomMessageBox("Local configuration deactivated. The central configuration will be applied going forward.", "OK")
-                                                                   InitializeConfig(CapturedContext, False, True)
-                                                               End If
-                                                           End If
-                                                       Else
-                                                           If ShowCustomYesNoBox($"Do you really want to reset your local configuration file by removing non-mandatory entries? The current configuration file '{AN2}.ini' will beforehand be saved to a '.bak' file overwriting any existing such file.", "Yes", "No") = 1 Then
-                                                               If RenameFileToBak(GetDefaultINIPath(CapturedContext.RDV)) Then
-                                                                   ResetLocalAppConfig(CapturedContext)
-                                                               End If
-                                                           End If
-                                                       End If
-                                                       RefreshFormValues(settingControls, labelControls, CapturedContext, Settings)
-                                                       switchButton.Enabled = CapturedContext.INI_SecondAPI
-                                                       CapturedContext.MenusAdded = False
-                                                   End Sub
-
-            AddHandler helperButton.Click, Async Sub(sender, e)
-                                               If helperButton.Text = "Remove Helper" Then
-                                                   If ShowCustomYesNoBox($"Do you really want to remove the helper file '{FilePath}' from your system? It will be unloaded and deleted. You can re-install it later.", "Yes", "No") = 1 Then
-                                                       If IsExcel Then UnloadExcelAddin(ExcelHelper) Else UnloadWordAddin(WordHelper)
-                                                       Try
-                                                           System.IO.File.Delete(FilePath)
-                                                       Catch ex As System.Exception
-                                                       End Try
-                                                       If System.IO.File.Exists(FilePath) Then
-                                                           ShowCustomMessageBox($"The helper file could not be deleted. Try to manually delete the file '{FilePath}' after having closed the application.")
-                                                       Else
-                                                           ShowCustomMessageBox("The helper file was successfully deleted.")
-                                                           helperButton.Text = "Install Helper"
-                                                           CapturedContext.MenusAdded = False
-                                                           RemoveMenu = True
-                                                       End If
-                                                   End If
-                                               Else
-                                                   If ShowCustomYesNoBox($"Do you really want to download the helper file from {AppsUrl} and have it installed to '{FilePath}'? Next time you start the application, it will be automatically loaded.", "Yes", "No") = 1 Then
-                                                       Dim DownloadUrl As String = ""
-                                                       If IsExcel Then DownloadUrl = ExcelHelperUrl Else DownloadUrl = WordHelperUrl
-                                                       Try
-                                                           Using client As New HttpClient()
-                                                               ' Increase timeout to prevent cutoffs
-                                                               client.Timeout = TimeSpan.FromMinutes(10)
-
-                                                               ' Disable automatic decompression (prevents incomplete downloads)
-                                                               client.DefaultRequestHeaders.AcceptEncoding.Clear()
-
-                                                               ' Start the download request
-                                                               Using response As HttpResponseMessage = Await client.GetAsync(DownloadUrl, HttpCompletionOption.ResponseHeadersRead)
-
-                                                                   response.EnsureSuccessStatusCode()
-
-                                                                   ' Create file stream for writing
-                                                                   Using fileStream As FileStream = New FileStream(FilePath, FileMode.Create, FileAccess.Write, FileShare.None)
-                                                                       Using httpStream As Stream = Await response.Content.ReadAsStreamAsync()
-                                                                           Dim buffer(8192) As Byte ' 8KB buffer
-                                                                           Dim bytesRead As Integer
-                                                                           Do
-                                                                               bytesRead = Await httpStream.ReadAsync(buffer, 0, buffer.Length)
-                                                                               If bytesRead = 0 Then Exit Do ' Stop when finished
-                                                                               Await fileStream.WriteAsync(buffer, 0, bytesRead) ' Write chunk to file
-                                                                           Loop
-                                                                       End Using
-                                                                   End Using
-                                                               End Using
-                                                           End Using
-                                                           ShowCustomMessageBox($"Download to '{FilePath}' completed. You must restart the application for it to be loaded.")
-                                                           helperButton.Text = "Remove Helper"
-                                                       Catch ex As System.Exception
-                                                           ShowCustomMessageBox($"Error when downloading from '{DownloadUrl}' to '{FilePath}'. You may have to download and install the helper file manually.")
-                                                       End Try
-
-                                                   End If
-                                               End If
-                                               RefreshFormValues(settingControls, labelControls, CapturedContext, Settings)
-                                               switchButton.Enabled = CapturedContext.INI_SecondAPI
-                                               CapturedContext.MenusAdded = False
-                                           End Sub
-
-            AddHandler aboutButton.Click, Sub(sender, e)
-                                              ShowAboutWindow(settingsForm, CapturedContext)
-                                          End Sub
-
-            If ApplicationDeployment.IsNetworkDeployed OrElse Not String.IsNullOrWhiteSpace(CapturedContext.INI_UpdatePath) Then
-
-                AddHandler updateButton.Click, Sub(sender, e)
-                                                   Dim updater As New UpdateHandler()
-                                                   updater.CheckAndInstallUpdates(CapturedContext.RDV, CapturedContext.INI_UpdatePath)
-                                               End Sub
-
-            End If
-
-            AddHandler okButton.Click, Sub(sender, e)
-                                           For Each settingKey In settingControls.Keys
-                                               Dim control = settingControls(settingKey)
-                                               If TypeOf control Is System.Windows.Forms.TextBox Then
-                                                   ' Handle TextBox settings
-                                                   Dim textValue As String = DirectCast(control, System.Windows.Forms.TextBox).Text
-                                                   SetSettingValue(settingKey, textValue, CapturedContext)
-                                               ElseIf TypeOf control Is System.Windows.Forms.CheckBox Then
-                                                   ' Handle CheckBox settings
-                                                   Dim boolValue As Boolean = DirectCast(control, System.Windows.Forms.CheckBox).Checked
-                                                   SetSettingValue(settingKey, boolValue.ToString(), CapturedContext)
-                                               Else
-                                                   MessageBox.Show($"Error in ShowSettingsWindow - unsupported control type for setting '{settingKey}' in ShowSettingsWindow (OK).", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-                                               End If
-                                           Next
-                                           CapturedContext.MenusAdded = False
-                                           settingsForm.Close()
-                                       End Sub
-
-            AddHandler cancelButton.Click, Sub(sender, e)
-                                               settingsForm.Close()
-                                           End Sub
-
-            ' Adjust form size dynamically
-            settingsForm.ClientSize = New System.Drawing.Size(controlXOffset + defaultControlWidth + 40, cancelButton.Bottom + 20)
-
-            ' Show the form
-            settingsForm.ShowDialog()
-
-        End Sub
 
 
         Public Shared Sub UnloadExcelAddin(addinName As String)
@@ -11509,9 +10084,10 @@ Namespace SharedLibrary
         Public Shared Function IsBooleanSetting(settingKey As String) As Boolean
             ' Determine if a setting is a Boolean based on its key
             Dim booleanSettings As New List(Of String) From {
-        "DoubleS", "NoDash", "Clean", "MarkdownBubbles", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
+        "DoubleS", "NoEmDash", "Clean", "MarkdownBubbles", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
         "KeepFormat2", "KeepParaFormatInline", "ReplaceText2", "DoMarkupOutlook", "DoMarkupWord",
-        "APIDebug", "ISearch_Approve", "ISearch", "Lib"
+        "APIDebug", "ISearch_Approve", "ISearch", "Lib", "ContextMenu", "SecondAPI", "APIEncrypted", "APIEncrypted_2",
+        "OAuth2", "OAuth2_2", "PromptLib"
             }
             Return booleanSettings.Contains(settingKey)
         End Function
@@ -11542,6 +10118,12 @@ Namespace SharedLibrary
                     Return context.INI_Response
                 Case "Anon"
                     Return context.INI_Anon
+                Case "Anon_2"
+                    Return context.INI_Anon_2
+                Case "MaxOutputToken"
+                    Return context.INI_MaxOutputToken.ToString()
+                Case "MaxOutputToken_2"
+                    Return context.INI_MaxOutputToken_2.ToString()
                 Case "TokenCount"
                     Return context.INI_TokenCount
                 Case "APIKey_2"
@@ -11586,7 +10168,7 @@ Namespace SharedLibrary
                     Return context.INI_DoubleS.ToString()
                 Case "Clean"
                     Return context.INI_Clean.ToString()
-                Case "NoDash"
+                Case "NoEmDash"
                     Return context.INI_NoDash.ToString()
                 Case "MarkdownBubbles"
                     Return context.INI_MarkdownBubbles.ToString()
@@ -11709,6 +10291,32 @@ Namespace SharedLibrary
                     Return context.INI_Lib_Apply_SP
                 Case "Lib_Apply_SP_Markup"
                     Return context.INI_Lib_Apply_SP_Markup
+                Case "SecondAPI"
+                    Return context.INI_SecondAPI.ToString()
+                Case "APIEncrypted"
+                    Return context.INI_APIEncrypted.ToString()
+                Case "APIEncrypted_2"
+                    Return context.INI_APIEncrypted_2.ToString()
+                Case "UsageRestrictions"
+                    Return context.INI_UsageRestrictions
+                Case "ContextMenu"
+                    Return context.INI_ContextMenu.ToString()
+                Case "UpdateCheckInterval"
+                    Return context.INI_UpdateCheckInterval.ToString()
+                Case "UpdatePath"
+                    Return context.INI_UpdatePath
+                Case "HelpMeInkyPath"
+                    Return context.INI_HelpMeInkyPath
+                Case "RedactionInstructionsPath"
+                    Return context.INI_RedactionInstructionsPath
+                Case "RedactionInstructionsPathLocal"
+                    Return context.INI_RedactionInstructionsPathLocal
+                Case "TTSEndpoint"
+                    Return context.INI_TTSEndpoint
+                Case "OAuth2"
+                    Return context.INI_OAuth2.ToString()
+                Case "OAuth2_2"
+                    Return context.INI_OAuth2_2.ToString()
                 Case Else
                     Return ""
             End Select
@@ -11767,8 +10375,6 @@ Namespace SharedLibrary
                     context.INI_APICall_Object_2 = value
                 Case "Response_2"
                     context.INI_Response_2 = value
-                Case "Anon_2"
-                    context.INI_Anon_2 = value
                 Case "TokenCount_2"
                     context.INI_TokenCount_2 = value
                 Case "OAuth2ClientMail"
@@ -11793,7 +10399,7 @@ Namespace SharedLibrary
                     context.INI_DoubleS = Boolean.Parse(value)
                 Case "Clean"
                     context.INI_Clean = Boolean.Parse(value)
-                Case "NoDash"
+                Case "NoEmDash"
                     context.INI_NoDash = Boolean.Parse(value)
                 Case "MarkdownBubbles"
                     context.INI_MarkdownBubbles = Boolean.Parse(value)
@@ -11916,12 +10522,30 @@ Namespace SharedLibrary
                     context.INI_Lib_Apply_SP = value
                 Case "Lib_Apply_SP_Markup"
                     context.INI_Lib_Apply_SP_Markup = value
+                Case "Anon_2"
+                    context.INI_Anon_2 = value
+                Case "MaxOutputToken"
+                    context.INI_MaxOutputToken = Integer.Parse(value)
+                Case "MaxOutputToken_2"
+                    context.INI_MaxOutputToken_2 = Integer.Parse(value)
+                Case "ContextMenu"
+                    context.INI_ContextMenu = Boolean.Parse(value)
+                Case "UpdateCheckInterval"
+                    context.INI_UpdateCheckInterval = Integer.Parse(value)
+                Case "UpdatePath"
+                    context.INI_UpdatePath = value
+                Case "HelpMeInkyPath"
+                    context.INI_HelpMeInkyPath = value
+                Case "RedactionInstructionsPath"
+                    context.INI_RedactionInstructionsPath = value
+                Case "RedactionInstructionsPathLocal"
+                    context.INI_RedactionInstructionsPathLocal = value
 
                 Case Else
                     MessageBox.Show($"Error in SetSettingValue - could not save the value for '{settingName}'.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             End Select
 
-            If context.INI_PromptLibPath = "" And context.INI_PromptLibPathLocal = "" Then context.INI_PromptLib = False Else context.INI_PromptLib = True
+            If context.INI_PromptLibPath.Trim() = "" And context.INI_PromptLibPathLocal.Trim() = "" Then context.INI_PromptLib = False Else context.INI_PromptLib = True
 
         End Sub
 
@@ -12092,7 +10716,7 @@ Namespace SharedLibrary
                     {"Language2", context.INI_Language2},
                     {"DoubleS", context.INI_DoubleS.ToString()},
                     {"Clean", context.INI_Clean.ToString()},
-                    {"NoDash", context.INI_NoDash.ToString()},
+                    {"NoEmDash", context.INI_NoDash.ToString()},
                     {"DefaultPrefix", context.INI_DefaultPrefix},
                     {"MarkdownBubbles", context.INI_MarkdownBubbles.ToString()},
                     {"KeepFormat1", context.INI_KeepFormat1.ToString()},
@@ -12155,13 +10779,13 @@ Namespace SharedLibrary
                     {"Lib_Timeout", context.INI_Lib_Timeout.ToString()},
                     {"Lib_Find_SP", context.INI_Lib_Find_SP},
                     {"Lib_Apply_SP", context.INI_Lib_Apply_SP},
-                    {"Lib_Apply_SP_Markup", context.INI_ISearch_Apply_SP_Markup},
+                    {"Lib_Apply_SP_Markup", context.INI_Lib_Apply_SP_Markup},
                     {"MarkupMethodHelper", context.INI_MarkupMethodHelper.ToString()},
                     {"MarkupMethodWord", context.INI_MarkupMethodWord.ToString()},
                     {"MarkupMethodWordOverride", context.INI_MarkupMethodWordOverride},
                     {"MarkupMethodOutlookOverride", context.INI_MarkupMethodOutlookOverride},
                     {"ShortcutsWordExcel", context.INI_ShortcutsWordExcel},
-                    {"ContextMenu", context.INI_ContextMenu},
+                    {"ContextMenu", context.INI_ContextMenu.ToString()},
                     {"UpdateCheckInterval", context.INI_UpdateCheckInterval},
                     {"UpdatePath", context.INI_UpdatePath},
                     {"HelpMeInkyPath", context.INI_HelpMeInkyPath},
@@ -12491,7 +11115,12 @@ Namespace SharedLibrary
                     {"WebAgentPathLocal", context.INI_WebAgentPathLocal},
                     {"DocCheckPath", context.INI_DocCheckPath},
                     {"DocCheckPathLocal", context.INI_DocCheckPathLocal},
-                    {"PromptLib_Transcript", context.INI_PromptLibPath_Transcript}
+                    {"PromptLib_Transcript", context.INI_PromptLibPath_Transcript},
+                    {"RedactionInstructionsPath", context.INI_RedactionInstructionsPath},
+                    {"RedactionInstructionsPathLocal", context.INI_RedactionInstructionsPathLocal},
+                    {"HelpMeInkyPath", context.INI_HelpMeInkyPath},
+                    {"UpdateCheckInterval", context.INI_UpdateCheckInterval.ToString()},
+                    {"UpdatePath", context.INI_UpdatePath}
                 }
 
                 ' Read the original ini file content
@@ -12790,157 +11419,6 @@ Namespace SharedLibrary
         End Function
 
 
-        Public Shared Function oldShowVariableConfigurationWindow(
-                                        variableNames As List(Of String),
-                                        variableValues As Dictionary(Of String, Object),
-                                        Optional ownerForm As Form = Nothing
-                                    ) As Dictionary(Of String, Object)
-
-            Dim baseWidth As Integer = 400
-            Dim baseHeight As Integer = 300
-
-            Dim configForm As New Form() With {
-                        .Text = "Configure Parameters",
-                        .FormBorderStyle = FormBorderStyle.Sizable,
-                        .StartPosition = FormStartPosition.CenterScreen,
-                        .MaximizeBox = True,
-                        .MinimizeBox = True,
-                        .Font = New System.Drawing.Font("Segoe UI", 9.0F),
-                        .ClientSize = New Size(baseWidth * 2, baseHeight * 2) ' Double the "base" size
-                            }
-
-            ' Safely set the icon (if resource is valid)
-            Try
-                Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
-                configForm.Icon = Icon.FromHandle(bmp.GetHicon())
-            Catch ex As Exception
-                MessageBox.Show($"Error loading icon: {ex.Message}",
-                        "Error",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Error)
-            End Try
-
-            ' Create the DataGridView and allow it to fill space / resize with the form
-            Dim dgv As New DataGridView() With {
-                            .Dock = DockStyle.Fill,
-                            .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                            .AllowUserToResizeColumns = True,
-                            .AllowUserToAddRows = False,
-                            .AllowUserToDeleteRows = False,
-                            .ReadOnly = False
-                        }
-
-            dgv.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.EnableResizing
-            dgv.ColumnHeadersHeight += 5
-
-            ' Increase the header font size by 5 points over the form's base font
-            dgv.ColumnHeadersDefaultCellStyle.Font = New System.Drawing.Font(configForm.Font.FontFamily,
-                                                      configForm.Font.Size,
-                                                      configForm.Font.Style)
-
-            ' Define columns
-            Dim colVariableName As New DataGridViewTextBoxColumn() With {
-                                .HeaderText = "Variable Name",
-                                .ReadOnly = True
-                            }
-            Dim colValue As New DataGridViewTextBoxColumn() With {
-                                .HeaderText = "Value"
-                            }
-            Dim colType As New DataGridViewTextBoxColumn() With {
-                        .HeaderText = "Type",
-                        .Visible = False,
-                        .ReadOnly = True
-                    }
-            dgv.Columns.AddRange({colVariableName, colValue, colType})
-
-            ' Populate the DataGridView
-            For Each variableName As String In variableNames
-                Dim valueObj As Object = If(variableValues.ContainsKey(variableName), variableValues(variableName), Nothing)
-                Dim displayValue As String = If(valueObj?.ToString(), "")
-                Dim typeName As String = If(valueObj?.GetType().ToString(), "String")
-                dgv.Rows.Add(variableName, displayValue, typeName)
-            Next
-
-            ' Create Save / Cancel buttons
-            Dim saveButton As New Button() With {.Text = "Save", .AutoSize = True}
-            Dim cancelButton As New Button() With {.Text = "Cancel", .AutoSize = True}
-
-            ' FlowLayoutPanel for buttons
-            Dim buttonPanel As New FlowLayoutPanel() With {
-                        .Dock = DockStyle.Bottom,
-                        .FlowDirection = FlowDirection.RightToLeft,
-                        .AutoSize = True
-                    }
-            buttonPanel.Controls.Add(cancelButton)
-            buttonPanel.Controls.Add(saveButton)
-
-            ' Main TableLayoutPanel
-            Dim mainPanel As New TableLayoutPanel() With {
-                        .Dock = DockStyle.Fill,
-                        .RowCount = 2,
-                        .ColumnCount = 1
-                    }
-            ' The DataGridView row fills all remaining space
-            mainPanel.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
-            ' The button panel auto-sizes
-            mainPanel.RowStyles.Add(New RowStyle(SizeType.AutoSize))
-
-            mainPanel.Controls.Add(dgv, 0, 0)
-            mainPanel.Controls.Add(buttonPanel, 0, 1)
-
-            ' Add to the form
-            configForm.Controls.Add(mainPanel)
-
-            ' Event handlers
-            Dim result As DialogResult = DialogResult.Cancel
-
-            AddHandler saveButton.Click,
-                        Sub(sender, e)
-                            Try
-                                For Each row As DataGridViewRow In dgv.Rows
-                                    If Not row.IsNewRow Then
-                                        Dim varName As String = CStr(row.Cells(0).Value)
-                                        Dim varValue As String = CStr(row.Cells(1).Value)
-                                        If Not String.IsNullOrEmpty(varName) Then
-                                            variableValues(varName) = varValue
-                                        End If
-                                    End If
-                                Next
-                                result = DialogResult.OK
-                                configForm.Close()
-                            Catch ex As Exception
-                                MessageBox.Show($"Error saving values: {ex.Message}",
-                                                "Error",
-                                                MessageBoxButtons.OK,
-                                                MessageBoxIcon.Error)
-                            End Try
-                        End Sub
-
-            AddHandler cancelButton.Click,
-                        Sub(sender, e)
-                            result = DialogResult.Cancel
-                            configForm.Close()
-                        End Sub
-
-            ' Show the form (modal) in front of the owner form if available
-            If ownerForm IsNot Nothing Then
-                configForm.ShowDialog(ownerForm)
-            Else
-                configForm.ShowDialog()
-            End If
-
-            ' Return updated dictionary or original
-            Return If(result = DialogResult.OK,
-              variableValues,
-              Nothing)
-
-            'Return If(result = DialogResult.OK,
-            'variableValues,
-            ' New Dictionary(Of String, Object)(variableValues))
-
-        End Function
-
-
 
         Public Shared Sub ShowExpertConfiguration(ByRef context As ISharedContext, ownerform As Form)
             ' Dictionary to store variable names and their current values
@@ -12962,7 +11440,7 @@ Namespace SharedLibrary
             variableValues.Add("TokenCount", context.INI_TokenCount)
             variableValues.Add("DoubleS", context.INI_DoubleS)
             variableValues.Add("Clean", context.INI_Clean)
-            variableValues.Add("NoDash", context.INI_NoDash)
+            variableValues.Add("NoEmDash", context.INI_NoDash)
             variableValues.Add("DefaultPrefix", context.INI_DefaultPrefix)
             variableValues.Add("MarkdownBubbles", context.INI_MarkdownBubbles)
             variableValues.Add("PreCorrection", context.INI_PreCorrection)
@@ -13053,8 +11531,8 @@ Namespace SharedLibrary
             variableValues.Add("SpecialServicePath", context.INI_SpecialServicePath)
             variableValues.Add("FindClausePath", context.INI_FindClausePath)
             variableValues.Add("FindClausePathLocal", context.INI_FindClausePathLocal)
-            variableValues.Add("WebagentPath", context.INI_WebAgentPath)
-            variableValues.Add("WebagentPathLocal", context.INI_WebAgentPathLocal)
+            variableValues.Add("WebAgentPath", context.INI_WebAgentPath)
+            variableValues.Add("WebAgentPathLocal", context.INI_WebAgentPathLocal)
             variableValues.Add("DocCheckPath", context.INI_DocCheckPath)
             variableValues.Add("DocCheckPathLocal", context.INI_DocCheckPathLocal)
             variableValues.Add("PromptLib_Transcript", context.INI_PromptLibPath_Transcript)
@@ -13142,7 +11620,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("TokenCount") Then context.INI_TokenCount = updatedValues("TokenCount")
                 If updatedValues.ContainsKey("DoubleS") Then context.INI_DoubleS = CBool(updatedValues("DoubleS"))
                 If updatedValues.ContainsKey("Clean") Then context.INI_Clean = CBool(updatedValues("Clean"))
-                If updatedValues.ContainsKey("NoDash") Then context.INI_NoDash = CBool(updatedValues("NoDash"))
+                If updatedValues.ContainsKey("NoEmDash") Then context.INI_NoDash = CBool(updatedValues("NoEmDash"))
                 If updatedValues.ContainsKey("DefaultPrefix") Then context.INI_DefaultPrefix = updatedValues("DefaultPrefix")
                 If updatedValues.ContainsKey("MarkdownBubbles") Then context.INI_MarkdownBubbles = CBool(updatedValues("MarkdownBubbles"))
                 If updatedValues.ContainsKey("PreCorrection") Then context.INI_PreCorrection = updatedValues("PreCorrection")
@@ -13270,13 +11748,12 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("Lib_Find_SP") Then context.INI_Lib_Find_SP = updatedValues("Lib_Find_SP")
                 If updatedValues.ContainsKey("Lib_Apply_SP") Then context.INI_Lib_Apply_SP = updatedValues("Lib_Apply_SP")
                 If updatedValues.ContainsKey("Lib_Apply_SP_Markup") Then context.INI_Lib_Apply_SP_Markup = updatedValues("Lib_Apply_SP_Markup")
-                If updatedValues.ContainsKey("ISearch_Apply_SP_Markup") Then context.INI_ISearch_Apply_SP_Markup = updatedValues("ISearch_Apply_SP_Markup")
                 If updatedValues.ContainsKey("MarkupMethodHelper") Then context.INI_MarkupMethodHelper = CInt(updatedValues("MarkupMethodHelper"))
                 If updatedValues.ContainsKey("MarkupMethodWord") Then context.INI_MarkupMethodWord = CInt(updatedValues("MarkupMethodWord"))
                 If updatedValues.ContainsKey("MarkupMethodWordOverride") Then context.INI_MarkupMethodWordOverride = updatedValues("MarkupMethodWordOverride")
                 If updatedValues.ContainsKey("MarkupMethodOutlookOverride") Then context.INI_MarkupMethodOutlookOverride = updatedValues("MarkupMethodOutlookOverride")
                 If updatedValues.ContainsKey("ShortcutsWordExcel") Then context.INI_ShortcutsWordExcel = updatedValues("ShortcutsWordExcel")
-                If updatedValues.ContainsKey("ContextMenu") Then context.INI_ContextMenu = updatedValues("ContextMenu")
+                If updatedValues.ContainsKey("ContextMenu") Then context.INI_ContextMenu = CBool(updatedValues("ContextMenu"))
                 If updatedValues.ContainsKey("UpdateCheckInterval") Then context.INI_UpdateCheckInterval = CInt(updatedValues("UpdateCheckInterval"))
                 If updatedValues.ContainsKey("UpdatePath") Then context.INI_UpdatePath = updatedValues("UpdatePath")
                 If updatedValues.ContainsKey("HelpMeInkyPath") Then context.INI_HelpMeInkyPath = updatedValues("HelpMeInkyPath")
@@ -13286,7 +11763,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("LocalModelPath") Then context.INI_LocalModelPath = updatedValues("LocalModelPath")
                 If updatedValues.ContainsKey("TTSEndpoint") Then context.INI_TTSEndpoint = updatedValues("TTSEndpoint")
                 If updatedValues.ContainsKey("PromptLib") Then context.INI_PromptLibPath = updatedValues("PromptLib")
-                If updatedValues.ContainsKey("PromptLibLocal") Then context.INI_PromptLibPath = updatedValues("PromptLibLocal")
+                If updatedValues.ContainsKey("PromptLibLocal") Then context.INI_PromptLibPathLocal = updatedValues("PromptLibLocal")
                 If updatedValues.ContainsKey("MyStylePath") Then context.INI_MyStylePath = updatedValues("MyStylePath")
                 If updatedValues.ContainsKey("AlternateModelPath") Then context.INI_AlternateModelPath = updatedValues("AlternateModelPath")
                 If updatedValues.ContainsKey("SpecialServicePath") Then context.INI_SpecialServicePath = updatedValues("SpecialServicePath")
@@ -16455,950 +14932,6 @@ Namespace SharedLibrary
 
 
 
-    Public Class OldInitialConfig
-
-        Inherits Form
-
-        Private _context As ISharedContext
-
-        ' Radiobuttons
-        Private rbOpenAI As RadioButton
-        Private rbAzure As RadioButton
-        Private rbGemini As RadioButton
-        Private rbVertex As RadioButton
-
-        ' Checkboxen für "Use this configuration for app"
-        Private chkWord As System.Windows.Forms.CheckBox
-        Private chkOutlook As System.Windows.Forms.CheckBox
-        Private chkExcel As System.Windows.Forms.CheckBox
-
-        ' Panels/Controls dynamisch
-        Private panelConfig As Panel
-
-
-        ' Label, das den aktuellen Provider anzeigt, z.B. "Configuration for OpenAI:"
-        Private lblCurrentProvider As System.Windows.Forms.Label
-
-        ' Arrays mit Konfigurationen für jede RadioButton-Auswahl
-        Private configOpenAI As List(Of AppConfigurationVariable)
-        Private configAzure As List(Of AppConfigurationVariable)
-        Private configGemini As List(Of AppConfigurationVariable)
-        Private configVertex As List(Of AppConfigurationVariable)
-
-        ' Liste von TextBoxen/ComboBoxen/etc. in der aktuellen Anzeige
-        Private currentConfigControls As New List(Of Control)
-
-        ' Buttons
-        Private btnOK As Button
-        Private btnCancel As Button
-
-        Private invisibleLabel As New System.Windows.Forms.Label() With {
-                .Size = New System.Drawing.Size(1, 10),
-                .Visible = True
-            }
-
-        Private Const OverallWidth As Integer = 900
-
-        Private lblUseThisConfig As System.Windows.Forms.Label
-        ' Tracks which provider's fields are currently displayed in panelConfig
-        Private _activeProvider As String = "OpenAI"
-
-
-        '   Konstruktor – erhält das ISharedContext-Objekt per ByRef
-
-        Public Sub New(ByRef context As ISharedContext)
-            _context = context
-            Me.Size = New System.Drawing.Size(OverallWidth + 20, 800) ' Gesamtgröße des Fensters
-            Me.AutoScroll = False
-            Me.AutoSize = True
-            Me.InitializeComponent()
-            Me.FormBorderStyle = FormBorderStyle.Fixed3D ' Set the form border style to Fixed3D for a 3D effect
-        End Sub
-
-        '   Formular erstellen und alle geforderten Controls hinzufügen
-
-        Private Sub InitializeComponent()
-            ' Form-Eigenschaften
-            Me.Text = $"{SharedMethods.AN} Initial Configuration Wizard"
-            Me.FormBorderStyle = FormBorderStyle.None
-            Me.StartPosition = FormStartPosition.CenterScreen
-            Me.BackColor = ColorTranslator.FromWin32(&H8000000F)
-            Me.ControlBox = False  ' Keine Min/Max/Schließen-Buttons
-            Me.AutoScroll = True
-
-            Dim standardFont As New System.Drawing.Font("Segoe UI", 9.0F, FontStyle.Regular, GraphicsUnit.Point)
-            Me.Font = standardFont
-
-            ' PictureBox (Logo)
-            Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
-            Dim pictureBox As New PictureBox() With {
-            .Image = bmp,
-            .SizeMode = PictureBoxSizeMode.Zoom
-        }
-            pictureBox.SetBounds(10, 10, 50, 50)
-            Me.Controls.Add(pictureBox)
-
-            ' Label "Welcome to {AN}" neben dem Logo
-            Dim lblWelcome As New System.Windows.Forms.Label() With {
-                .Text = $"Welcome to {SharedMethods.AN}",
-                .AutoSize = True,
-                .Font = New System.Drawing.Font("Segoe UI", 12.0F, FontStyle.Bold, GraphicsUnit.Point)
-            }
-
-            lblWelcome.Location = New System.Drawing.Point(pictureBox.Right + 10, pictureBox.Top + (pictureBox.Height \ 2) - (lblWelcome.Height \ 2))
-            Me.Controls.Add(lblWelcome)
-
-            ' LinkLabel mit dem Text über fehlende .ini
-            Dim lblInfo As New LinkLabel() With {
-            .AutoSize = True,
-            .MaximumSize = New Size(OverallWidth, 0),
-            .Text = $"No configuration file '{SharedMethods.AN2}.ini' was found, in which all settings " &
-                    "can be made locally or centrally. Therefore, you can make the basic settings here, " &
-                    "which will then be saved in such a file. You can then expand this manually. " &
-                    $"How this works is explained in the manual, which you can find at {SharedMethods.AN4}"
-        }
-            lblInfo.Location = New System.Drawing.Point(10, pictureBox.Bottom + 15)
-            AddHandler lblInfo.LinkClicked, AddressOf LinkLabel_LinkClicked
-            ' Wir markieren den Link-Bereich (ungefähr) am Ende des Textes
-            lblInfo.Links.Add(New LinkLabel.Link() With {
-            .LinkData = $"{SharedMethods.AN4}",
-            .Start = lblInfo.Text.IndexOf($"{SharedMethods.AN4}", StringComparison.Ordinal),
-            .Length = $"{SharedMethods.AN4}".Length
-        })
-            Me.Controls.Add(lblInfo)
-
-            ' Label + RadioButtons "Which AI provider do you use?"
-            Dim lblWhichAI As New System.Windows.Forms.Label() With {
-            .Text = "Select API provider:",
-            .AutoSize = True,
-            .Font = New System.Drawing.Font(standardFont, FontStyle.Bold)
-        }
-            lblWhichAI.Location = New System.Drawing.Point(10, lblInfo.Bottom + 20)
-            Me.Controls.Add(lblWhichAI)
-
-            rbOpenAI = New RadioButton() With {
-            .Text = "OpenAI",
-            .AutoSize = True,
-            .Checked = True
-        }
-            rbOpenAI.Location = New System.Drawing.Point(lblWhichAI.Right + 10, lblInfo.Bottom + 18)
-            AddHandler rbOpenAI.CheckedChanged, AddressOf RadioButton_CheckedChanged
-            Me.Controls.Add(rbOpenAI)
-
-            rbAzure = New RadioButton() With {
-            .Text = "Microsoft Azure OpenAI Services",
-            .AutoSize = True
-        }
-            rbAzure.Location = New System.Drawing.Point(rbOpenAI.Right + 20, rbOpenAI.Top)
-            AddHandler rbAzure.CheckedChanged, AddressOf RadioButton_CheckedChanged
-            Me.Controls.Add(rbAzure)
-
-            rbGemini = New RadioButton() With {
-            .Text = "Google Gemini",
-            .AutoSize = True
-        }
-            rbGemini.Location = New System.Drawing.Point(rbAzure.Right + 20, rbOpenAI.Top)
-            AddHandler rbGemini.CheckedChanged, AddressOf RadioButton_CheckedChanged
-            Me.Controls.Add(rbGemini)
-
-            rbVertex = New RadioButton() With {
-            .Text = "Google Vertex",
-            .AutoSize = True
-        }
-            rbVertex.Location = New System.Drawing.Point(rbGemini.Right + 20, rbOpenAI.Top)
-            AddHandler rbVertex.CheckedChanged, AddressOf RadioButton_CheckedChanged
-            Me.Controls.Add(rbVertex)
-
-            ' Zweite LinkLabel-Zeile (darunter)
-            Dim lblMoreInfo As New LinkLabel() With {
-            .AutoSize = True,
-            .MaximumSize = New Size(OverallWidth - 20, 0),
-            .Text = $"Note: More on how to obtain access to one of these providers is described on {SharedMethods.AN4}. Getting an API access is not expensive. You can use the below form also for other providers. If this does not work or you need to configure more, abort and do it manually before restarting your application."
-        }
-            lblMoreInfo.Location = New System.Drawing.Point(30, rbOpenAI.Bottom + 5)
-            AddHandler lblMoreInfo.LinkClicked, AddressOf LinkLabel_LinkClicked
-            lblMoreInfo.Links.Add(New LinkLabel.Link() With {
-            .LinkData = $"{SharedMethods.AN4}",
-            .Start = lblMoreInfo.Text.IndexOf($"{SharedMethods.AN4}", StringComparison.Ordinal),
-            .Length = $"{SharedMethods.AN4}".Length
-        })
-            Me.Controls.Add(lblMoreInfo)
-
-            ' Label für "Configuration for <AI Provider>:"
-            lblCurrentProvider = New System.Windows.Forms.Label() With {
-            .AutoSize = True,
-            .Font = New System.Drawing.Font(standardFont, FontStyle.Bold),
-            .Location = New System.Drawing.Point(10, lblMoreInfo.Bottom + 20)
-        }
-            Me.Controls.Add(lblCurrentProvider)
-
-            ' Panel, in das wir die dynamischen Eingabefelder platzieren
-            panelConfig = New Panel() With {
-                .AutoScroll = True,
-                .Location = New System.Drawing.Point(10, lblCurrentProvider.Bottom + 5),
-                .Width = OverallWidth
-            }
-            AddHandler panelConfig.SizeChanged, AddressOf PanelConfig_SizeChanged
-            Me.Controls.Add(panelConfig)
-
-            ' Erstellt die Konfig-Daten
-            PrepareConfigData()
-
-            ' Checkboxen: "Use this configuration for app:"
-            lblUseThisConfig = New System.Windows.Forms.Label() With {
-                .Text = $"Use this configuration for {SharedMethods.AN}:",
-                .Font = New System.Drawing.Font(Me.Font, FontStyle.Bold),
-                .AutoSize = True
-            }
-            lblUseThisConfig.Location = New System.Drawing.Point(10, panelConfig.Bottom + 10)
-            Me.Controls.Add(lblUseThisConfig)
-
-            chkWord = New System.Windows.Forms.CheckBox() With {
-            .Text = "for Word",
-            .AutoSize = True,
-            .Checked = _context.RDV.StartsWith("Word")
-            }
-            chkWord.Location = New System.Drawing.Point(lblUseThisConfig.Right + 10, lblUseThisConfig.Top)
-            Me.Controls.Add(chkWord)
-
-            chkOutlook = New System.Windows.Forms.CheckBox() With {
-            .Text = "for Outlook (as separate config)",
-            .AutoSize = True,
-            .Checked = _context.RDV.StartsWith("Outlook")
-        }
-            chkOutlook.Location = New System.Drawing.Point(chkWord.Right + 17, lblUseThisConfig.Top)
-            Me.Controls.Add(chkOutlook)
-
-            chkExcel = New System.Windows.Forms.CheckBox() With {
-            .Text = "for Excel (as separate config)",
-            .AutoSize = True,
-            .Checked = _context.RDV.StartsWith("Excel")
-        }
-            chkExcel.Location = New System.Drawing.Point(chkOutlook.Right + 17, lblUseThisConfig.Top)
-            Me.Controls.Add(chkExcel)
-
-            ' Buttons "OK" und "Cancel"
-            btnOK = New Button() With {
-            .Text = "OK, save this configuration and continue",
-            .AutoSize = True
-        }
-            btnOK.Location = New System.Drawing.Point(10, lblUseThisConfig.Bottom + 20)
-            AddHandler btnOK.Click, AddressOf btnOK_Click
-            Me.Controls.Add(btnOK)
-
-            btnCancel = New Button() With {
-            .Text = "Cancel",
-            .AutoSize = True
-        }
-            btnCancel.Location = New System.Drawing.Point(btnOK.Right + 10, btnOK.Top)
-            AddHandler btnCancel.Click, AddressOf btnCancel_Click
-            Me.Controls.Add(btnCancel)
-
-            ' Invisible label to ensure margin
-
-            invisibleLabel.Location = New System.Drawing.Point(10, btnCancel.Bottom + 10)
-            Me.Controls.Add(invisibleLabel)
-
-            _activeProvider = rbOpenAI.Text
-
-            ' Anzeige initial füllen
-            LoadConfigForSelectedRadioButton()
-        End Sub
-
-        Private Sub PanelConfig_SizeChanged(sender As Object, e As EventArgs)
-            Dim panel As Panel = CType(sender, Panel)
-
-            ' Adjust controls below panelConfig dynamically
-            lblUseThisConfig.Location = New System.Drawing.Point(10, panel.Bottom + 20)
-            chkWord.Location = New System.Drawing.Point(lblUseThisConfig.Right + 10, lblUseThisConfig.Top)
-            chkOutlook.Location = New System.Drawing.Point(chkWord.Right + 20, lblUseThisConfig.Top)
-            chkExcel.Location = New System.Drawing.Point(chkOutlook.Right + 20, lblUseThisConfig.Top)
-            btnOK.Location = New System.Drawing.Point(10, lblUseThisConfig.Bottom + 20)
-            btnCancel.Location = New System.Drawing.Point(btnOK.Right + 10, btnOK.Top)
-            invisibleLabel.Location = New System.Drawing.Point(10, btnCancel.Bottom + 10)
-            Me.Height = invisibleLabel.Bottom + 20
-
-        End Sub
-
-        ' Erzeugt die vier Konfigurationslisten für die AI-Provider
-
-        Private Sub PrepareConfigData()
-            ' Wir verwenden dieselben 13 Variablen, können aber bei Bedarf
-            ' unterschiedliche Defaults pro Provider setzen.
-
-            configOpenAI = CreateDefaultConfigSet("OpenAI")
-            configAzure = CreateDefaultConfigSet("Microsoft Azure OpenAI Services")
-            configGemini = CreateDefaultConfigSet("Google Gemini")
-            configVertex = CreateDefaultConfigSet("Google Vertex")
-        End Sub
-
-
-        ' Erzeugt eine Liste aller 13 Konfigurations-Variablen mit Standardwerten
-
-        Private Function CreateDefaultConfigSet(providerName As String) As List(Of AppConfigurationVariable)
-            Dim list As New List(Of AppConfigurationVariable)()
-            Select Case providerName
-                Case "OpenAI"
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "API Key:",
-                        .VarName = "INI_APIKey",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = ""
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Temperature:",
-                        .VarName = "INI_Temperature",
-                        .VarType = "String",
-                        .ValidationRule = "0.0-2.0",
-                        .DefaultValue = "0.2"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Timeout (ms):",
-                        .VarName = "INI_Timeout",
-                        .VarType = "Integer",
-                        .ValidationRule = ">0",
-                        .DefaultValue = "100000"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Model:",
-                        .VarName = "INI_Model",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "gpt-4.1"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Endpoint:",
-                        .VarName = "INI_Endpoint",
-                        .VarType = "String",
-                        .ValidationRule = "Hyperlink",
-                        .DefaultValue = "https://api.openai.com/v1/chat/completions"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "HeaderA:",
-                        .VarName = "INI_HeaderA",
-                        .VarType = "String",
-                        .ValidationRule = "",
-                        .DefaultValue = "Authorization"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "HeaderB:",
-                        .ValidationRule = "",
-                        .VarName = "INI_HeaderB",
-                        .VarType = "String",
-                        .DefaultValue = "Bearer {apikey}"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "APICall:",
-                        .VarName = "INI_APICall",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "{""model"":   ""{model}"",  ""messages"": [{""role"": ""system"",""content"": ""{promptsystem}""},{""role"": ""user"",""content"": ""{promptuser}""}],""temperature"": {temperature}}"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Response tag:",
-                        .VarName = "INI_Response",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "content"
-                    })
-                Case "Microsoft Azure OpenAI Services"
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "API Key:",
-                        .VarName = "INI_APIKey",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = ""
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Temperature:",
-                        .VarName = "INI_Temperature",
-                        .VarType = "String",
-                        .ValidationRule = "0.0-2.0",
-                        .DefaultValue = "0.2"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Timeout (ms):",
-                        .VarName = "INI_Timeout",
-                        .VarType = "Integer",
-                        .ValidationRule = ">0",
-                        .DefaultValue = "100000"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Model:",
-                        .VarName = "INI_Model",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "gpt-4.1"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Endpoint:",
-                        .VarName = "INI_Endpoint",
-                        .VarType = "String",
-                        .ValidationRule = "Hyperlink",
-                        .DefaultValue = "https://[your endpoint]/openai/deployments/[your deployment-id]/chat/completions?api-version=2024-06-01"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "HeaderA:",
-                        .VarName = "INI_HeaderA",
-                        .VarType = "String",
-                        .ValidationRule = "",
-                        .DefaultValue = "api-key"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "HeaderB:",
-                        .VarName = "INI_HeaderB",
-                        .VarType = "String",
-                        .ValidationRule = "",
-                        .DefaultValue = "{apikey}"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "APICall:",
-                        .VarName = "INI_APICall",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "{""messages"": [{""role"": ""system"",""content"": ""{promptsystem}""},{""role"": ""user"", ""content"": ""{promptuser}""}],""temperature"": {temperature}}"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Response tag:",
-                        .VarName = "INI_Response",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "content"
-                    })
-                Case "Google Gemini"
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "API Key:",
-                        .VarName = "INI_APIKey",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = ""
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Temperature:",
-                        .VarName = "INI_Temperature",
-                        .VarType = "String",
-                        .ValidationRule = "0.0-2.0",
-                        .DefaultValue = "0.2"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Timeout (ms):",
-                        .VarName = "INI_Timeout",
-                        .VarType = "Integer",
-                        .ValidationRule = ">0",
-                        .DefaultValue = "100000"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Model:",
-                        .VarName = "INI_Model",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "gemini-2.5-pro"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Endpoint:",
-                        .VarName = "INI_Endpoint",
-                        .VarType = "String",
-                        .ValidationRule = "Hyperlink",
-                        .DefaultValue = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apikey}"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "HeaderA:",
-                        .VarName = "INI_HeaderA",
-                        .VarType = "String",
-                        .ValidationRule = "",
-                        .DefaultValue = "X-Goog-Api-Key"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "HeaderB:",
-                        .VarName = "INI_HeaderB",
-                        .VarType = "String",
-                        .ValidationRule = "",
-                        .DefaultValue = "{apikey}"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "APICall:",
-                        .VarName = "INI_APICall",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "{""contents"": [{""role"": ""user"",""parts"": [{ ""text"": ""{promptsystem} {promptuser}"" }]}], ""generationConfig"": {""temperature"": {temperature}}}"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Response tag:",
-                        .VarName = "INI_Response",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "text"
-                    })
-
-                Case "Google Vertex"
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Private Key (barebones, not PEM):",
-                        .VarName = "INI_APIKey",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = ""
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Temperature:",
-                        .VarName = "INI_Temperature",
-                        .VarType = "String",
-                        .ValidationRule = "0.0-2.0",
-                        .DefaultValue = "0.2"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Timeout (ms):",
-                        .VarName = "INI_Timeout",
-                        .VarType = "Integer",
-                        .ValidationRule = ">0",
-                        .DefaultValue = "200000"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Model:",
-                        .VarName = "INI_Model",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "gemini-2.5-pro"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Endpoint:",
-                        .VarName = "INI_Endpoint",
-                        .VarType = "String",
-                        .ValidationRule = "Hyperlink",
-                        .DefaultValue = "https://europe-west1-aiplatform.googleapis.com/v1/projects/[your project ID]/locations/europe-west1/publishers/google/models/{model}:generateContent"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "HeaderA:",
-                        .VarName = "INI_HeaderA",
-                        .VarType = "String",
-                        .ValidationRule = "",
-                        .DefaultValue = "Authorization"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "HeaderB:",
-                        .VarName = "INI_HeaderB",
-                        .VarType = "String",
-                        .ValidationRule = "",
-                        .DefaultValue = "Bearer {apikey}"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "APICall:",
-                        .VarName = "INI_APICall",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "{""contents"": [{""role"": ""user"", ""parts"":[{""text"": ""{promptsystem} {promptuser}""}]}], ""generationConfig"": {""temperature"": {temperature}}}"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "Response tag:",
-                        .VarName = "INI_Response",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "text"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "OAuth2 'client_mail':",
-                        .VarName = "INI_OAuth2ClientMail",
-                        .VarType = "String",
-                        .ValidationRule = "E-Mail",
-                        .DefaultValue = "[service account mail]]@[your project ID].iam.gserviceaccount.com"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "OAuth2 'scopes':",
-                        .VarName = "INI_OAuth2Scopes",
-                        .VarType = "String",
-                        .ValidationRule = "NotEmpty",
-                        .DefaultValue = "https://www.googleapis.com/auth/cloud-platform"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "OAuth2 Endpoint:",
-                        .VarName = "INI_OAuth2Endpoint",
-                        .VarType = "String",
-                        .ValidationRule = "Hyperlink",
-                        .DefaultValue = "https://oauth2.googleapis.com/token"
-                    })
-                    list.Add(New AppConfigurationVariable With {
-                        .DisplayName = "OAuth2 Access Token Expiry (ms):",
-                        .VarName = "INI_OAuth2ATExpiry",
-                        .VarType = "Integer",
-                        .ValidationRule = ">0",
-                        .DefaultValue = "3600"
-                    })
-
-            End Select
-            ' Damit der initiale CurrentValue = DefaultValue ist
-            For Each item In list
-                item.CurrentValue = item.DefaultValue
-            Next
-
-            Return list
-        End Function
-
-        '   Wird aufgerufen, wenn sich der Radiobutton ändert.
-        '   Speichert Werte aus der Anzeige und lädt neue.
-        Private Sub RadioButton_CheckedChanged(sender As Object, e As System.EventArgs)
-            Dim rbButton As System.Windows.Forms.RadioButton = CType(sender, System.Windows.Forms.RadioButton)
-            If Not rbButton.Checked Then Return
-
-            ' 1) Save values into the previously displayed provider
-            Dim prevList As System.Collections.Generic.List(Of AppConfigurationVariable) = GetConfigListByName(_activeProvider)
-            SaveCurrentInputToSpecificConfig(prevList)
-
-            ' 2) Switch active provider to the newly selected one
-            _activeProvider = rbButton.Text
-
-            ' 3) Load its UI
-            LoadConfigForSelectedRadioButton()
-        End Sub
-
-
-
-        Private Sub SaveCurrentInputToConfig()
-            Dim selectedList = GetSelectedConfigList()
-
-            If selectedList Is Nothing OrElse currentConfigControls.Count = 0 Then
-                Return
-            End If
-
-            ' currentConfigControls hat immer "Label" + "TextBox" (oder was auch immer),
-            ' also in Zweierschritten durchgehen
-            For i As Integer = 0 To currentConfigControls.Count - 1
-                Dim ctrl = currentConfigControls(i)
-                If TypeOf ctrl Is System.Windows.Forms.Label Then
-                    ' DisplayName-Label -> Nächste Control ist die Eingabe
-                    Dim labelText = CType(ctrl, System.Windows.Forms.Label).Text
-                    ' Finde zugehörige Variable:
-                    Dim configVar = selectedList.FirstOrDefault(Function(x) x.DisplayName = labelText)
-                    If configVar IsNot Nothing Then
-                        ' Nächstes Control:
-                        If i + 1 < currentConfigControls.Count Then
-                            Dim inputControl = currentConfigControls(i + 1)
-                            If TypeOf inputControl Is TextBox Then
-                                configVar.CurrentValue = CType(inputControl, TextBox).Text
-                            End If
-                        End If
-                    End If
-                End If
-            Next
-        End Sub
-
-
-        ' Saves current UI inputs into the specified provider config list (used when switching radios)
-        Private Sub SaveCurrentInputToSpecificConfig(targetConfig As System.Collections.Generic.List(Of AppConfigurationVariable))
-            If targetConfig Is Nothing OrElse currentConfigControls.Count = 0 Then
-                Return
-            End If
-
-            For i As Integer = 0 To currentConfigControls.Count - 1
-                Dim ctrl As System.Windows.Forms.Control = currentConfigControls(i)
-                If TypeOf ctrl Is System.Windows.Forms.Label Then
-                    Dim labelText As String = CType(ctrl, System.Windows.Forms.Label).Text
-                    Dim configVar As AppConfigurationVariable = targetConfig.FirstOrDefault(Function(x) x.DisplayName = labelText)
-                    If configVar IsNot Nothing AndAlso i + 1 < currentConfigControls.Count Then
-                        Dim inputControl As System.Windows.Forms.Control = currentConfigControls(i + 1)
-                        If TypeOf inputControl Is System.Windows.Forms.TextBox Then
-                            configVar.CurrentValue = CType(inputControl, System.Windows.Forms.TextBox).Text
-                        End If
-                    End If
-                End If
-            Next
-        End Sub
-
-        '   Lädt die Eingabefelder für den aktuell ausgewählten RadioButton neu.
-        Private Sub LoadConfigForSelectedRadioButton()
-            Dim selectedList As System.Collections.Generic.List(Of AppConfigurationVariable) = GetConfigListByName(_activeProvider)
-
-            If selectedList Is Nothing Then
-                Return
-            End If
-
-            ' Panel leeren
-            panelConfig.Controls.Clear()
-            currentConfigControls.Clear()
-
-            ' Überschrift anpassen
-            lblCurrentProvider.Text = "Configuration for " & _activeProvider & ":"
-
-
-            ' Dynamisch alle Felder erstellen:
-            Dim yPos As Integer = 0
-
-            ' Determine the maximum width needed for the labels
-            Dim maxLabelWidth As Integer = 0
-            For Each configVar In selectedList
-                Dim lbl As New System.Windows.Forms.Label() With {
-                    .Text = configVar.DisplayName,
-                    .AutoSize = True,
-                    .Font = New System.Drawing.Font(Me.Font, FontStyle.Regular)
-                }
-                maxLabelWidth = Math.Max(maxLabelWidth, lbl.PreferredWidth)
-            Next
-
-            ' Create and position the labels and textboxes
-            For Each configVar In selectedList
-                ' Label
-                Dim lbl As New System.Windows.Forms.Label() With {
-                    .Text = configVar.DisplayName,
-                    .AutoSize = True,
-                    .Font = New System.Drawing.Font(Me.Font, FontStyle.Regular)
-                }
-                lbl.Location = New System.Drawing.Point(0, yPos)
-                panelConfig.Controls.Add(lbl)
-                currentConfigControls.Add(lbl)
-
-                ' TextBox
-                Dim txt As New TextBox() With {
-                    .Width = panelConfig.Width - maxLabelWidth - 30,
-                    .Text = configVar.CurrentValue
-                }
-                txt.Location = New System.Drawing.Point(maxLabelWidth + 10, yPos - 2)
-                panelConfig.Controls.Add(txt)
-                currentConfigControls.Add(txt)
-
-                yPos += lbl.Height + 8
-            Next
-            panelConfig.Height = yPos + 2
-        End Sub
-
-        ' Helper to retrieve a config list by provider name (used with _activeProvider)
-        Private Function GetConfigListByName(name As String) As System.Collections.Generic.List(Of AppConfigurationVariable)
-            Select Case name
-                Case "OpenAI" : Return configOpenAI
-                Case "Microsoft Azure OpenAI Services" : Return configAzure
-                Case "Google Gemini" : Return configGemini
-                Case "Google Vertex" : Return configVertex
-                Case Else : Return Nothing
-            End Select
-        End Function
-
-
-        '   Gibt die Konfig-Liste zurück, die zum ausgewählten RadioButton passt.
-        Private Function GetSelectedConfigList() As List(Of AppConfigurationVariable)
-            If rbOpenAI.Checked Then Return configOpenAI
-            If rbAzure.Checked Then Return configAzure
-            If rbGemini.Checked Then Return configGemini
-            If rbVertex.Checked Then Return configVertex
-            Return Nothing
-        End Function
-
-
-        '   OK-Button: Validieren, wenn ok -> Werte in context.* speichern und UpdateAppConfig() aufrufen
-        Private Sub btnOK_Click(sender As Object, e As EventArgs)
-            Try
-                ' Eingaben aus dem aktuellen Panel nochmal sichern
-                SaveCurrentInputToConfig()
-
-                ' Validierung
-                If Not ValidateAllConfigs() Then
-                    Return
-                End If
-
-                ' Falls Validierung bestanden: Ausgewählte Liste übernehmen
-                Dim finalList = GetSelectedConfigList()
-                If finalList Is Nothing Then
-                    SharedMethods.ShowCustomMessageBox("No AI provider selected.")
-                    Return
-                End If
-
-                ' Zuweisung an _context
-                For Each cv In finalList
-                    Select Case cv.VarName
-                        Case "INI_APIKey" : _context.INI_APIKey = cv.CurrentValue
-                        Case "INI_Temperature" : _context.INI_Temperature = cv.CurrentValue
-                        Case "INI_Timeout" : _context.INI_Timeout = CInt(cv.CurrentValue)
-                        Case "INI_Model" : _context.INI_Model = cv.CurrentValue
-                        Case "INI_Endpoint" : _context.INI_Endpoint = cv.CurrentValue
-                        Case "INI_HeaderA" : _context.INI_HeaderA = cv.CurrentValue
-                        Case "INI_HeaderB" : _context.INI_HeaderB = cv.CurrentValue
-                        Case "INI_APICall" : _context.INI_APICall = cv.CurrentValue
-                        Case "INI_Response" : _context.INI_Response = cv.CurrentValue
-                        Case "INI_OAuth2ClientMail" : _context.INI_OAuth2ClientMail = cv.CurrentValue
-                        Case "INI_OAuth2Scopes" : _context.INI_OAuth2Scopes = cv.CurrentValue
-                        Case "INI_OAuth2Endpoint" : _context.INI_OAuth2Endpoint = cv.CurrentValue
-                        Case "INI_OAuth2ATExpiry" : _context.INI_OAuth2ATExpiry = CInt(cv.CurrentValue)
-                    End Select
-                Next
-
-                If rbVertex.Checked Then _context.INI_OAuth2 = True
-
-                _context.INIloaded = False
-
-                Dim providerName As String = String.Empty
-
-                For Each control As Control In Me.Controls
-                    If TypeOf control Is RadioButton Then
-                        Dim radioButton As RadioButton = CType(control, RadioButton)
-                        If radioButton.Checked Then
-                            providerName = radioButton.Text
-                            Exit For
-                        End If
-                    End If
-                Next
-
-                If chkWord.Checked Then CreateAppConfig("Word", providerName)
-                If chkExcel.Checked Then CreateAppConfig("Excel", providerName)
-                If chkOutlook.Checked Then CreateAppConfig("Outlook", providerName)
-
-                ' Fenster schließen
-                Me.DialogResult = DialogResult.OK
-                _context.InitialConfigFailed = False
-                Me.Close()
-
-            Catch ex As System.Exception
-                MessageBox.Show("Error in LoadConfigForSelectedRadioButton: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
-            End Try
-        End Sub
-
-
-        Private Sub btnCancel_Click(sender As Object, e As EventArgs)
-            Me.DialogResult = DialogResult.Cancel
-            _context.InitialConfigFailed = True
-            Me.Close()
-        End Sub
-
-
-        '   Führt die Validierung aller Felder aller 4 Config-Sets durch oder nur des aktuell selektierten?
-        '   In der Anforderung hieß es: "Wird OK gedrückt, dann führe die Gültigkeitsprüfung der Werte durch..."
-        '   -> Wir validieren NUR das aktuell aktive Set.
-        Private Function ValidateAllConfigs() As Boolean
-
-            Dim selectedList = GetSelectedConfigList()
-
-            ' Check if at least one relevant checkbox is checked
-            If _context.RDV.StartsWith("Word") AndAlso Not chkWord.Checked Then
-                SharedMethods.ShowCustomMessageBox("At least the 'for Word' checkbox needs to be checked.")
-                Return False
-            ElseIf _context.RDV.StartsWith("Outlook") AndAlso Not chkOutlook.Checked Then
-                SharedMethods.ShowCustomMessageBox("At least the 'for Outlook' checkbox needs to be checked.")
-                Return False
-            ElseIf _context.RDV.StartsWith("Excel") AndAlso Not chkExcel.Checked Then
-                SharedMethods.ShowCustomMessageBox("At least the 'for Excel' checkbox needs to be checked.")
-                Return False
-            End If
-
-            For Each cv In selectedList
-                Dim valRule = cv.ValidationRule
-                Dim valValue = cv.CurrentValue
-
-                Debug.WriteLine("Validating: valrule=" & valRule & ", valValue='" & valValue & "'")
-
-                ' NotEmpty
-                If valRule.Contains("NotEmpty") Then
-                    If String.IsNullOrWhiteSpace(valValue) Then
-                        SharedMethods.ShowCustomMessageBox("Value For '" & cv.DisplayName & "' cannot be empty.")
-                        Return False
-                    End If
-                End If
-
-                ' E-Mail
-                If valRule.Contains("E-Mail") Then
-                    ' Minimale Plausibilitätsprüfung
-                    If Not valValue.Contains("@") Then
-                        SharedMethods.ShowCustomMessageBox("Value for '" & cv.DisplayName & "' must be a valid e-mail address.")
-                        Return False
-                    End If
-                End If
-
-                ' Hyperlink
-                If valRule.Contains("Hyperlink") Then
-                    If Not (valValue.StartsWith("http://") OrElse valValue.StartsWith("https://")) Then
-                        SharedMethods.ShowCustomMessageBox("Value for '" & cv.DisplayName & "' must be a valid URL (http/https).")
-                        Return False
-                    End If
-                End If
-
-                ' >0
-                If valRule.Contains(">0") Then
-                    Dim intVal As Integer
-                    If Not Integer.TryParse(valValue, intVal) OrElse intVal <= 0 Then
-                        SharedMethods.ShowCustomMessageBox("Value for '" & cv.DisplayName & "' must be an integer larger than 0.")
-                        Return False
-                    End If
-                End If
-
-                ' 0.0-2.0
-                If valRule.Contains("0.0-2.0") Then
-                    Dim dblVal As Double
-                    If Not Double.TryParse(valValue, dblVal) Then
-                        SharedMethods.ShowCustomMessageBox("Value for '" & cv.DisplayName & "' must be a floating number between 0.0 and 2.0.")
-                        Return False
-                    End If
-                    If dblVal < 0.0 OrElse dblVal > 2.0 Then
-                        SharedMethods.ShowCustomMessageBox("Value for '" & cv.DisplayName & "' must be in [0.0 .. 2.0].", "Validation Error")
-                        Return False
-                    End If
-                End If
-            Next
-
-            Return True
-        End Function
-
-
-        '   Öffnet Links im Browser
-        Private Sub LinkLabel_LinkClicked(sender As Object, e As LinkLabelLinkClickedEventArgs)
-            Try
-                Dim link = e.Link.LinkData.ToString()
-                System.Diagnostics.Process.Start(link)
-            Catch ex As System.Exception
-                MessageBox.Show("Could not open link. Error: " & ex.Message)
-            End Try
-        End Sub
-
-        Private Sub CreateAppConfig(App As String, provider As String)
-            Try
-                ' Define the file path
-                Dim filepath = SharedMethods.GetDefaultINIPath(App)
-
-                Debug.WriteLine($"Creating {SharedMethods.AN} configuration file: " & filepath)
-
-                ' Open a StreamWriter to create the file
-                Using writer As New System.IO.StreamWriter(filepath)
-                    ' Write the header
-                    writer.WriteLine($"; {SharedMethods.AN} configuration file (automatically generated)")
-                    writer.WriteLine(";")
-                    writer.WriteLine($"; Go to {SharedMethods.AN4} on how to find the instructions to manually add or change the configuration settings")
-
-                    ' Write an empty line
-                    writer.WriteLine()
-
-                    ' Write provider information
-                    writer.WriteLine($"; Minimum configuration for {provider}")
-
-                    ' Write another empty line
-                    writer.WriteLine()
-
-                    ' Loop through the dictionary and write each configuration value
-                    Dim MinimumConfigValues As New Dictionary(Of String, String) From {
-                            {"APIKey", _context.INI_APIKey},
-                            {"Endpoint", _context.INI_Endpoint},
-                            {"HeaderA", _context.INI_HeaderA},
-                            {"HeaderB", _context.INI_HeaderB},
-                            {"Response", _context.INI_Response},
-                            {"APICall", _context.INI_APICall},
-                            {"Timeout", _context.INI_Timeout.ToString()},
-                            {"Temperature", _context.INI_Temperature},
-                            {"Model", _context.INI_Model},
-                            {"OAuth2", _context.INI_OAuth2.ToString()},
-                            {"OAuth2ClientMail", _context.INI_OAuth2ClientMail},
-                            {"OAuth2Scopes", _context.INI_OAuth2Scopes},
-                            {"OAuth2Endpoint", _context.INI_OAuth2Endpoint},
-                            {"OAuth2ATExpiry", _context.INI_OAuth2ATExpiry.ToString()}
-                        }
-
-                    For Each kvp In MinimumConfigValues
-                        writer.WriteLine($"{kvp.Key} = {kvp.Value}")
-                    Next
-                End Using
-
-            Catch ex As System.Exception
-                ' Handle errors by showing a custom message box
-                SharedMethods.ShowCustomMessageBox($"Error creating configuration file: {ex.Message}")
-            End Try
-        End Sub
-
-    End Class
-
-
-
     Public Class UpdateHandler
 
         Private Const ShowCheckingSplash As Boolean = False
@@ -18250,120 +15783,6 @@ Namespace SharedLibrary
             End Try
         End Sub
 
-        Private Shared Sub oldRunVstoInstaller(pathOrUrl As String)
-            ' Try to locate VSTOInstaller in both x64 and x86 common locations
-            Dim candidates As New List(Of String)
-            Try
-                Dim base1 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles), "Microsoft Shared", "VSTO")
-                Dim base2 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFilesX86), "Microsoft Shared", "VSTO")
-                If Directory.Exists(base1) Then candidates.AddRange(Directory.GetFiles(base1, "VSTOInstaller.exe", SearchOption.AllDirectories))
-                If Directory.Exists(base2) Then candidates.AddRange(Directory.GetFiles(base2, "VSTOInstaller.exe", SearchOption.AllDirectories))
-            Catch
-            End Try
-            Dim installer = candidates.FirstOrDefault()
-
-            If installer Is Nothing Then
-                WriteUpdateLog("[RunVstoInstaller] VSTOInstaller.exe not found")
-                UIInvokeMessage(
-                "The update could not be completed (VSTOInstaller.exe not found). Please inform your administrator.",
-                $"{SharedMethods.AN} Updater")
-                Return
-            End If
-
-            WriteUpdateLog($"[RunVstoInstaller] using='{installer}' target='{pathOrUrl}'")
-
-            ' 1) Silent attempt (fast, no UI)
-            Dim silentOk As Boolean = False
-            Try
-                CloseUpdatingSplash()
-                Dim psiSilent = New ProcessStartInfo(installer, $"/I ""{pathOrUrl}"" /S") With {
-                .UseShellExecute = False,
-                .CreateNoWindow = True
-            }
-                Using p = Process.Start(psiSilent)
-                    p.WaitForExit()
-                    WriteUpdateLog($"[RunVstoInstaller] silent exitCode={p.ExitCode}")
-                    silentOk = (p.ExitCode = 0)
-                End Using
-            Catch ex As Exception
-                WriteUpdateLog("[RunVstoInstaller] silent failed", ex)
-                silentOk = False
-            End Try
-
-
-            If silentOk Then
-                UIInvokeMessage(
-                    "Update completed. It will be active the next time you restart your application.",
-                    $"{SharedMethods.AN} Updater")
-                Return
-            End If
-
-            '2) Interactive fallback (to show trust consent if policy allows)
-            Try
-
-                Dim psiUi = New ProcessStartInfo(installer, $"/I ""{pathOrUrl}""") With {
-                            .UseShellExecute = False,
-                            .CreateNoWindow = False
-                        }
-
-                Using p = Process.Start(psiUi)
-                    Dim settingsForm As Form = Nothing
-                    Dim restoreTopMost As Boolean = False
-                    Dim restoreVisible As Boolean = False
-
-                    ' Capture & hide Settings window (any form containing "Settings" in Name or Text)
-                    Try
-                        settingsForm = System.Windows.Forms.Application.OpenForms.Cast(Of Form)().
-            FirstOrDefault(Function(f) f.Visible AndAlso
-                                      (f.Name.IndexOf("Setting", StringComparison.OrdinalIgnoreCase) >= 0 OrElse
-                                       f.Text.IndexOf("Setting", StringComparison.OrdinalIgnoreCase) >= 0))
-                        If settingsForm IsNot Nothing Then
-                            restoreTopMost = settingsForm.TopMost
-                            restoreVisible = settingsForm.Visible
-                            settingsForm.TopMost = False
-                            settingsForm.Hide()
-                            WriteUpdateLog("[RunVstoInstaller] temporarily hid Settings window")
-                        End If
-                    Catch
-                    End Try
-
-                    Try
-                        p.WaitForInputIdle(4000)
-                    Catch
-                    End Try
-
-                    BringProcessWindowToFront(p, "[RunVstoInstaller]")
-
-                    p.WaitForExit()
-                    WriteUpdateLog($"[RunVstoInstaller] interactive exitCode={p.ExitCode}")
-
-                    ' Restore Settings window
-                    If settingsForm IsNot Nothing Then
-                        Try
-                            If restoreVisible Then settingsForm.Show()
-                            settingsForm.TopMost = restoreTopMost
-                        Catch
-                        End Try
-                    End If
-
-                    If p.ExitCode = 0 Then
-                        UIInvokeMessage(
-                                "Update completed. It will be active the next time you restart your application.",
-                                $"{SharedMethods.AN} Updater")
-                    Else
-                        UIInvokeMessage(
-                                "The update could not be completed. A required trust confirmation may have been refused or blocked by policy. You can always try a manual install by visiting " & AppsUrl & ".",
-                                $"{SharedMethods.AN} Updater")
-                    End If
-                End Using
-
-            Catch ex As Exception
-                WriteUpdateLog("[RunVstoInstaller] interactive failed", ex)
-                UIInvokeMessage(
-                $"The update could not be completed: {ex.Message}. Please inform your administrator. You can always try a manual install by opening the Edge browser and visiting {AppsUrl}.",
-                $"{SharedMethods.AN} Updater")
-            End Try
-        End Sub
 
         Private Shared Sub SaveTimestamp(timeStamp As Date)
             Select Case Left(_appname, 4)
@@ -19016,235 +16435,6 @@ Namespace SharedLibrary
             End If
         End Sub
     End Class
-
-    ' Place next to ModelSelectorForm to keep UI code together
-    Partial Class oldMultiModelSelectorForm
-        Inherits System.Windows.Forms.Form
-
-        Private lblTitle As System.Windows.Forms.Label
-        Private txtFilter As System.Windows.Forms.TextBox
-        Private chkList As System.Windows.Forms.CheckedListBox
-        Private chkReset As System.Windows.Forms.CheckBox
-        Private btnOK As System.Windows.Forms.Button
-        Private btnCancel As System.Windows.Forms.Button
-        Private pnlButtons As System.Windows.Forms.FlowLayoutPanel
-        Private outer As System.Windows.Forms.TableLayoutPanel
-
-        Private displayToModel As New System.Collections.Generic.Dictionary(Of String, ModelConfig)(System.StringComparer.OrdinalIgnoreCase)
-        Private seenDisplays As New System.Collections.Generic.HashSet(Of String)(System.StringComparer.OrdinalIgnoreCase)
-        Private allDisplayItems As New System.Collections.Generic.List(Of String)
-        Private preselectKey As String = Nothing
-        Private ReadOnly altModels As System.Collections.Generic.List(Of ModelConfig)
-
-        ' EM_SETCUEBANNER to show a cue banner ("placeholder") on Win32 edit controls
-        Private Const EM_SETCUEBANNER As Integer = &H1501
-        <System.Runtime.InteropServices.DllImport("user32.dll", CharSet:=System.Runtime.InteropServices.CharSet.Unicode)>
-        Private Shared Function SendMessage(hWnd As IntPtr, msg As Integer, wParam As IntPtr, lParam As String) As IntPtr
-        End Function
-
-        Public ReadOnly Property SelectedModels As System.Collections.Generic.List(Of ModelConfig)
-            Get
-                Dim result As New System.Collections.Generic.List(Of ModelConfig)
-                For i = 0 To Me.chkList.CheckedItems.Count - 1
-                    Dim key = Me.chkList.CheckedItems(i).ToString()
-                    If displayToModel.ContainsKey(key) Then result.Add(displayToModel(key))
-                Next
-                Return result
-            End Get
-        End Property
-
-        Public ReadOnly Property UseDefault As Boolean
-            Get
-                Return chkReset.Checked
-            End Get
-        End Property
-
-        Public Sub New(models As System.Collections.Generic.List(Of ModelConfig),
-                   preselect As System.String,
-                   Optional title As System.String = Nothing,
-                   Optional resetChecked As System.Boolean = True)
-            Me.altModels = If(models, New System.Collections.Generic.List(Of ModelConfig))
-            Me.preselectKey = preselect
-            InitializeComponent(title, resetChecked)
-            PopulateList()
-            ApplyPreselection()
-        End Sub
-
-        Private Sub InitializeComponent(Optional title As System.String = Nothing, Optional resetChecked As System.Boolean = True)
-            Me.Text = If(String.IsNullOrWhiteSpace(title), SharedMethods.AN & " - Select Alternate Models", title)
-            Me.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent
-            Me.MinimizeBox = False
-            Me.MaximizeBox = False
-            Me.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog
-            Me.Width = 520
-            Me.Height = 460
-
-            Me.outer = New System.Windows.Forms.TableLayoutPanel() With {
-                .Dock = System.Windows.Forms.DockStyle.Fill,
-                .ColumnCount = 1,
-                .RowCount = 5,
-                .Padding = New System.Windows.Forms.Padding(16, 12, 16, 12)
-            }
-            Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize))
-            Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize))
-            Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100.0!))
-            Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize))
-            Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize))
-
-            Me.lblTitle = New System.Windows.Forms.Label() With {
-                .Text = "Select one or more alternate models:",
-                .Dock = System.Windows.Forms.DockStyle.Top,
-                .Height = 28,
-                .TextAlign = System.Drawing.ContentAlignment.MiddleLeft
-            }
-
-            Me.txtFilter = New System.Windows.Forms.TextBox() With {
-                .Dock = System.Windows.Forms.DockStyle.Top
-            }
-            AddHandler Me.txtFilter.HandleCreated,
-                Sub()
-                    Try
-                        Dim showEvenIfFocused As IntPtr = CType(1, IntPtr)
-                        SendMessage(Me.txtFilter.Handle, EM_SETCUEBANNER, showEvenIfFocused, "Filter models…")
-                    Catch
-                    End Try
-                End Sub
-            AddHandler Me.txtFilter.TextChanged, AddressOf OnFilterChanged
-
-            Me.chkList = New System.Windows.Forms.CheckedListBox() With {
-                .Dock = System.Windows.Forms.DockStyle.Fill,
-                .CheckOnClick = True
-            }
-            AddHandler Me.chkList.DoubleClick, AddressOf OnListDoubleClick
-
-            Me.chkReset = New System.Windows.Forms.CheckBox() With {
-                .Text = "Reset to default model after use",
-                .Dock = System.Windows.Forms.DockStyle.Top,
-                .Checked = resetChecked,
-                .Visible = False            ' Hide it for the time being
-            }
-
-            Me.pnlButtons = New System.Windows.Forms.FlowLayoutPanel() With {
-                .Dock = System.Windows.Forms.DockStyle.Fill,
-                .FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft,
-                .Padding = New System.Windows.Forms.Padding(0, 8, 0, 0),
-                .AutoSize = True
-            }
-
-            ' Match ModelSelectorForm: autosize, GrowAndShrink, and padding (10,5,10,5); no fixed widths or extra margins
-            Me.btnOK = New System.Windows.Forms.Button() With {
-                .Text = "OK",
-                .DialogResult = System.Windows.Forms.DialogResult.OK,
-                .AutoSize = True,
-                .AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink,
-                .Padding = New System.Windows.Forms.Padding(10, 5, 10, 5)
-            }
-            Me.btnCancel = New System.Windows.Forms.Button() With {
-                .Text = "Cancel",
-                .DialogResult = System.Windows.Forms.DialogResult.Cancel,
-                .AutoSize = True,
-                .AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink,
-                .Padding = New System.Windows.Forms.Padding(10, 5, 10, 5)
-            }
-            Me.pnlButtons.Controls.Add(Me.btnOK)
-            Me.pnlButtons.Controls.Add(Me.btnCancel)
-
-            Me.outer.Controls.Add(Me.lblTitle, 0, 0)
-            Me.outer.Controls.Add(Me.txtFilter, 0, 1)
-            Me.outer.Controls.Add(Me.chkList, 0, 2)
-            Me.outer.Controls.Add(Me.chkReset, 0, 3)
-            Me.outer.Controls.Add(Me.pnlButtons, 0, 4)
-            Me.Controls.Add(Me.outer)
-
-            Me.AcceptButton = Me.btnOK
-            Me.CancelButton = Me.btnCancel
-        End Sub
-
-        Private Function MakeUniqueDisplay(baseText As System.String) As System.String
-            Dim s As System.String = If(String.IsNullOrWhiteSpace(baseText), "(Unnamed model)", baseText.Trim())
-            Dim unique As System.String = s
-            Dim suffix As Integer = 2
-            While seenDisplays.Contains(unique)
-                unique = s & " (" & suffix.ToString() & ")"
-                suffix += 1
-            End While
-            seenDisplays.Add(unique)
-            Return unique
-        End Function
-
-        Private Sub PopulateList()
-            displayToModel.Clear()
-            seenDisplays.Clear()
-            allDisplayItems.Clear()
-            Me.chkList.Items.Clear()
-
-            For Each m In altModels
-                Dim display As System.String = If(Not String.IsNullOrWhiteSpace(m.ModelDescription), m.ModelDescription, m.Model)
-                Dim unique As System.String = MakeUniqueDisplay(display)
-                displayToModel(unique) = m
-                allDisplayItems.Add(unique)
-            Next
-
-            For Each label In allDisplayItems
-                Me.chkList.Items.Add(label, False)
-            Next
-        End Sub
-
-        Private Sub OnFilterChanged(sender As System.Object, e As System.EventArgs)
-            Dim filter As System.String = If(Me.txtFilter.Text, String.Empty).Trim().ToLowerInvariant()
-
-            Me.chkList.BeginUpdate()
-            Try
-                Me.chkList.Items.Clear()
-                For Each itemText In allDisplayItems
-                    If filter.Length = 0 OrElse itemText.ToLowerInvariant().Contains(filter) Then
-                        Me.chkList.Items.Add(itemText, False)
-                    End If
-                Next
-            Finally
-                Me.chkList.EndUpdate()
-            End Try
-        End Sub
-
-        Private Sub OnListDoubleClick(sender As System.Object, e As System.EventArgs)
-            Dim idx As Integer = Me.chkList.SelectedIndex
-            If idx >= 0 Then
-                Dim state As Boolean = Not Me.chkList.GetItemChecked(idx)
-                Me.chkList.SetItemChecked(idx, state)
-            End If
-        End Sub
-
-        Private Sub ApplyPreselection()
-            If String.IsNullOrWhiteSpace(preselectKey) Then Return
-
-            ' Try by label first
-            For i = 0 To Me.chkList.Items.Count - 1
-                Dim label As System.String = Me.chkList.Items(i).ToString()
-                If String.Equals(label, preselectKey, System.StringComparison.OrdinalIgnoreCase) Then
-                    Me.chkList.SetItemChecked(i, True)
-                    Return
-                End If
-            Next
-
-            ' Fallback: try to match underlying ModelDescription/Model
-            Dim idxToCheck As Integer = -1
-            For j = 0 To Me.chkList.Items.Count - 1
-                Dim label As System.String = Me.chkList.Items(j).ToString()
-                If displayToModel.ContainsKey(label) Then
-                    Dim mc As ModelConfig = displayToModel(label)
-                    If String.Equals(mc.ModelDescription, preselectKey, System.StringComparison.OrdinalIgnoreCase) _
-                   OrElse String.Equals(mc.Model, preselectKey, System.StringComparison.OrdinalIgnoreCase) Then
-                        idxToCheck = j
-                        Exit For
-                    End If
-                End If
-            Next
-            If idxToCheck >= 0 Then
-                Me.chkList.SetItemChecked(idxToCheck, True)
-            End If
-        End Sub
-    End Class
-
 
 
     ' anonx

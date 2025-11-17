@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 16.11.2025
+' 17.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -222,7 +222,7 @@ Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.161125 Gen2 Beta Test"
+    Public Const Version As String = "V.171125 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -3415,39 +3415,6 @@ Public Class ThisAddIn
     End Sub
 
 
-    Private Async Sub oldShowPaneAsync(
-                              introLine As String,
-                              bodyText As String,
-                              finalRemark As String,
-                              header As String,
-                              Optional NoRtf As Boolean = False,
-                              Optional insertMarkdown As Boolean = False,
-                              Optional PreserveLiterals As Boolean = False
-                            )
-        Try
-
-            Dim OriginalText As String = bodyText
-
-            Dim result As String = Await PaneManager.ShowMyPane(introLine, bodyText, finalRemark, header, NoRtf, insertMarkdown, New IntelligentMergeCallback(AddressOf HandleIntelligentMerge), PreserveLiterals)
-
-        Catch ex As Exception
-            MessageBox.Show("Error in ShowPaneAsync: " & ex.Message)
-        End Try
-    End Sub
-
-
-    Private Sub oldHandleIntelligentMerge(selectedText As String)
-        IntelligentMerge(selectedText)
-    End Sub
-
-    Public Async Sub oldIntelligentMerge(newtext As String)
-        Dim instructions As New List(Of String)
-        instructions = ParseLLMResponse(newtext)
-        ApplyLLMInstructions(instructions, True)  ' Always DoBubbles
-        ShowCustomMessageBox("Implementation of the instructions completed (to the extent possible). They are also in the clipboard.")
-        Dim result = Globals.Ribbons.Ribbon1.UpdateUndoButton()
-    End Sub
-
 
     Public Function GatherSelectedWorksheets(
     Optional ByVal includeActiveWorksheet As System.Boolean = False
@@ -3529,76 +3496,6 @@ Public Class ThisAddIn
     End Function
 
 
-    Public Function oldGatherSelectedWorksheets() As String
-        Try
-            Dim app As Microsoft.Office.Interop.Excel.Application =
-            Globals.ThisAddIn.Application
-            Dim activeWs As Microsoft.Office.Interop.Excel.Worksheet =
-            TryCast(app.ActiveSheet, Microsoft.Office.Interop.Excel.Worksheet)
-
-            ' build list of all worksheets except the active one
-            Dim sheetList As New List(Of Microsoft.Office.Interop.Excel.Worksheet)()
-            Dim selItems As New List(Of SelectionItem)()
-            For Each wb As Microsoft.Office.Interop.Excel.Workbook In app.Workbooks
-                For Each ws As Microsoft.Office.Interop.Excel.Worksheet In wb.Worksheets
-                    If Not ws Is activeWs Then
-                        sheetList.Add(ws)
-                        selItems.Add(New SelectionItem(
-                        $"{ws.Name} ({wb.FullName})",
-                        sheetList.Count))
-                    End If
-                Next
-            Next
-
-            ' if no other sheets, bail
-            If sheetList.Count = 0 Then Return "NONE"
-
-            ' add “All worksheets, except current”
-            Dim allExceptIndex As Integer = selItems.Count + 1
-            selItems.Add(New SelectionItem("Add all other worksheets", allExceptIndex))
-
-            ' prompt user
-            Dim itemsArray = selItems.ToArray()
-            Dim picked As Integer = SelectValue(itemsArray, allExceptIndex, "Choose worksheet to add …")
-            If picked < 1 Then Return String.Empty
-
-            ' determine targets
-            Dim targets As New List(Of Microsoft.Office.Interop.Excel.Worksheet)()
-            If picked = allExceptIndex Then
-                targets.AddRange(sheetList)
-            Else
-                targets.Add(sheetList(picked - 1))
-            End If
-
-            ' build the result string
-            Dim InsertedWorksheet As String = String.Empty
-            Dim tagIndex As Integer = 2
-            For Each ws In targets
-                InsertedWorksheet &= $"<RANGEOFCELLS{tagIndex}>" & vbCrLf
-
-                ' now just call your converter (which itself inserts the sheet/file header)
-                InsertedWorksheet &= ConvertRangeToString(
-                CellRange:=CType(ws.UsedRange, Microsoft.Office.Interop.Excel.Range),
-                IncludeFormulas:=True,
-                DoColor:=False,
-                TargetWorksheet:=ws
-            ) & vbCrLf
-
-                InsertedWorksheet &= $"</RANGEOFCELLS{tagIndex}>" & vbCrLf
-                tagIndex += 1
-            Next
-
-            If String.IsNullOrEmpty(InsertedWorksheet) Then
-                ShowCustomMessageBox("No content could be retrieved from the selected worksheet(s).")
-                Return String.Empty
-            End If
-
-            Return InsertedWorksheet
-
-        Catch ex As System.Exception
-            Return "ERROR " & ex.Message
-        End Try
-    End Function
 
 
 
@@ -4044,38 +3941,6 @@ Public Class ThisAddIn
         Return instructions
     End Function
 
-    Public Function oldParseLLMResponse(ByVal Response As String) As List(Of String)
-        Dim instructions As New List(Of String)()
-        Dim startPos As Integer, instructionEnd As Integer
-        Dim tempInstruction As String
-        Dim cellPattern As String
-
-        ' Ensure we remove any newlines that might affect parsing
-        Response = Response.Replace(vbCrLf, " ").Replace(vbLf, " ")
-
-        ' Pattern for finding Cell
-        cellPattern = "[Cell:"
-
-        ' Start parsing the response
-        startPos = Response.IndexOf(cellPattern)
-
-        Do While startPos >= 0
-            ' Find next cell occurrence to extract the block between this and next [Cell:]
-            instructionEnd = Response.IndexOf(cellPattern, startPos + cellPattern.Length)
-
-            ' If there's no further [Cell:], capture till the end of the string
-            If instructionEnd = -1 Then instructionEnd = Response.Length
-
-            ' Extract the instruction block between the current and next [Cell:]
-            tempInstruction = Response.Substring(startPos, instructionEnd - startPos)
-            instructions.Add(tempInstruction)
-
-            ' Move to the next instruction start, exit if at the end
-            startPos = Response.IndexOf(cellPattern, instructionEnd)
-        Loop
-
-        Return instructions
-    End Function
 
 
     Private Function GetActiveWorksheetSafe(app As Excel.Application) As Worksheet
@@ -4490,62 +4355,6 @@ Public Class ThisAddIn
         Return -1
     End Function
 
-
-    Public Function oldGetFormulaOrValueFromInstruction(ByVal instruction As String) As String
-        Dim pattern As String = ""
-        ' Determine which marker is present
-        If instruction.Contains("[Formula: ") Then
-            pattern = "[Formula: "
-        ElseIf instruction.Contains("[Value: ") Then
-            pattern = "[Value: "
-        ElseIf instruction.Contains("[Comment: ") Then
-            pattern = "[Comment: "
-        Else
-            Return String.Empty
-        End If
-
-        Dim patternLength As Integer = pattern.Length
-        ' Find the start of the entire bracketed expression (the "[" included in the marker)
-        Dim openingBracketIndex As Integer = instruction.IndexOf(pattern)
-        If openingBracketIndex = -1 Then
-            Return String.Empty
-        End If
-
-        ' Use a bracket counter to handle nested brackets.
-        ' Start scanning from the beginning of the outer bracketed expression.
-        Dim counter As Integer = 0
-        Dim matchingBracketIndex As Integer = -1
-        For i As Integer = openingBracketIndex To instruction.Length - 1
-            Dim c As Char = instruction(i)
-            If c = "["c Then
-                counter += 1
-            ElseIf c = "]"c Then
-                counter -= 1
-                ' When counter reaches zero, we found the closing bracket that matches our opening bracket.
-                If counter = 0 Then
-                    matchingBracketIndex = i
-                    Exit For
-                End If
-            End If
-        Next
-
-        ' If no matching closing bracket was found, return empty string.
-        If matchingBracketIndex = -1 Then
-            Return String.Empty
-        End If
-
-        ' The actual content starts right after the marker (e.g. after "[Value: " or "[Formula: ")
-        Dim contentStart As Integer = openingBracketIndex + patternLength
-        Dim contentLength As Integer = matchingBracketIndex - contentStart
-
-        If contentLength > 0 Then
-            Dim Response As String = instruction.Substring(contentStart, contentLength).Trim()
-            If pattern = "[Comment: " Then
-                Response = $"{AN5}: " & Response
-            End If
-            Return Response
-        End If
-    End Function
 
     ' Excel Helpers
 
@@ -5150,30 +4959,6 @@ Public Class ThisAddIn
     End Sub
 
 
-    Public Sub xxUndoAction()
-        Try
-            Dim app As Excel.Application = Globals.ThisAddIn.Application
-
-            ' Process each saved state to restore the previous value or formula.
-            For Each state In undoStates
-                Dim rng As Excel.Range = app.Range(state.CellAddress)
-                If state.HadFormula Then
-                    rng.Formula = state.OldFormula
-                Else
-                    rng.Value = state.OldValue
-                End If
-            Next
-
-            ' Clear the undo state after restoring.
-            undoStates.Clear()
-
-            Dim result = Globals.Ribbons.Ribbon1.UpdateUndoButton()
-
-
-        Catch ex As System.Exception
-            MessageBox.Show("Error during undo (" & ex.Message & ").")
-        End Try
-    End Sub
 
     Public Function InterpolateAtRuntime(ByVal template As String) As String
         If template Is Nothing Then
@@ -5261,7 +5046,7 @@ Public Class ThisAddIn
                 {"Temperature_2", "Temperature of {model2}"},
                 {"Timeout_2", "Timeout of {model2}"},
                 {"DoubleS", "Convert '" & ChrW(223) & "' to 'ss'"},
-                {"NoDash", "Convert em to en dash"},
+                {"NoEmDash", "Convert em to en dash"},
                 {"PreCorrection", "Additional instruction for prompts"},
                 {"PostCorrection", "Prompt to apply after queries"},
                 {"Language1", "Default translation language 1"},
@@ -5277,7 +5062,7 @@ Public Class ThisAddIn
                 {"Temperature_2", "The higher, the more creative the LLM will be (0.0-2.0)"},
                 {"Timeout_2", "In milliseconds"},
                 {"DoubleS", "For Switzerland"},
-                {"NoDash", "This will convert long dashes typically generated by LLMs but that are not commonly used (thus suggesting that the text has been AI generated)"},
+                {"NoEmDash", "This will convert long dashes typically generated by LLMs but that are not commonly used (thus suggesting that the text has been AI generated)"},
                 {"PreCorrection", "Add prompting text that will be added to all basic requests (e.g., for special language tasks)"},
                 {"PostCorrection", "Add a prompt that will be applied to each result before it is further processed (slow!)"},
                 {"Language1", "The language (in English) that will be used for the first quick access button in the ribbon"},
