@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
 '
-' 13.11.2025
+' 17.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -39,9 +39,135 @@ Imports Microsoft.VisualBasic.ApplicationServices
 Imports System.Reflection
 
 
-Public Class frmAIChat
+' =============================================================================
+' Excel Chatbot - Form1.vb — Reference overview
+' =============================================================================
+'
+' Purpose
+'   Chat UI for the Excel add-in ("Red Ink" / "Inky"). Provides:
+'     - a lightweight chat window for calling the LLM via `SharedMethods.LLM`
+'     - optional inclusion of worksheet content or selection in prompts
+'     - model selection toggle (primary / secondary)
+'     - simple persistence of transcript and window state via `My.Settings`
+'     - parsing and execution of LLM-produced instructions via the host add-in
+'
+' High-level structure
+'   - P/Invoke
+'       - `SetForegroundWindow(hWnd As IntPtr)` — bring Excel window forward when executing commands
+'
+'   - Form-level fields & UI
+'       - Buttons: `btnSend`, `btnCopy`, `btnCopyLastAnswer`, `btnClear`, `btnExit`, `btnSwitchModel`
+'       - Checkboxes: `chkIncludeDocText` ("Include worksheet"), `chkIncludeselection`, `chkPermitCommands`, `chkStayOnTop`
+'       - Panels: `pnlButtons`, `pnlCheckboxes`
+'       - Text controls (designer): `txtChatHistory`, `txtUserInput`, `lblInstructions`
+'       - State:
+'           • `_context As ISharedContext` — SharedLibrary settings/context
+'           • `_useSecondApi` — whether to call second model
+'           • `_chatHistory` — List(Of (Role, Content)) holding conversation turns
+'           • `OldChat`, `PreceedingNewline`, `UserLanguage`, `SystemPrompt`
+'       - Constants / triggers: `ExtWSTrigger = "(addws)"`
+'
+' Lifecycle & initialization
+'   - `New(context As ISharedContext)` — builds layout programmatically (TableLayoutPanel),
+'       configures controls, stores `_context`.
+'   - `frmAIChat_Load` — restores `My.Settings.LastChatHistory`, sets window title, icon, size,
+'       wires event handlers, optionally shows a `WelcomeMessage`, warns on large worksheets.
+'   - `frmAIChat_FormClosing` — persists `My.Settings.LastChatHistory`, `FormLocation`, `FormSize`.
+'
+' UI helpers
+'   - `UpdateUIAsync(action As Action)` — marshals UI updates with `Invoke` when required.
+'   - `AppendToChatHistory(text As String)` — append text to `txtChatHistory` thread-safely.
+'   - `RemoveLastLineFromChatHistory()` — removes final line from transcript.
+'   - Keyboard handlers:
+'       • `UserInput_KeyDown` sends on Enter (Shift+Enter for newline)
+'       • `oldUserInput_KeyDown` supports Ctrl+Enter
+'       • `frmAIChat_KeyDown` closes on Escape (saves transcript within `_context.INI_ChatCap`)
+'
+' Conversation flow
+'   - `btnSend_Click` — main handler:
+'       1. Build `SystemPrompt` using `_context.SP_ChatExcel()` and checkbox flags.
+'       2. Build conversation context via `BuildConversationString(_chatHistory)` and `OldChat`.
+'       3. Validate Excel host availability when worksheet/selection inclusion is requested.
+'       4. Optionally gather:
+'           - entire worksheet (`Globals.ThisAddIn.ConvertRangeToString`)
+'           - selection (`ConvertRangeToString` on the intersected selection)
+'           - additional worksheets when user includes `ExtWSTrigger` via `Globals.ThisAddIn.GatherSelectedWorksheets()`
+'       5. Construct `fullPrompt` with `<RANGEOFCELLS>` wrappers when passing range content.
+'       6. Append user message to UI and `_chatHistory`.
+'       7. Call `SharedMethods.LLM(_context, SystemPrompt, fullPrompt, ..., _useSecondApi, True)` asynchronously.
+'       8. Sanitize LLM output:
+'           - `RemoveMarkdownFormatting` usage (form is kept simple here)
+'           - optionally extract `CommandsString` when `My.Settings.DoCommands` is true
+'       9. Append assistant answer to UI and call `ExecuteAnyCommands(CommandsString)` when permitted.
+'      10. Add assistant turn to `_chatHistory`.
+'
+' Welcome flow
+'   - `WelcomeMessage()` — calls LLM for a localized greeting, appends result to transcript and `_chatHistory`.
+'
+' Conversation helpers
+'   - `BuildConversationString(history)` — concatenates reversed history up to `_context.INI_ChatCap` characters.
+'   - `GetCursorContext` is not present in this Excel form; selection context is gathered via `ConvertRangeToString`.
+'
+' Settings & model UI
+'   - `btnSwitchModel_Click` — toggles `_useSecondApi` and updates the window title to reflect `INI_Model`/`INI_Model_2`.
+'   - `UpdateDocumentCheckboxesState` (not present here) is in Word; Excel version disables model-dependent UI only when needed.
+'   - `chkStayontop_Click`, `chkIncludeDocText_Click`, `chkIncludeselection_Click`, `chkPermitCommands_Click`
+'       — manage `My.Settings` flags, validate selection via `IsSelectionEmpty(selection)`, and show warnings for large worksheets.
+'
+' Command parsing & execution
+'   - `ParseCommands(input)` — parses command blocks of the form:
+'       `[#command: @@argument1@@ §§argument2§§ #]`
+'       • returns `List(Of ParsedCommand)` with `Command`, `Argument1`, `Argument2`
+'       • regex-based parser tolerant to missing `arg2`
+'   - `RemoveCommands(input)` — strips those command blocks from text and collapses excessive blank lines
+'   - `ExecuteAnyCommands(commands As String)` — high-level executor:
+'       1. Temporarily clear `TopMost` and bring Excel forward using `SetForegroundWindow`.
+'       2. Calls `Globals.ThisAddIn.ParseLLMResponse(commands)` to obtain actionable `instructions` (list of `[Cell:...]` blocks).
+'       3. If instructions exist:
+'           - clears `Globals.ThisAddIn.undoStates`
+'           - calls `Globals.ThisAddIn.ApplyLLMInstructions(instructions, True)` to apply changes (values, formulas, comments)
+'           - updates undo UI via `Globals.Ribbons.Ribbon1.UpdateUndoButton()`
+'       4. Restores form topmost and focus.
+'
+' Notes about command execution
+'   - Actual cell-level changes, comments, and formula handling execute inside `ThisAddIn.ApplyLLMInstructions` and associated helpers (Excel ThisAddIn).
+'   - Undo state is managed by `Globals.ThisAddIn.undoStates` so host ribbon UI can enable undo.
+'   - `ExecuteAnyCommands` is deliberately simple: it transforms LLM result into the host add-in's instruction format (via `ParseLLMResponse`) and delegates application.
+'
+' Parsing utilities
+'   - `ParsedCommand` helper DTO (properties: `Command`, `Argument1`, `Argument2`).
+'   - `IsSelectionEmpty(selection As Excel.Range)` — checks intersection with `UsedRange` to detect a meaningful selection.
+'
+' Persistence & UX details
+'   - Transcript persisted in `My.Settings.LastChatHistory` (capped by `_context.INI_ChatCap`).
+'   - `My.Settings` stores checkbox preferences: `IncludeDocument`, `IncludeSelection`, `DoCommands`, `NotAlwaysOnTop`.
+'   - `frmAIChat` uses `My.Resources.Red_Ink_Logo` as icon when available.
+'   - Warns the user when including a large worksheet (uses `Globals.ThisAddIn.SizeOfWorksheet()` and `LargeWorksheetSize`).
+'
+' Threading & UI safety
+'   - LLM calls are async/awaited; UI updates are marshaled via `UpdateUIAsync`.
+'   - COM calls that read ranges are made synchronously on UI thread via `Globals.ThisAddIn` helpers.
+'   - The form uses `Invoke` checks for thread-safe UI updates.
+'
+' Extension points & maintenance
+'   - Add new chat commands: extend `ParseCommands` pattern and update callers that execute parsed commands (`ExecuteAnyCommands` or host `ApplyLLMInstructions`).
+'   - For richer HTML chat like Word's version, a `WebBrowser` based renderer and Markdig pipeline could be reused (not present in this Excel form).
+'   - When adding features that touch host ranges, reuse `Globals.ThisAddIn.ConvertRangeToString`, `GetFileContent`, and `ApplyLLMInstructions` to keep behavior consistent across hosts.
+'   - Keep `_context` usage minimal in UI code; business logic should live in `SharedMethods` / `ThisAddIn`.
+'
+' Quick navigation (important methods)
+'   - Constructor: `New(context As ISharedContext)`
+'   - Load: `frmAIChat_Load`
+'   - Send / LLM call: `btnSend_Click`
+'   - Welcome: `WelcomeMessage`
+'   - Command parsing: `ParseCommands`, `RemoveCommands`
+'   - Command execution: `ExecuteAnyCommands`
+'   - Helpers: `BuildConversationString`, `IsSelectionEmpty`, `AppendToChatHistory`, `UpdateUIAsync`
+'
+' =============================================================================
 
-    ' Add this at the top of your Form class
+
+Public Class frmAIChat
 
     <DllImport("user32.dll")>
     Private Shared Function SetForegroundWindow(hWnd As IntPtr) As Boolean

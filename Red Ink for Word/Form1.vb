@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
 '
-' 13.11.2025
+' 17.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -40,6 +40,173 @@ Imports Newtonsoft.Json.Linq
 Imports SharedLibrary.SharedLibrary
 Imports SharedLibrary.SharedLibrary.SharedContext
 Imports SharedLibrary.SharedLibrary.SharedMethods
+
+' =============================================================================
+' Word Chatbot - Form1.vb — Reference overview (procedures, functions, controls, helpers)
+' =============================================================================
+'
+' Purpose
+'   Chat UI that hosts the interactive "Inky" assistant inside Word. Handles:
+'     - UI (text transcript + HTML WebBrowser chat view)
+'     - building prompts, calling SharedLibrary LLM methods and showing results
+'     - optional inclusion of active document/selection in prompts
+'     - converting assistant Markdown → HTML, link wiring and persistence
+'     - executing trusted bot commands on the active Word document (find, replace, insert, comments, replies)
+'     - model selection (primary, second, alternate INI-based model)
+'     - simple persistence of chat transcript and window state via My.Settings
+'
+' High-level contents
+'   - Class: frmAIChat
+'       Fields & UI controls:
+'         • txtChatHistory, txtUserInput (plain-text transcript & input)
+'         • wbChat (WebBrowser) — HTML chat renderer; `InitChatHtmlUI`, `InitializeChatHtml`
+'         • Buttons: btnSend, btnCopy, btnCopyLastAnswer, btnClear, btnExit, btnSwitchModel
+'         • Checkboxes: chkIncludeDocText, chkIncludeselection, chkPermitCommands, chkStayOnTop, chkConvertMarkdown
+'         • Panels: pnlButtons, pnlCheckboxes
+'         • Chat state: _chatHistory (List of (role,content)), OldChat, PreceedingNewline
+'         • Model state: _useSecondApi, _alternateModelSelected, _alternateModelConfig, _alternateModelDisplayName
+'         • Shared context: _context As ISharedContext (wraps SharedLibrary settings)
+'         • HTML support: _mdPipeline (Markdig), _htmlQueue, _htmlReady, BrowserBridge
+'         • Command execution bookkeeping: CommandsList, FailedCommandsList, MarkerChar
+'         • Misc helpers: _lastThinkingId, UserLanguage, SystemPrompt
+'
+'       Constructor / lifecycle:
+'         • New(context As ISharedContext) — builds UI layout, calls `InitChatHtmlUI`, stores context.
+'         • frmAIChat_Load — restores persisted chat, initializes HTML view, wires events, displays welcome.
+'         • frmAIChat_FormClosing — persist transcript and form bounds to My.Settings.
+'         • Key handling: frmAIChat_KeyDown handles Escape to save and close.
+'
+'       Model UI helpers:
+'         • UpdateTitle() — set window title with active model name.
+'         • UpdateModelButtonText() — change `btnSwitchModel` label based on alternates.
+'         • btnSwitchModel_Click — select/toggle primary/second/alternate model using SharedMethods.ShowModelSelection; snapshot/restore config.
+'         • UpdateDocumentCheckboxesState() — disable document inclusion when using second/alternate model.
+'
+'       LLM call flow:
+'         • CallLlmWithSelectedModelAsync(systemPrompt, fullPrompt) As Task(Of String)
+'             - If user picked alternate model: snapshot current config, apply alternate, enforce second-api flag.
+'             - Calls `SharedMethods.LLM(_context, ...)` and always restores original config in Finally.
+'         • btnSend_Click — main send handler:
+'             - Build `SystemPrompt` from `_context` templates and checkbox flags.
+'             - Optionally include document text or selection via `GetActiveDocumentText` / `GetCurrentSelectionText`.
+'             - Build fullPrompt (document/selection + user prompt + recent conversation).
+'             - Append user message to UI (text + HTML) and add to `_chatHistory`.
+'             - Call LLM via `CallLlmWithSelectedModelAsync`.
+'             - Sanitize/format response:
+'                 • RemoveCommands / RemoveMarkdownFormatting where appropriate
+'                 • Optionally extract `CommandsString` to execute on document
+'             - Append assistant response to UI (plain transcription + Markdown→HTML) via `AppendAssistantMarkdown`.
+'             - If commands present and permitted, call `ExecuteAnyCommands(CommandsString, chkIncludeselection.Checked)`.
+'
+'       Welcome & persistence:
+'         • WelcomeMessage() As Task(Of String) — calls LLM for an initial greeting, appends to chat and `_chatHistory`.
+'         • PersistChatHtml() — stores container innerHTML to My.Settings.LastChatHistoryHtml
+'         • btnClear_Click — clears history (UI + settings) and re-issues WelcomeMessage.
+'         • btnCopy_Click / btnCopyLastAnswer_Click — copy full transcript or last assistant message.
+'
+'       Conversation helpers:
+'         • BuildConversationString(history) — concatenates reversed history up to `_context.INI_ChatCap`.
+'         • GetCursorContext(charCount) — returns text around caret with "[cursor is here]" marker and extracted bubbles.
+'         • GetActiveDocumentText(), GetCurrentSelectionText() — robustly read doc/selection + bubbles via `ThisAddIn.BubblesExtract`.
+'
+'       UI thread helpers:
+'         • UpdateUIAsync(action As Action) — marshals UI updates via Invoke if required.
+'         • AppendToChatHistory, RemoveLastLineFromChatHistory — thread-safe transcript operations.
+'
+'       HTML chat rendering:
+'         • InitChatHtmlUI(host As TableLayoutPanel) — hides text transcript, adds `wbChat`, wires events.
+'         • InitializeChatHtml() — build base HTML + CSS + JS (appendMessage/removeById/wireLinks).
+'         • AppendHtml(fragment) — queue if not ready, else call `appendMessage` script.
+'         • WbChat_DocumentCompleted — flush `_htmlQueue`, wire document click.
+'         • AppendUserHtml(text) — HTML-encode user text and call AppendHtml.
+'         • AppendAssistantMarkdown(md) — Markdown → HTML using Markdig; instrument links; append.
+'         • AppendTranscriptToHtml(transcript) — restore plaintext transcript into HTML view with role mapping.
+'         • ShowAssistantThinking / RemoveAssistantThinking — DOM placeholder for "Thinking..."
+'         • InstrumentLinks / HtmlEncode — ensure external links open via BrowserBridge.
+'         • Doc_Click, WbChat_Navigating, WbChat_NewWindow — handle link clicks and open external links via Process.Start.
+'         • BrowserBridge.OpenLink(url) — COM-visible bridge used from JS to open links externally.
+'
+'       Command parsing & execution
+'         • Command format supported:
+'             [#command: @@argument1@@ §§argument2§§ #]
+'         • ParseCommands(input) As List(Of ParsedCommand)
+'             - Uses a tempered-greedy regex to support single @ or § inside args and double-@@ / double-§§ termination.
+'         • RemoveCommands(input) — remove occurrences of that pattern and clean extra whitespace/linebreaks.
+'
+'         • ExecuteAnyCommands(teststring, OnlySelection)
+'             - Parses commands, saves UI topmost state, ensures main document story, toggles view settings for revisions.
+'             - For each parsed command runs the specific executor:
+'                 • "find"        -> ExecuteFindCommand(searchTerm, OnlySelection)
+'                 • "addcomment"  -> ExecuteAddComment(searchTerm, commentText, OnlySelection)
+'                 • "replycomment"-> ExecuteReplyToCommentByIdToken(idToken, replyText)
+'                 • "replace"     -> ExecuteReplaceCommand(oldText, newText, OnlySelection, MarkerChar)
+'                 • "insert"/"insertafter"/"insertbefore" -> ExecuteInsertCommand / ExecuteInsertBeforeAfterCommand
+'             - Collects failed commands into FailedCommandsList and calls ReportFailedCommands() at end.
+'             - Cleans up markers via ReplaceSpecialCharacter and restores Word view settings.
+'
+'         • ReportCommandExecutionError / ReportFailedCommands — show errors both in plain transcript and HTML.
+'
+'       Individual command executors (Word COM heavy)
+'         • ExecuteFindCommand(searchTerm, OnlySelection) As Boolean
+'             - Uses `Globals.ThisAddIn.FindLongTextInChunks` to find long text robustly.
+'             - Highlights found instances (yellow), handles table boundaries, supports OnlySelection.
+'         • ExecuteReplaceCommand(oldText, newText, OnlySelection, Marker)
+'             - Uses chunked find, sets `doc.TrackRevisions = True`, replaces occurrences with newText (inserting MarkerChar near end for later cleanup).
+'             - Optionally calls `Globals.ThisAddIn.ConvertMarkdownToWord()` to render Markdown.
+'         • ExecuteInsertBeforeAfterCommand(searchText, newText, OnlySelection, InsertBefore)
+'             - Find anchor occurrences and insert text either before or after match; respects TrackChanges.
+'         • ExecuteInsertCommand(newText)
+'             - Insert text at collapsed selection; respects TrackChanges and optional Markdown conversion.
+'         • ExecuteAddComment(searchTerm, commentText, onlySelection)
+'             - Locates matches via `FindLongTextInChunks`, adds threaded Word comments, supports Markdown conversion for comment bodies.
+'         • ExecuteReplyToCommentByIdToken(idToken, replyText) As Boolean
+'             - Parses id/hash with `TryParseCommentIdToken`, calls `ThisAddIn.ReplyToWordComment(wordId, pseudoHash, text, formatted)`.
+'             - Restores original selection and main-story focus after operation.
+'
+'         • TryParseCommentIdToken(raw, ByRef wordId, ByRef pseudoHash) As Boolean
+'             - Accepts formats: "1234|abcdef", "id=1234;hash=abcdef", "wid:1234 ph:abcdef", "1234" or hash-only.
+'             - Returns parsed Word comment index and/or pseudo-hash.
+'
+'       Text utils & sanitization
+'         • DecodeParagraphMarks(raw) — converts LLM/Word paragraph markers and escaped CR/LF to Word paragraph marker (Chr(13)).
+'         • EnsureParagraphs(text) — Thin wrapper calling DecodeParagraphMarks.
+'         • CleanArgument(arg) — trim spaces while preserving paragraph marks.
+'         • ConvertHtmlToPlainText(html) — HtmlAgilityPack innerText extraction.
+'
+'       Safety, threading & COM notes
+'         • All Word document modifications are COM-affine and run on UI thread; `ExecuteAnyCommands` and executors operate directly against Word objects.
+'         • Long-running LLM calls are asynchronous (awaited) — UI updates are marshaled with `UpdateUIAsync`.
+'         • Methods that modify selection or stories attempt to restore original selection and focus; always best-effort.
+'         • Use `GetAsyncKeyState` polling in loops to allow user Abort via Esc.
+'         • COM objects are not always released explicitly in the form code — callers should be careful when adding new COM usage.
+'
+'       Error handling & logging
+'         • Exceptions are caught and reported via message boxes or chat error fragments; critical errors are logged to Debug.WriteLine.
+'         • Command execution errors are aggregated and surfaced to user in chat.
+'
+'       Persistence & settings
+'         • Chat transcript plain text saved to `My.Settings.LastChatHistory` (cap controlled by `_context.INI_ChatCap`).
+'         • HTML chat saved to `My.Settings.LastChatHistoryHtml` via `PersistChatHtml`.
+'         • Window location, size, and checkbox preferences saved to My.Settings.
+'
+'       Extension points & maintenance notes
+'         • Add new bot command verbs by extending `ParseCommands` pattern if format changes, and adding `Select Case` branch in `ExecuteAnyCommands`.
+'         • To change command delimiters, update `ParseCommands` regex and `RemoveCommands` accordingly (keep tempered-greedy semantics).
+'         • When adding Word DOM operations prefer using `FindLongTextInChunks` for robust large-text matching.
+'         • When adding new LLM usage patterns reuse `CallLlmWithSelectedModelAsync` to respect alternate-model snapshot/restore behavior.
+'         • For UI changes put DOM/JS changes into `InitializeChatHtml` (CSS/JS injection).
+'         • Be conservative with COM objects — release when created via Marshal if you keep references outside Word default.
+'
+' Quick navigation (important methods)
+'   - Constructor: `New(context As ISharedContext)`
+'   - Load: `frmAIChat_Load`
+'   - Send / LLM call: `btnSend_Click`, `CallLlmWithSelectedModelAsync`
+'   - Command parsing/execution: `ParseCommands`, `RemoveCommands`, `ExecuteAnyCommands`
+'   - Word operations: `ExecuteFindCommand`, `ExecuteReplaceCommand`, `ExecuteInsertCommand`, `ExecuteAddComment`, `ExecuteReplyToCommentByIdToken`
+'   - HTML chat: `InitChatHtmlUI`, `InitializeChatHtml`, `AppendAssistantMarkdown`, `AppendUserHtml`, `PersistChatHtml`
+'   - Helpers: `GetActiveDocumentText`, `GetCurrentSelectionText`, `GetCursorContext`, `BuildConversationString`
+'
+' =============================================================================
 
 Public Class frmAIChat
 

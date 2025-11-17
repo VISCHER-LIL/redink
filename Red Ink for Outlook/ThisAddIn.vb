@@ -56,6 +56,254 @@ Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 
+' =============================================================================
+' Outlook - ThisAddIn.vb — Reference overview
+' =============================================================================
+'
+' Purpose
+'   Outlook-specific add-in glue for "Red Ink" (Inky). Coordinates:
+'     - add-in lifecycle (Startup / Shutdown)
+'     - configuration bridging to SharedLibrary.SharedMethods/SharedContext
+'     - ribbon command dispatch (MainMenu)
+'     - robust COM access, OLE message filtering and retries
+'     - Word editor integration for compose windows (Inspector/Inline)
+'     - Markdown ↔ HTML, markup, diff and insertion helpers
+'     - Clipboard and file-object handling
+'     - Local HTTP listener hosting a small web UI (Inky) and API endpoints
+'     - Background LLM job scheduler and cancellation
+'     - Power suspend/resume handling and watchdog
+'     - "Define MyStyle" and other user-facing flows
+'
+' High-level structure
+'   - Module Module1
+'       GetAsyncKeyState(vKey) : P/Invoke helper (used by InsertFormattedText parsing)
+'
+'   - Public Class ThisAddIn
+'       All core Outlook-specific logic — single class contains fields, nested
+'       helper types and the majority of methods.
+'
+' Key fields / state
+'   - StartupInitialized : bool guard for startup completion
+'   - mainThreadControl : hidden Control used to marshal actions onto UI thread
+'   - outlookExplorer : cached Explorer; used to listen for Activate
+'   - uiCtx / _uiContext : captured SynchronizationContext for UI marshaling
+'   - _context : SharedContext instance (wrappers exposed through SharedProperties region)
+'   - httpListener, listenerTask, cts, listenerGeneration : HTTP listener control
+'   - jobMap : ConcurrentDictionary(Of String, LlmJob) for background LLM jobs
+'   - llmThread / llmScheduler / llmSyncContext : STA thread for LLM UI needs
+'   - watchdog : Timer ensuring listener health
+'   - powerWindow : PowerNotificationWindow for system sleep/resume messages
+'   - many flags & counters (activeJobs, activeRequests, powerChanging, resumeCooldownUntilUtc)
+'
+' Important nested types
+'   - OleMessageFilter
+'       Installs COM message filter to retry RPC_E_CALL_REJECTED, RPC_E_SERVERCALL_RETRYLATER.
+'       Register() / Revoke()
+'
+'   - WordUndoScope : IDisposable helper to start/end Word UndoRecord safely (Word >= 15)
+'
+'   - PowerNotificationWindow : NativeWindow subclass to receive WM_POWERBROADCAST
+'       Calls owner.HandlePowerSuspendAsync / HandlePowerResumeAsync
+'
+'   - LlmJob : represents a background LLM job
+'       Properties: Id, CreatedUtc, Tcs (TaskCompletionSource), Cts, UseSecond, FileObject
+'       Dispose() cancels and tries to cancel TCS
+'
+'   - InkyState / ChatTurn : persisted chat state for the local web UI (serializable)
+'
+' Public & lifecycle methods
+'   - ThisAddIn_Startup()  Handles Me.Startup
+'       - prepares mainThreadControl, UpdateHandler.MainControl and HostHandle
+'       - registers explorer Activate handler or schedules DelayedStartupTasks
+'       - restores activeChatId from settings
+'
+'   - DelayedStartupTasks()
+'       - runs once: InitializeConfig, update checks, ribbon updates, StartListenerWatchdog, StartupHttpListener
+'
+'   - ThisAddIn_Shutdown() Handles Me.Shutdown
+'       - synchronously stops HTTP listener, watchdog, power watch, other teardown
+'
+'   - InitializeConfig(FirstTime As Boolean, Reload As Boolean)
+'       - populates _context and delegates to SharedMethods.InitializeConfig
+'
+' Threading & UI marshaling helpers
+'   - EnsureUIThread() : Async helper that ensures code runs on UI SynchronizationContext
+'   - SwitchToUi(uiAction As Action) As Task
+'       - marshals a synchronous Action to the mainThreadControl and returns a Task that completes on completion
+'   - SwitchToUi(Of T)(uiFunc As Func(Of T)) As Task(Of T)
+'       - as above but returns result
+'   - SwitchToUiTask(Of T)(uiFunc As Func(Of Task(Of T))) As Task(Of T)
+'       - runs an async UI function on the UI thread and exposes its Task to callers
+'
+' COM robustness helpers
+'   - ComRetry(Of T)(work As Func(Of T)) As T
+'       - retries COM calls for common transient HRESULTs (RPC_E_CALL_REJECTED, etc.)
+'   - EnableOleFilterFor(durationMs As Integer) : temporarily registers message filter
+'
+' SharedProperties region
+'   - A long list of Shared Property wrappers that forward to _context (SharedContext)
+'   - Provides INI_* and SP_* template access from this add-in via SharedLibrary
+'   - Override overloads (String, Boolean, Integer) : prefer override value when provided
+'
+' Primary user command dispatch
+'   - MainMenu(RI_Command As String)
+'       - entry point invoked by ribbon actions (Translate, Correct, Summarize, Improve, Freestyle, InsertClipboard, etc.)
+'       - ensures INI loaded / GPT setup, obtains active Inspector/mail item, then routes to command-specific helpers
+'
+' Inspector / selection helpers
+'   - GetActiveInspector() : returns Inspector when active window is Inspector
+'   - OpenInspectorAndReapplySelection(Command As String)
+'       - opens inspector if only inline editor available and reapplies caret/selection offsets
+'       - supports "Sumup" and "Translate" modes; collects selected emails when multiple selected
+'   - GetSelectionOrCaretRangeFromInlineEditor(oExplorer, ByRef selStart, ByRef selEnd) : gets inline editor offsets
+'   - GetLatestMailBody(fullBody As String) : heuristic that strips quoted older messages, returns latest body
+'
+' LLM wrappers and post-processing
+'   - Public Shared Async Function LLM(promptSystem, promptUser, ...) As Task(Of String)
+'       - calls SharedMethods.LLM with this add-in _context and ensures UI thread if EnsureUI
+'   - Public Shared Async Function PostCorrection(inputText, UseSecondAPI) As Task(Of String)
+'       - forwards to SharedMethods.PostCorrection
+'   - RunLlmAsync(sysPrompt, userPrompt, UseSecondAPI, ShowTimer, FileObject, cancellationToken) As Task(Of String)
+'       - runs LLM in a background Task, with timeout control and cancellation; restores config when using alternate model
+'   - EnsureLlmUiThread / StopLlmUiThread / StopLlmUiThreadNonBlocking
+'       - manage a dedicated STA message-loop thread used by some LLM flows
+'
+' Insert / formatting / markup flows (editor integration)
+'   - InsertClipboard() As Task
+'       - asks LLM to convert clipboard object; inserts into open mail or places result on clipboard
+'       - converts Markdown to RTF when possible (MarkdownToRtfConverter)
+'   - InsertTextWithMarkdown / InsertTextWithFormat / InsertFormattedText / InsertFormattedTextFast
+'       - use SharedMethods for insertion or perform custom fast HTML→Word insert
+'   - Command_InsertAfter(SysCommand, DoMarkup, KeepFormat, Inplace, MarkupMethod)
+'       - core function used by many commands to call LLM on selected text and insert result
+'       - supports KeepFormat (HTML), Markup (diff) and three markup methods:
+'           1 = Word Compare, 2 = Diff (DiffPlex), 3 = Diff shown in window (DiffW)
+'       - handles Inplace vs append insertion, clipboard fallback, and post-correction
+'   - FreeStyle_InsertBefore / FreeStyle_InsertAfter
+'       - UI flows for "Answers" and "Freestyle" operations; collect prompt, optional MyStyle, call LLM and insert
+'
+' Markup / diff helpers
+'   - CompareAndInsertText(text1, text2, ShowInWindow, TextforWindow, DoNotWait)
+'       - builds word-level diff using DiffPlex and converts to inline markers [INS_START] / [DEL_START] etc.
+'       - calls InsertFormattedTextFast to paste annotated markup into the editor
+'   - CompareAndInsertTextCompareDocs(input1, input2)
+'       - creates temporary Word app, compares documents using Word.CompareDocuments, accepts tracked changes
+'       - copies comparison result into current inspector selection
+'
+' Markdown & conversion utilities (editor-centric)
+'   - ConvertRangeToMarkdown(WorkingRange As Word.Range)
+'       - attempts to convert Word formats (headings, lists, bold/italic/underline/strike) into markdown tokens in-place
+'       - uses ReplaceWithinRange helper for targeted find/replace preserving formatting
+'   - ReplaceWithinRange(rng, configureFind, replacementText, tweakReplacement)
+'       - helper that iterates find/replace within a range and resets fonts per replacement
+'   - ConvertRtfToPlainText(rtfContent) : heuristic RTF → plain text
+'   - ConvertEscapeCharacters, InterpolateAtRuntime(template) : placeholder interpolation using reflection on ThisAddIn fields/properties
+'
+' Selection / word counting
+'   - GetSelectedTextLength() : returns word count of current selection (Word editor); 0 for plain-text emails
+'
+' UI helpers & windows
+'   - HelpMeInky() : creates/shows frmHelpMeInky chat window (local UI)
+'   - ShowSettings() : opens settings dialog (delegates to SharedMethods.ShowSettingsWindow)
+'   - ShowSumup / ShowSumup2 / ShowTranslate : wrappers that call LLM and display result as HTML via ShowHTMLCustomMessageBox
+'   - ShowCustomWindow / ShowHTMLCustomMessageBox / ShowRTFCustomMessageBox are provided by SharedLibrary (SLib)
+'
+' Clipboard robustness
+'   - SafeSetClipboard(dataObj) : retries several times to handle clipboard lock contention
+'   - SafeSetClipboard used by various flows that copy rich/plain text to clipboard
+'
+' Web UI + local HTTP listener (Inky)
+'   - StartupHttpListener() : increments listenerGeneration and starts StartHttpListener task
+'   - ShutdownHttpListener(stopUiThread:=True) : orderly shutdown including abort/close and await listenerTask
+'   - StartHttpListener(token, gen) : main loop that accepts HttpListener contexts and dispatches HandleHttpRequest
+'   - HandleHttpRequest(ctx) : handles:
+'       - OPTIONS preflight, favicon (GET /favicon.ico), Inky UI (GET /inky), and API POST (/inky/api)
+'       - reads request body and delegates to ProcessRequestInAddIn(body, rawUrl)
+'       - responds with proper content type hints (CT:html / CT:json)
+'   - BuildInkyHtmlPage() : constructs single-file HTML+JS web UI used by browser to interact with Inky
+'   - GetLogoPngBytes(), GetLogoDataUrl(), GetBotName(), GetFriendlyGreeting() : helpers used by UI generation
+'
+' Inky API server features (handled in ProcessRequestInAddIn)
+'   - Implements commands (via JSON payload "Command"):
+'       - inky_getstate : returns persisted chat history, models, greeting, supportsFiles
+'       - inky_switch : switch chat id (1/2)
+'       - inky_upload : accepts DataURL, writes temp file and returns path
+'       - inky_cancel / inky_canceljob : cancel job (job id preferred) — cancels LlmJob.Cts
+'       - inky_send : main async background flow:
+'           • validates uploaded FileObject, optionally extracts text from Office files
+'           • appends user turn to persisted InkyState
+'           • creates LlmJob and schedules Task.Run job that calls RunLlmAsync and appends assistant turn on completion
+'           • returns job id immediately (job runs in background)
+'       - inky_pure : same as inky_send but sends only raw text (no history/system prompt)
+'       - inky_jobstatus : checks jobMap and returns running/done/canceled/error
+'       - inky_clear : clears chat history
+'       - inky_copylast : copies last assistant answer to clipboard (UI thread)
+'       - inky_setmodel : sets selected model key / toggles second API selection
+'       - inky_toggletheme : toggles dark mode persisted in settings
+'   - ProcessRequestInAddIn contains fallback handlers for legacy "redink_*" commands
+'   - JsonOk / JsonErr helpers return CT:json-prefixed payload for caller
+'
+' Background job lifecycle and safety
+'   - jobMap stores LlmJob with Tcs + Cts; activeJobs atomic counter tracks running jobs
+'   - jobs are scheduled via Task.Run and must:
+'       - apply alternate model config snapshot if requested and restore afterwards
+'       - honor cancellation via job.Cts
+'       - write assistant turn into persisted InkyState on completion
+'       - delete temporary uploaded files
+'   - CleanupOrphanedJobs() periodically removes completed/expired jobs and cancels stale ones
+'   - PerformRecovery() cancels long-running jobs, restarts listener when idle/stuck, re-registers OLE filter
+'
+' Power suspend/resume handling
+'   - PowerNotificationWindow receives WM_POWERBROADCAST and dispatches to:
+'       - HandlePowerSuspendAsync() : cancels jobs, stops listener (without UI thread stop), mutes watchdog
+'       - HandlePowerResumeAsync(userPresent) : restarts listener when appropriate and sets resume cooldown
+'   - StopLlmUiThreadNonBlocking() terminates LLM STA thread without Join
+'   - resumeCooldownUntilUtc used to avoid accepting new work immediately after resume
+'
+' File extraction utilities (used for file uploads / clipboard objects)
+'   - TryExtractOfficeText(filePath, ByRef extracted, ByRef label) : routes by extension to:
+'       • ExtractWordText(path) — uses Word Interop (SafeCloseWord cleans COM)
+'       • ExtractExcelText(path) — uses Excel Interop, attempts bulk Value2 matrix for performance
+'       • ExtractPowerPointText(path) — uses late-bound PowerPoint interop
+'   - TryExtractTextLike(filePath, ByRef extracted, ByRef label) : handles plain text, CSV, code files
+'   - ReadAllTextSmart(path) : attempts UTF-8 (BOM detection) then fallback to Windows-1252
+'   - ColToLetters(col) : converts 1-based column index to Excel letters (A, B, ... AA)
+'   - SafeCloseWord / SafeCloseExcel / SafeClosePowerPoint : release COM objects and Quit apps safely
+'
+' Utilities and small helpers
+'   - GetSelectedModelLabel, GetModelListForBrowserAsync : build the model dropdown for the web UI
+'   - SanitizeModelOutputForBrowser(raw) : strips assistant/user role markers and normalizes blank lines
+'   - ToBrowserTurns(list) : maps ChatTurn to simple DTO for browser
+'   - MarkdownToHtml(md) : Markdig pipeline wrapper with advanced extensions
+'   - CapHistoryToChars(st, maxChars) : clips chat history to max chars for prompt construction
+'   - EscapeForXml(s) : xml-encode string for safe embedding
+'   - GetGdiCount() / GetUserCount() : P/Invoke to query GUI resource usage for diagnostics
+'
+' Error handling, logging and security notes
+'   - COM calls protected by ComRetry and many Try/Catch blocks: code aims to fail softly and preserve Outlook stability.
+'   - All COM objects created are explicitly released with Marshal.ReleaseComObject / FinalReleaseComObject where applicable.
+'   - Background jobs use TaskCompletionSource + CancellationTokenSource; callers must check Job status endpoints to observe completion.
+'   - Temporary uploaded files are saved to %TEMP%\InkyUploads and cleaned up after use where possible.
+'   - Avoid logging or exposing API keys. Model configuration changes are applied via ApplyModelConfig / RestoreDefaults; originalConfig snapshot is restored after alternate use.
+'   - HTTP endpoints accept file uploads; server validates model support before passing file path to model.
+'
+' Maintenance & extension points
+'   - Add new ribbon commands → extend MainMenu and implement corresponding helper(s).
+'   - Add new Inky API commands → extend ProcessRequestInAddIn switch (ensure job registration + cancellation semantics).
+'   - To support new file formats, extend TryExtractOfficeText/TryExtractTextLike and associated extraction functions.
+'   - When adding UI actions that touch the Word editor, prefer ComRetry + explicit Marshal.ReleaseComObject.
+'   - Document thread-affinity for all new public/private methods (UI vs background).
+'   - Keep SharedContext property wrappers in sync if SharedLibrary.SharedContext changes.
+'
+' Testing tips
+'   - Unit-test pure helpers (ColToLetters, ConvertRtfToPlainText, SanitizeModelOutputForBrowser).
+'   - For integration tests of HTTP listener, call /inky/api endpoints and inspect job lifecycle via inky_jobstatus.
+'   - When debugging COM issues, enable OleMessageFilter.Register temporarily and inspect thrown COMExceptions for HRESULT values.
+'   - Use __SettingName__ notation when instructing contributors to use Visual Studio commands or settings (e.g., __CommandName__).
+'
+' =============================================================================
+
+
 Module Module1
     ' Correct attribute declaration for DllImport
     <DllImport("user32.dll", CharSet:=CharSet.Auto, SetLastError:=True)>

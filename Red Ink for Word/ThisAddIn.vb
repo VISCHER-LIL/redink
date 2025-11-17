@@ -102,6 +102,210 @@ Imports PDFP = UglyToad.PdfPig
 Imports PDFPG = UglyToad.PdfPig.Geometry
 Imports PdfSharp
 
+' =============================================================================
+' Word - ThisAddIn.vb — Overview of procedures, functions and elements
+' =============================================================================
+'
+' Purpose
+'   Word-specific add-in glue for "Red Ink" (Inky). Orchestrates:
+'     - add-in lifecycle and Word event handlers (Startup/Shutdown, WindowActivate, DocumentOpen, SelectionChange)
+'     - ribbon/context menu integration and keyboard shortcuts
+'     - user-facing commands (Translate, Correct, Improve, Freestyle, Summarize, Anonymize, Shorten, CreatePodcast, etc.)
+'     - bridging to `SharedLibrary` for LLM calls, prompt templates, I/O helpers and panes
+'     - rich editor operations: Markdown/HTML ↔ Word insert, image insertion, comments/bubbles, tracked changes and diffs
+'     - web-agent interpreter host and local HTTP listener for Inky web UI
+'     - audio: TTS production, merging/playing audio, STT (Vosk/Whisper/Google), transcription UI
+'     - presentation generation/manipulation (OpenXML) and slide plan application
+'     - PDF redaction and rendering helpers
+'     - document analysis workflows: DocCheck, Clause libraries, rule sets, suspicious formatting detection
+'     - embedding/indexing/search support and web grounding
+'
+' High-level structure
+'   - Module-level P/Invoke wrappers: `GetAsyncKeyState`, `FindWindow`, `EnableWindow`, `IsWindowEnabled`, `SetThreadExecutionState`, `LoadLibrary`, `SetDllDirectory`, `SetThreadExecutionState` etc.
+'
+'   - Class `StopForm` : lightweight cancel flag container
+'
+'   - Class `BridgeSubs` (ComVisible)
+'       - Exposes simple entry points for macros/automation to call primary flows:
+'         `DoInLanguage1/2`, `DoCorrect`, `DoImprove`, `DoShorten`, `DoAnonymize`, `DoFreestyleNM/AM`,
+'         `DoSummarize`, `DoContextSearch`, `DoRegexSearchReplace`, `DoImportTextFile`, `DoAddContextMenu`, etc.
+'       - Purpose: VB/VBA/legacy macro bridge to managed methods on `ThisAddIn`.
+'
+'   - Class `RangeProxy`
+'       - Lightweight wrapper for Word `Range` with helpers to collapse and to implement `IDisposable`.
+'
+'   - Class `ThisAddIn` (core)
+'       - Fields & constants:
+'           • Many trigger constants (e.g., `ExtTrigger`, `PurePrefix`, markup triggers).
+'           • Feature flags, model/tokenizer paths, TTS/STT endpoints and supported languages lists.
+'           • `_context` : shared `ISharedContext` instance bridging `SharedLibrary`.
+'           • UI controls / forms: `mainThreadControl`, `chatForm`, `_win`, transcription/TTS forms.
+'           • Embedding stores: `embed_store`, `store_bow`, indexing sets.
+'           • HTTP listener and background tasks for local web UI.
+'           • Speech synthesizer, TTS tokens and token expiry handling.
+'           • CancellationTokenSource(s), watchdogs and run-state booleans.
+'
+'       - Initialization / lifecycle:
+'           • `ThisAddIn_Startup` / `ThisAddIn_Shutdown` : register Word events, create UI handle, initialize SharedMethods and features.
+'           • `DelayedStartupTasks` : deferred initialization that may include config, update checks, indexing, listener start.
+'           • `InitializeAddInFeatures`, `InitializeConfig` : load INI/settings via `SharedMethods.InitializeConfig`.
+'           • `EnsureUIThread`, `SwitchToUi` helpers to marshal to UI thread.
+'
+'       - Shared-library bridge:
+'           • `LLM(...)`, `PostCorrection(...)`, `ShowSettingsWindow(...)`, `ShowPromptSelector(...)` — thin wrappers calling `SharedMethods` using local `_context`.
+'
+'       - UI / menu / automation:
+'           • `AddContextMenu`, `AddSubMenuItems`, `RemoveOldContextMenu`, `AssignShortcut`, `BuildKeyCodeFromText`.
+'           • `RequestComAddInAutomationService` returns `BridgeSubs`.
+'
+'       - Main user commands (editor-centric; many Async Subs):
+'           • Language / translation: `InLanguage1`, `InLanguage2`, `InOther`
+'           • Editing flows: `Correct`, `Improve`, `Friendly`, `Convincing`, `NoFillers`, `Shorten`, `Summarize`, `Explain`
+'           • Freestyle flows: `FreeStyleNM`, `FreeStyleAM`, `FreeStyle(UseSecondAPI, LastPrompt)`
+'           • MyStyle: `DefineMyStyle`, `ApplyMyStyle`
+'           • Clipboard insertion: `InsertClipboard`
+'           • Content import: `ImportTextFile`
+'           • Document-level: `PrepareRedactedPDF`, `FlattenRedactedPDF`, `CreatePodcast`, `CreateAudio`
+'           • Misc: `EasterEgg`, `SpecialModel`, `Transcriptor`, `HelpMeInky`, `ShowSettings`, `ShowChatForm`
+'
+'       - Core text processing pipeline:
+'           • `ProcessSelectedText(...)` : high-level entry that orchestrates text selection extraction, token checks, LLM call, handling result insertion, markup and post-processing. Accepts many flags: KeepFormat, InPlace, DoMarkup, MarkupMethod, DoPane, ChunkSize, etc.
+'           • `TrueProcessSelectedText(...)` : lower-level worker that implements actual content transformations and insertion strategies.
+'           • `ParseText(...)`, `GetTextWithSpecialElementsInline(...)` : produce LLM-friendly payload from Word ranges (tables, lists, paragraphs, comments).
+'           • `ConvertMarkdownToWord`, `InsertTextWithMarkdown`, `InsertMarkdownToComment`, `InsertInline`, `RenderInline`, `InsertImageFromSrc` : HTML/Markdown → Word insertion helpers that preserve formatting & images.
+'           • Markup / diff helpers: `CompareAndInsert`, `CompareAndInsertComparedoc`, `AddMarkupTags`, `RemoveMarkupTags`, `RemoveInsDelTagsInPlaceholders`.
+'
+'       - Comments / bubbles support:
+'           • `SetBubbles`, `ReplyBubbles`, `AddHiddenRunsByFind`, `BubblesExtract`, `ReplyToWordComment`, `AddNoticeBubbleAt` — create and manipulate threaded comments and "bubble" annotations.
+'           • Helpers to parse comment identifiers and convert markup into comments.
+'
+'       - Regex & search helpers:
+'           • `RegexSearchReplace`, `ParseRegexString`, `SearchAndReplace`.
+'           • `FindLongTextInChunks`, `GetVisibleText`, `NormalizeTextForSearch`.
+'
+'       - Placeholder & formatting helpers:
+'           • `ProcessInTextPlaceholders`, `RestoreSpecialTextElements`, `RemoveContentControls*`, paragraph format helpers (`ApplyParagraphFormat`, `CorrectPFORMarkers`).
+'           • `ReplaceWithinRange`, `ReplaceWithinRange_Highlight`, `HighlightIndexToMarkSuffix`.
+'
+'       - DocCheck / Clause libraries:
+'           • `FindClause`, `AddClause`, `RunDocCheck`, `LoadRuleSets`, `ParseDocCheckFile`, `CreateRuleSet`, `RunIsolatedClause`, `RunSetOfClauses`.
+'           • `ClauseLibrary`, `DocCheckRuleSet` are data models for clause libraries and rule sets.
+'           • `ParseSegmentsWithPositions`, `AppendClauseToSegment`, and `BuildMarkdownFromClauseResponse` help transform LLM JSON outputs into user-facing Markdown.
+'
+'       - Web grounding & WebAgent hosting:
+'           • `WebAgent()`, `CreateModifyWebAgentScript`, `GetWebAgentScriptFile`, `ProcessWebAgentSecretPlaceholders`, `CancelWebAgentRun`, `ProcessRequestInAddIn`
+'           • Large `WebAgent` spec constants: `WebAgentJSONInstruct`, `WebAgentParameterSpec` document interpreter behavior and parameterization.
+'           • Crawling helpers: `PerformSearchGrounding`, `CrawlWebsite`, `RetrieveWebsiteContent`, `GetAbsoluteUrl`, `CrawlContext`.
+'
+'       - HTTP listener & local web UI:
+'           • `StartupHttpListener`, `ShutdownHttpListener`, `StartHttpListener`, `HandleHttpRequest` — serve UI and API endpoints used by browser-based Inky.
+'
+'       - File utilities:
+'           • `GetFileName`, `GetFileContent` (dispatch to `SharedMethods.Read*` helpers), `CleanAndExtractJson`, `FallbackExtractRecords`.
+'
+'       - Presentation/OpenXML helpers:
+'           • `GetPresentationJson`, `ApplyPlanToPresentation`, `BuildDeckIndex`, `BuildParagraph`, `BuildRun`, `SetText`, `SetTitle`, `SetBullets`, many helper functions to create slides, placeholders, shapes and copy assets.
+'           • Helpers to validate/resolve layouts, clone template slides and copy images.
+'
+'       - PDF redaction & rendering:
+'           • Class `PdfRedactionService` exposes `RunPdfRedactionAsync` and many private helpers:
+'               - text extraction & position mapping (`ExtractTextAndPositions`), rectangle construction, PDF creation (`CreateRedactedPdf`), metadata strip.
+'           • Utilities to burn PDFs to images and ensure PdfSharp/Pdfium fonts.
+'
+'       - Audio, TTS and STT flows:
+'           • `GenerateAudioFromText`, `GenerateAndPlayAudioFromSpeakerNotes`, `GenerateAndPlayAudioFromSelectionParagraphs`,
+'             `GenerateAndPlayPodcastAudio`, `MergeAudioFiles`, `SaveAudioToFile`, `PlayAudio`, `PlayAudio` helpers.
+'           • TTS selection UI: `TTSSelectionForm` and voice model lists (`OpenAIVoices`, `GoogleVoicesList`, `GoogleVoice`).
+'           • STT / transcription UI: `TranscriptionForm` with Vosk/Whisper/Google streaming logic, ring-buffer, streaming limits, recovery and speaker identification.
+'           • Token acquisition / refresh: `GetFreshTTSToken`, `GetFreshSTTToken`, token expiry handling and sleep lock management (`AcquireTTSSleepLock` / `ReleaseTTSSleepLock`).
+'
+'       - Embeddings & search:
+'           • `RunIndexing_Embed`, `RunSearch_Embed`, `RunIndexing_bow`, `RunSearch_bow` — manage embed store and bag-of-words indices and searches.
+'           • `EmbeddingStore` and `EmbeddingStore_BagofWords` are declared in `SharedLibrary` (used here).
+'
+'       - JSON parsing and sanitization:
+'           • `CleanAndExtractJson`, `TryParseJsonToken`, `ExtractRecordJsonStrings`, `SanitizeLlmResult` (in `SharedLibrary`) used across many flows for robust LLM output handling.
+'
+'       - Presentation of results & user interaction:
+'           • `ShowPaneAsync`, `HandleIntelligentMerge`, `IntelligentMerge`, `BalloonMerge`, `IntelligentMergeBalloon` handle preview/edit cycles via the pane and then apply instructions.
+'
+'       - Utility & support functions:
+'           • `InterpolateAtRuntime` — replaces `{Placeholders}` by reflected fields/properties on `ThisAddIn`.
+'           • `EstimateTokenCount` used via `SharedLibrary` flows (calls to LLM).
+'           • `ComputeSha256Hex`, `xmlEscapeSafe`, `SanitizeKey`, `HideEscape` / `UnHideEscape`.
+'           • `GetWordDefaultInterfaceLanguage`, `VBAModuleWorking`, `INILoadFail`.
+'
+'       - Long-running helpers and concurrency:
+'           • `ProgressScope` for progress UI and cooperative cancellation.
+'           • `WordUndoScope` for safe Word undo record lifetime.
+'           • Methods poll `GetAsyncKeyState` to allow user Escape abort in loops.
+'
+'       - Transcription and audio helper types:
+'           • `TranscriptionForm` encapsulates heavy STT UI logic, streaming, buffering and speaker embedding match.
+'
+'       - Data model classes for slides, presentation JSON, placeholders, layout info, clause libs, redaction DTOs, and suspicious-span records:
+'           • `SlideJson`, `LayoutJson`, `SlideSizeJson`, `PresentationJson`, `LayoutInfo`, `DeckIndex`
+'           • `ClauseLibrary`, `SegmentInfo`, `DocCheckRuleSet`, `SuspiciousSpan`, `TextPosition`, `RedactionRangeDto`, `RedactionItemDto`, `RedactionResponseDto`, `RedactionRectangle`
+'
+'       - Font/renderer helpers:
+'           • `ArialFontResolver` implements PdfSharp font resolver to embed fonts for PDF rendering.
+'
+' Error handling, threading & COM notes
+'   - COM operations carefully wrapped in try/catch and `ReleaseComObject`/`Marshal.ReleaseComObject` where needed.
+'   - UI-affine operations must run on Word UI thread; helpers (`EnsureUIThread`, `SwitchToUi`) are provided.
+'   - Long-running operations are async and support cancellation tokens; many flows show splash/progress UI and poll for Escape to abort.
+'   - LLM and web/network calls run off the UI thread; results marshaled back for insertion.
+'   - Sensitive data (API keys, tokens) handled by `SharedContext` and `SharedMethods` — avoid logging raw secrets.
+'
+' Extension points & maintenance
+'   - Add new LLM prompt templates to `SharedContext` and wire into `ProcessSelectedText`/`FreeStyle`.
+'   - Extend `WebAgent` commands by modifying `WebAgentJSONInstruct` and interpreter code (in `SharedLibrary`).
+'   - Add new slide element types by updating OpenXML helper methods (`AddShape`, `CreateFreestandingTextBox`).
+'   - Update PDF font resolver mappings when bundling new fonts; test `PdfRedactionService` across PDFs with varied encodings.
+'   - Document thread-affinity for any new public method (UI vs background).
+'
+' General maintenance
+'  - Document thread-affinity for every new public/private method: UI-only, background (Task), or COM-affine.
+'  - Add public API notes when changing signatures or side-effects (selection/document modification, file I/O, network).
+'  - Keep SharedContext property names (INI_*/SP_*) in sync with SharedLibrary.SharedContext when adding/removing settings.
+'  - Avoid logging secrets (API keys, private keys, tokens). Use SharedMethods helpers for masked display and storage.
+'
+' Interaction with SharedLibrary
+'  - Prefer SharedMethods wrappers for LLM, file, HTML/RTF, OCR and embedding operations:
+'      • Use SharedMethods.LLM(_context, ...) and SharedMethods.PostCorrection(...) — they centralize token/accounting, retries and provider-specific handling.
+'      • Use ReadTextFile/ReadPdfAsText/ReadWordDocument in SharedMethods for file extraction instead of reimplementing parsing.
+'      • Use Markdown/RTF helpers in SharedMethods for consistent conversion across hosts.
+'  - Alternate-model pattern (safe usage):
+'      1) backup = SharedMethods.GetCurrentConfig(_context)
+'      2) SharedMethods.ApplyModelConfig(_context, alternateConfig)
+'      3) call SharedMethods.LLM(...)
+'      4) SharedMethods.RestoreDefaults(_context, backup) — always in Finally to avoid leaving global state mutated.
+'  - Use SharedMethods.EstimateTokenCount before sending large prompts; respect INI_MaxToken/timeout settings from _context.
+'  - Add new provider-specific code inside SharedLibrary, not host add-ins — keep host code thin (prepare prompt, call SharedMethods).
+'
+' Config, secrets & deployments
+'  - Store provider settings in SharedContext/INI files; do not duplicate key storage in host projects.
+'  - When you change default INI paths or prompt templates update documentation and DefaultINIPaths in SharedLibrary.
+'  - For private-key JWT or OAuth flows use SharedMethods/GoogleOAuthHelper and keep PEMs out of logs and source control.
+'
+' Adding features & prompts
+'  - Add prompt templates and Default_SP_* entries in SharedLibrary so all hosts share the same prompt text and updates.
+'  - If a host requires a host-specific prompt variation, expose a small wrapper in ThisAddIn that sets the host-specific interpolation and then delegates to SharedMethods.
+'
+' Testing & releases (maintenance-oriented)
+'  - Reproduce integration scenarios in the actual Office host process (attach to WINWORD.EXE) — many bugs only surface inside host.
+'  - Test ribbon changes across configured Office versions and high-DPI settings; use __SettingName__ references when documenting Visual Studio commands.
+'  - When changing SharedLibrary interfaces, update all host add-ins (Word/Excel/Outlook) and run smoke tests for LLM calls, file extraction and the local HTTP listener.
+'
+' Quick checklist for a change touching LLM/ Ribbon:
+'  - Does the change go in SharedLibrary (core logic) or host (UI/selection)? Put core logic in SharedLibrary.
+'  - Is model/config state mutated? Use GetCurrentConfig/ApplyModelConfig/RestoreDefaults pattern.
+'  - Are ribbon callbacks updated? Update Designer/XML and call Globals.Ribbons.Ribbon1.Invalidate() as needed.
+'  - Are COM objects released and thread-affinity documented? Add ReleaseComObject and comments.
+'  - Did you avoid logging secrets and update unit/integration tests? Verify before committing.
+'
+' =============================================================================
+
 Public Class StopForm
     Inherits Form
 

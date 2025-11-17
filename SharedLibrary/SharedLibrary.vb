@@ -84,6 +84,378 @@ Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports UglyToad.PdfPig
 Imports UglyToad.PdfPig.Content
 
+' =============================================================================
+' Red Ink - SharedLibrary
+' =============================================================================
+'
+' Purpose:
+'   Central shared library used by the Red Ink Office add-ins (Word, Excel, Outlook).
+'   Provides: shared configuration/context types, utilities for text/RTF/HTML handling,
+'   LLM and model management, web-agent scripting, embedding/semantic search support,
+'   UI helper panes and dialogs, OAuth helper, update handling, file/clipboard helpers,
+'   PDF & OCR helpers, image decoding and various application-level helpers.
+'
+' High-level architecture:
+'   - SharedContext  : Holds INI and runtime configuration values and user-facing prompts.
+'   - SharedMethods  : Static/shared helper class with the core business logic and utilities:
+'                      configuration parsing, LLM invocation, token accounting, HTML<->RTF
+'                      conversion, clipboard helpers, prompt loading, settings UI, etc.
+'   - ModelConfig    : Represents a model/provider configuration (API key, endpoint, timeouts).
+'   - WebAgentInterpreter: Lightweight script-capable web agent for web scraping and web automation.
+'   - EmbeddingStore / EmbeddingStore_BagofWords: In-memory embedding stores and search helpers.
+'   - UI classes     : multiple Windows Forms used for progress, splash screens, panes and dialogs.
+'   - Helpers       : GoogleOAuthHelper, ImageDecoder, Pdf/OCR helpers, UpdateHandler, NativeMethods.
+'
+' Public API (most-used entry points for host add-ins):
+'   - SharedMethods.Initialize(panes)         : Initialize library with host task pane collection.
+'   - SharedMethods.InitializeConfig(context) : Load and apply configuration for a host context.
+'   - SharedMethods.LLM(context, ...)         : Invoke configured LLM provider asynchronously.
+'   - SharedMethods.PostCorrection(...)       : Optional post-processing call to an LLM.
+'   - SharedMethods.GetDefaultINIPath(key)    : Returns default INI path for an Office host.
+'   - SharedMethods.ShowCustomPane(...)       : Show a task pane with RTF/HTML content.
+'   - PaneManager.ShowMyPane(...)             : Convenience wrapper for showing modal pane content.
+'   - WebAgentInterpreter.RunAsync(script, context)
+'   - EmbeddingStore.IndexDocument / Search   : Index and search semantic chunks.
+'
+' Important data flows:
+'   1. Configuration and prompts are read from INI files (DefaultINIPaths) and remote defaults.
+'   2. ModelConfig objects represent runtime provider settings and are applied via ApplyModelConfig.
+'   3. LLM calls assemble system+user prompts, call the provider endpoint, parse JSON, extract text/metadata.
+'   4. UI operations use TaskPanes/CustomPaneControl and are safe to call from UI thread only.
+'   5. WebAgentInterpreter runs asynchronous fetch/parse commands and can auto-extract markdown/html.
+'
+' Threading & concurrency:
+'   - Many public helpers are Async (Task-based). Await them from async event handlers.
+'   - UI helpers must be called on the UI thread; use Invoke/BeginInvoke or PaneManager wrappers.
+'   - SharedModel state (SelectedAlternateModels, originalConfig) is shared; minimize concurrent writes.
+'   - CancellationTokens are accepted for long-running operations where indicated.
+'
+' Error handling & logging:
+'   - Exceptions are propagated as Task exceptions for async methods; callers should catch and surface.
+'   - UpdateHandler and WebAgentInterpreter include internal debug logging; enable via debug flags.
+'   - Token/accounting and sensitive data handling is centralized in ModelConfig/RealAPIKey* helpers.
+'
+' Security notes:
+'   - API keys are kept in the ModelConfig and sometimes encoded; review RealAPIKey and Decode logic
+'     before changing storage or transmission semantics.
+'   - Avoid logging raw API keys or private credentials. Use the Secure/Masked display helpers for UI.
+'   - OAuth JWT signing is implemented in GoogleOAuthHelper; private keys must be PEM-formatted.
+'
+' Third-party libraries (non-exhaustive):
+'   - Newtonsoft.Json (JSON handling)
+'   - HtmlAgilityPack (HTML parsing)
+'   - Markdig (Markdown)
+'   - Microsoft.ML.OnnxRuntime (embeddings/tokenizers)
+'   - UglyToad.PdfPig (PDF)
+'   - NAudio, Whisper/Vosk helpers (speech)
+'   - BouncyCastle (crypto)
+'   See LicenseText constant for full attribution and license links.
+'
+' Extension points & customization:
+'   - Add new model/provider: create a ModelConfig and extend LLM(...) to support provider-specific
+'     request/response formats and auth. Update ApplyModelConfig/LoadAlternativeModels accordingly.
+'   - Add new prompt libraries: use LoadPrompts and DefaultINIPaths / helper UI to surface them.
+'   - WebAgent scripts: author JSON scripts for WebAgentInterpreter.RunAsync; see examples in repository.
+'   - Embedding backend: EmbeddingStore is pluggable — implement GetEmbedding and Search for new model.
+'
+' Development & debugging tips:
+'   - To inspect LLM request/response: enable debug logging in LLM call paths or set breakpoints in LLM/PostCorrection.
+'   - Use PaneManager.ShowMyPane for quick UI tests; unit-test pure helpers (e.g., CleanString, ConvertEscapeCharacters).
+'   - When modifying RTF/HTML conversion, verify with Word interop Read/Write helpers (ReadWordDocument, GetRangeHtml).
+'   - Keep UI thread interactions small and offload heavy compute to Task.Run or background tasks.
+'
+' Build & runtime notes:
+'   - Target: .NET Framework (checked via project files in each add-in project).
+'   - Runs inside Office host processes (Word/Excel/Outlook). Debugging: attach to the host process or use Visual Studio multiple startup projects.
+'   - Ensure native dependencies (PDF/OCR, model files) are present when running features that need them.
+'
+' Maintenance:
+'   - If adding public methods, document expected thread-affinity (UI vs background) and lifetime of returned objects.
+'   - Keep third-party license copies up-to-date in the repo and update LicenseText constant when upgrading packages.
+'
+' -----------------------------------------------------------------------------
+' CLASSES, MAJOR FIELDS, PROPERTIES, METHODS (summary)
+' -----------------------------------------------------------------------------
+'
+' Class: SharedContext
+'   - Purpose: Hold all INI/configuration values, prompt templates and runtime flags.
+'   - Members: Many Properties (strings, booleans, integers, DateTime).
+'       Examples: INI_APIKey, INI_Model, INI_Timeout, INI_SecondAPI, INI_APIDebug,
+'                 PromptLibrary (List(Of String)), PromptTitles, various SP_* prompt templates.
+'   - Usage: Populated by InitializeConfig and used by SharedMethods, LLM and UI.
+'
+' Class: WindowWrapper
+'   - Fields:
+'       _hwnd As IntPtr
+'   - Purpose: simple hwnd container / helper for interop code.
+'
+' Class: SplashScreenCountDown
+' Class: SplashScreenWorks
+'   - Public methods:
+'       Show(), Close(), UpdateMessage(newMessage As String),
+'       RestartCountdown(seconds As Integer, Optional newBaseText As String = Nothing)
+'   - Purpose: modal splash screens with countdown and draggable behavior.
+'
+' Class: SharedMethods (central utilities)
+'   - Constants & Shared fields:
+'       AN, AN2, AN3, AN4, AN5, AN7, AN8, MaxUseDate, RegPath_Base, DefaultINIPaths,
+'       HelperPaths, UpdatePaths, LicenseText, Default prompt templates (Default_SP_*),
+'       many private ISearch constants and regex separators.
+'
+'   - Notable Shared properties/fields:
+'       originalConfig As ModelConfig
+'       SelectedAlternateModels As List(Of ModelConfig)
+'       TaskPanes As CustomTaskPaneCollection
+'
+'   - Key Public Methods (grouped by concern):
+'     Configuration / model management:
+'       InitializeConfig(ByRef context As ISharedContext, FirstTime As Boolean, Reload As Boolean)
+'       CreateModelConfigFromDict(configDict As Dictionary(Of String, String), context As ISharedContext, Description As String) As ModelConfig
+'       GetCurrentConfig(context As ISharedContext) As ModelConfig
+'       ApplyModelConfig(context As ISharedContext, config As ModelConfig, Optional ByRef ErrorFlag As Boolean = False)
+'       RestoreDefaults(context As ISharedContext, originalConfig As ModelConfig)
+'       LoadAlternativeModels(iniFilePath As String, context As ISharedContext) As List(Of ModelConfig)
+'       ShowModelSelection(context As ISharedContext, iniFilePath As String, Optional Title As String = "Freestyle", ...) As Boolean
+'       ShowMultipleModelSelection(context As ISharedContext, modelPath As String) As Boolean
+'       GetSpecialTaskModel(context As ISharedContext, iniFilePath As String, Task As String, Optional UseCase As Integer = 1) As Boolean
+'
+'     LLM / API / tokens:
+'       Async Function LLM(context As ISharedContext, promptSystem As String, promptUser As String, Optional Model As String = "", Optional Temperature As String = "", Optional Timeout As Long = 0, Optional UseSecondAPI As Boolean = False, Optional Hidesplash As Boolean = False, Optional AddUserPrompt As String = "", Optional FileObject As String = "", Optional cancellationToken As Threading.CancellationToken = Nothing) As Task(Of String)
+'       Async Function PostCorrection(context As ISharedContext, inputText As String, Optional UseSecondAPI As Boolean = False) As Task(Of String)
+'       Private Shared Sub LogTokenSpending(ByRef root As JToken, tokenCountString As String, prompt As String)
+'       Public Shared Function EstimateTokenCount(text As String) As Integer
+'       Public Shared Function GenerateUniqueId() As String
+'       Public Shared Sub ShowAndEditPromptLog()
+'
+'     HTML / RTF / Word helpers:
+'       Public Shared Sub InsertTextWithMarkdown(selection As Object, gptResult As String, TrailingCR As Boolean)
+'       Public Shared Sub InsertTextWithBoldMarkers(selection As Object, gptResult As String)
+'       Public Shared Sub InsertTextWithFormat(formattedText As String, ByRef range As Microsoft.Office.Interop.Word.Range, ReplaceSelection As Boolean, Optional NoTrailingCR As Boolean = False)
+'       Public Shared Function GetRangeHtml(ByVal range As Microsoft.Office.Interop.Word.Range) As String
+'       Public Shared Function CreateProperHtml(inputHtml As String) As String
+'       Public Shared Function ConvertMarkupToRTF(inputText As String) As String
+'       Public Shared Function RemoveHTML(html As String) As String
+'       Public Shared Function SimplifyHtml(htmlContent As String) As String
+'       Public Shared Sub CleanHtmlNode(node As HtmlNode)
+'       Private Shared Function FixMarkTagsForWord(html As String, Optional defaultColor As String = "yellow") As String
+'       Private Shared Function MsoHighlightToCssColor(mso As String) As String
+'       Public Shared Sub RemoveTrailingCr(ByRef range As Microsoft.Office.Interop.Word.Range)
+'
+'     Clipboard / selection helpers:
+'       Public Shared Sub StoreClipboard()
+'       Public Shared Sub RestoreClipboard()
+'       Public Shared Sub ClipboardSet(finalHtml As String)
+'       Public Shared Sub PutInClipboard(text As String)
+'       Public Shared Sub CopySelectionExcludingTrailingNbsp(rtb As RichTextBox)
+'       Public Shared Sub AppendNbspForHyperlinks(targetBox As RichTextBox, rtf As String)
+'       Class ClipboardSnapshot: Capture(), Restore(snapshot As IDataObject)
+'
+'     File I/O and parsing:
+'       Public Shared Function ReadTextFile(filePath As String, Optional ReturnErrorInsteadOfEmpty As Boolean = True) As String
+'       Public Shared Function ReadRtfAsText(rtfPath As String, Optional ReturnErrorInsteadOfEmpty As Boolean = True) As String
+'       Public Shared Function ReadWordDocument(docPath As String, Optional ReturnErrorInsteadOfEmpty As Boolean = True) As String
+'       Public Shared Async Function ReadPdfAsText(pdfPath As String, Optional ReturnErrorInsteadOfEmpty As Boolean = True, Optional DoOCR As Boolean = False, Optional AskUser As Boolean = True, Optional context As ISharedContext = Nothing) As Task(Of String)
+'       Private Shared Function ExtractPageTextFromPdf(page As UglyToad.PdfPig.Content.Page) As String
+'       Private Shared Async Function PerformOCR(pdfPath As String, context As ISharedContext) As Task(Of String)
+'
+'     JSON / text utilities:
+'       Public Shared Function RemoveHiddenMarkers(text As String) As String
+'       Public Shared Function ExtractCitations(ByRef jsonObj As JObject) As String
+'       Public Shared Function RemoveMarkdownFormatting(ByVal input As String) As String
+'       Public Shared Function FixMimeType(legacyType As String) As String
+'       Public Shared Function FindJsonProperty(token As JToken, searchtext As String) As String
+'       Private Shared Function HandleObject(jsonObject As JObject, ResponseKey As String, ResponseText As String, RKMode As Integer) As String
+'       Private Shared Sub ExtractLegacyCitations(jsonObj As JObject, ByRef citationList As List(Of String), ByRef sourceUris As HashSet(Of String))
+'       (many private helpers for citation formatting / extraction)
+'
+'     Crypto / auth helpers:
+'       Public Shared Function SignJWT(jwtUnsigned As String, privateKeyPem As String) As String
+'       Private Shared Function ConvertToPemFormat(rawKey As String) As String
+'       Public Shared Async Function GetFreshAccessToken(context As ISharedContext, clientEmail As String, ClientScopes As String, PrivateKey As String, AuthServer As String, TLife As Long, SecondAPI As Boolean) As Task(Of String)
+'       Class GoogleOAuthHelper:
+'         client_email, private_key, scopes, token_uri, token_life
+'         GenerateJWT() As String
+'         Async Function GetAccessToken() As Task(Of String)
+'
+'     Registry / settings:
+'       Public Shared Sub WriteToRegistry(regPath As String, regValue As String)
+'       Public Shared Function GetFromRegistry(registryPath As String, valueName As String, Optional suppressErrors As Boolean = False) As String
+'       Public Shared Sub ShowSettingsWindow(Settings As Dictionary(Of String, String), SettingsTips As Dictionary(Of String, String), ByRef context As ISharedContext)
+'       Public Shared Function GetSettingValue(settingName As String, ByRef context As ISharedContext) As String
+'       Public Shared Sub SetSettingValue(settingName As String, value As String, ByRef context As ISharedContext)
+'       Public Shared Function IsBooleanSetting(settingKey As String) As Boolean
+'
+'     UI dialogs / panes / forms:
+'       Public Shared Sub Initialize(panes As CustomTaskPaneCollection)
+'       Public Shared Function ShowPromptSelector(filePath As String, filepathlocal As String, enableMarkup As Boolean, enableBubbles As Boolean, Context As ISharedContext) As (String, Boolean, Boolean, Boolean)
+'       Public Shared Sub ShowAboutWindow(owner As Form, context As ISharedContext)
+'       Public Shared Function ShowCustomVariableInputForm(prompt As String, header As String, ByRef params() As InputParameter) As Boolean
+'       Public Shared Function ShowCustomWindow(introLine As String, bodyText As String, finalRemark As String, header As String, Optional NoRTF As Boolean = False, Optional Getfocus As Boolean = False, Optional InsertMarkdown As Boolean = False, Optional TransferToPane As Boolean = False, Optional parentWindowHwnd As IntPtr = Nothing, Optional PreserveLiterals As Boolean = False) As String
+'       PaneManager.ShowMyPane(...) Async: displays custom pane; ShowCustomPane(...)
+'       CustomPaneControl: ShowPane(...), AppendHtml, AppendUserHtml, AppendAssistantMarkdown, PersistChatHtml, etc.
+'       Forms: ProgressForm, DPIProgressForm, SelectionFormSmall, ModelSelectorForm, MultiModelSelectorForm, InitialConfig
+'
+'     Prompt / prompt-library helpers:
+'       Public Shared Function LoadPrompts(filePath As String, context As ISharedContext) As Integer
+'       Private Shared Sub LoadPromptsIntoLists(filePath As String, titles As List(Of String), prompts As List(Of String), Optional titleSuffix As String = Nothing)
+'       Public Shared Sub ExtractAndStorePromptFromAnalysis(analysis As String, MyStylePath As String, Prefix As String)
+'       MyStyleHelpers.SelectPromptFromMyStyle(iniPath As String, callingApplication As String, Optional defaultValue As Integer = 0, Optional promptText As String = "Please choose …", Optional headerText As String = Nothing, Optional AddNone As Boolean = True) As String
+'
+'     Misc / helper functions:
+'       Public Shared Function SelectValue(items As IEnumerable(Of SelectionItem), defaultValue As Integer, Optional prompt As String = "Please choose …", Optional header As String = Nothing) As Integer
+'       Public Shared Function ShowSelectionForm(prompt As String, title As String, options As IEnumerable(Of String)) As String
+'       Public Shared Function ShowCustomInputBox(prompt As String, title As String, SimpleInput As Boolean, Optional DefaultValue As String = "", Optional CtrlP As String = "", Optional OptionalButtons As Tuple(Of String,String,String)() = Nothing) As String
+'       Public Shared Function fixedsizeShowCustomInputBox(...) As String
+'       Public Shared Function ShowCustomYesNoBox(bodyText As String, button1Text As String, button2Text As String, Optional header As String = AN, Optional autoCloseSeconds As Integer? = Nothing, Optional Defaulttext As String = "", Optional extraButtonText As String = Nothing, Optional extraButtonAction As Action = Nothing, Optional CloseAfterExtra As Boolean = False) As Integer
+'       Public Shared Sub ShowCustomMessageBox(bodyText As String, Optional header As String = AN, Optional autoCloseSeconds As Integer? = Nothing, Optional Defaulttext As String = " - execution continues meanwhile", Optional SeparateThread As Boolean = False, Optional extraButtonText As String = Nothing, Optional extraButtonAction As System.Action = Nothing, Optional CloseAfterExtra As Boolean = False)
+'       Public Shared Sub ShowRTFCustomMessageBox(bodyText As String, Optional header As String = AN, Optional autoCloseSeconds As Integer? = Nothing, Optional Defaulttext As String = " - execution continues meanwhile")
+'       Public Shared Sub ShowHTMLCustomMessageBox(bodyText As String, Optional header As String = AN, Optional Defaulttext As String = " - execution continues meanwhile")
+'
+'   - Private helpers: many private static helpers for RTF/HTML cleaning, JSON extraction, citation formatting,
+'       regex processing, escaping, token counting, parameter placeholder processing, and more.
+'
+' Class: SplashScreen
+'   - Public Sub UpdateMessage(newMessage As String)
+'
+' Class: Diff
+'   - Properties: Op As Operation, Text As String
+'   - Purpose: simple diff unit used by text comparison logic.
+'
+' Class: SelectionFormSmall
+'   - Private Sub AcceptCurrentSelection()
+'   - Purpose: small selection UI used by various pickers.
+'
+' Class: MyStyleHelpers / MyStyleEntry
+'   - MyStyleHelpers.SelectPromptFromMyStyle(iniPath, callingApplication, defaultValue, promptText, headerText, AddNone) As String
+'   - Purpose: helpers for "MyStyle" prompt library.
+'   - MyStyleEntry: properties App, Title, Prompt
+'
+' Class: ClipboardSnapshot
+'   - Capture() As IDataObject
+'   - Restore(snapshot As IDataObject)
+'   - Purpose: robust snapshot+restore of clipboard content.
+'
+' Class: GoogleOAuthHelper
+'   - Fields for client_email, private_key, scopes, token_uri, token_life
+'   - GenerateJWT() As String
+'   - Async Function GetAccessToken() As Task(Of String)
+'   - Purpose: create signed JWT and request OAuth access token.
+'
+' Class: ProgressForm / DPIProgressForm
+'   - Timer_Tick, btnCancel_Click, OnFormClosed
+'   - Purpose: basic progress UI with cancel.
+'
+' Class: PaneManager
+'   - Public Shared Async Function ShowMyPane(introLine As String, bodyText As String, finalRemark As String, header As String, Optional noRTF As Boolean = False, Optional insertMarkdown As Boolean = False, Optional mergeCallback As IntelligentMergeCallback = Nothing, Optional PreserveLiterals As Boolean = False) As Task(Of String)
+'   - Public Shared Function ShowCustomPane(XtaskPanes As CustomTaskPaneCollection, introLine As String, bodyText As String, finalRemark As String, header As String, Optional noRTF As Boolean = False, Optional insertMarkdown As Boolean = False, Optional mergeCallback As IntelligentMergeCallback = Nothing, Optional PreserveLiterals As Boolean = False) As Task(Of String)
+'
+' Class: CustomPaneControl
+'   - UI control for showing assistant output, supports Markdown -> HTML append, buttons for merge/mark.
+'   - Methods: InitializeComponent, ShowPane(...), AppendHtml, AppendUserHtml, AppendAssistantMarkdown, PersistChatHtml, HidePane, SafeOpenLink, Dispose.
+'
+' Class: InfoBox
+'   - Static ShowInfoBox(text As String, Optional duration As Integer = 0)
+'
+' Class: AppConfigurationVariable
+'   - Properties: DisplayName, VarName, VarType, ValidationRule, DefaultValue, CurrentValue
+'
+' Class: InitialConfig
+'   - UI for first-run configuration.
+'   - Key methods: InitializeComponent, PrepareConfigData, TryDownloadString, TryParseRemoteDefaults, cmbProvider_SelectedIndexChanged, btnOK_Click, ValidateAllConfigs, CreateAppConfig
+'
+' Class: UpdateHandler
+'   - Purpose: check, download and install updates; write logs; UI prompts.
+'   - Public methods: CheckAndInstallUpdates(appname As String, LocalPath As String), PeriodicCheckForUpdates(checkIntervalInDays As Integer, appname As String, LocalPath As String)
+'   - Private helpers for UIInvokePrompt, WriteUpdateLog, TrimLogFile, RunVstoInstaller, etc.
+'
+' Class: NativeMethods
+'   - Interop: SetForegroundWindow
+'
+' Class: ImageDecoder
+'   - Public Shared Function DecodeAndSaveImage(jsonData As JObject) As String
+'   - Private helpers: FindImageData, TryGetImageData, GetMimeTypeFromParent, DetectMimeType, GetExtensionFromMimeType
+'
+' Class: ModelConfig
+'   - Properties: APIKey, APIKeyBack, Temperature, Timeout, MaxOutputToken, Model, Endpoint, HeaderA, HeaderB, APICall, APICall_Object, Response, Anon, TokenCount, APIEncrypted, APIKeyPrefix, OAuth2, OAuth2ClientMail, OAuth2Scopes, OAuth2Endpoint, OAuth2ATExpiry, ModelDescription, DecodedAPI, TokenExpiry, Parameter1..4, MergePrompt, QueryPrompt
+'   - Public Function Clone() As ModelConfig
+'
+' UI Forms: ModelSelectorForm, MultiModelSelectorForm
+'   - Provide selection UI for model(s), filter, and OK/Cancel handling.
+'
+' Helper data types:
+'   PatternInfo (RegexPattern, Prefix, GroupID)
+'   TextChunk (Text, Position, StartOffset, EndOffset, Vector)
+'   SearchResult (DocId, Text, StartOffset, EndOffset, Score)
+'   TokenOffset (Text, Start, End)
+'
+' Class: EmbeddingStore
+'   - Fields: store (Dictionary), session (InferenceSession), tokenizer (WordPieceTokenizer)
+'   - Methods:
+'       Private Function GetEmbedding(text As String) As Single()
+'       Public Sub IndexDocument(docId As String, chunks As List(Of TextChunk))
+'       Public Function Search(query As String, allDocs As Boolean, findAll As Boolean, currentDocId As String, currentPosition As Integer) As List(Of SearchResult)
+'       Private Function CosineSimilarity(vec1 As Single(), vec2 As Single()) As Single
+'
+' Class: EmbeddingStore_BagofWords
+'   - Simpler bag-of-words embedding store and search variants.
+'
+' Class: WebAgentInterpreter
+'   - Purpose: run JSON-defined web-agent scripts to fetch, extract and transform web content.
+'   - Fields: HttpClient, cookie container, default headers, _log, _finalMarkdown, _context, timeouts, flags.
+'   - Key methods:
+'       Public Async Function RunAsync(scriptJson As String, context As ISharedContext, Optional useSecondAPI As Boolean = False, Optional autoselectModel As Boolean = False, Optional cancel As CancellationToken = Nothing) As Task(Of String)
+'       Public Async Function RunAsync(scriptJson As String, Optional cancel As CancellationToken = Nothing, Optional silent As Boolean = False) As Task(Of String)
+'       Private Async Function CmdOpenUrlAsync(parms As JObject, timeoutMs As Integer, cancel As CancellationToken) As Task(Of Object)
+'       Private Async Function CmdDownloadUrlAsync(parms As JObject, cancel As CancellationToken) As Task(Of Object)
+'       Private Async Function CmdHttpRequestAsync(parms As JObject, timeoutMs As Integer, cancel As CancellationToken) As Task(Of Object)
+'       Private Function CmdFind(parms As JObject) As Object
+'       Private Function CmdExtractText(parms As JObject) As Object
+'       Private Function CmdExtractHtml(parms As JObject) As Object
+'       Private Function CmdExtractAttribute(parms As JObject) As Object
+'       Private Function CmdSetHeaders(parms As JObject) As Object
+'       Private Function CmdSetCookies(parms As JObject) As Object
+'       Private Function CmdSetVar(parms As JObject) As Object
+'       Private Function CmdTemplate(parms As JObject) As Object
+'       Private Async Function CmdIfAsync(parms As JObject, cancel As CancellationToken) As Task(Of Object)
+'       Private Async Function CmdForEachAsync(parms As JObject, cancel As CancellationToken) As Task(Of Object)
+'       Many debug/log helpers, template expansion, JSON parsing, dynamic expansion of discovered URLs.
+'
+' Class: frmHelpMeInky
+'   - Chat UI for the assistant ("Help me, Inky!")
+'   - Fields: _context As ISharedContext, _mdPipeline (Markdig), _chat WebBrowser, input box and buttons, _history, _modelSemaphore
+'   - Methods:
+'       ShowRaised(Optional owner As IWin32Window = Nothing)
+'       OnLoadForm, OnFormClosing, OnSend, OnClear, OnClose, OnInputKeyDown
+'       Private Async Function CallHelpMeLlmAsync(systemPrompt As String, userPrompt As String) As Task(Of String)
+'       Private Async Function GetManualOnceAsync() As Task(Of String)
+'       Private Shared Async Function GetManualTextFreshAsync(pathOrUrl As String, Optional context As ISharedContext = Nothing) As Task(Of String)
+'       Private Shared Function ReadDocxWithWordInterop(path As String) As String
+'       Private Sub InitializeChatHtml()
+'       Private Sub AppendHtml(fragment As String)
+'       Private Sub AppendUserHtml(text As String)
+'       Private Sub AppendAssistantMarkdown(md As String)
+'       Private Sub PersistChatHtml()
+'       Private Function BuildConversationForLlm() As String
+'
+' -----------------------------------------------------------------------------
+' PRIVATE / UTILITY FUNCTIONS (examples)
+'   - _rtfUnicodePattern, _jsonUnicodePattern regex fields
+'   - NormalizeRtfHyperlinks, StripRtfInline, CleanupRtfRemnants, oldCleanupRtfRemnants
+'   - FindMatchingBrace, ExtractQuotedAfter, ExtractFldrsltBlock
+'   - ConvertEscapeCharacters, ExtractJSONValue, DecodeTextLiterals, DecodeBase64, DecodeString, CodeString
+'   - ProcessParameterPlaceholders, SplitOptionsRespectingAngles, JsonEscape, IsSurroundedByQuotes
+'   - TryFindBalancedJson, ExtractEmbeddedJsonSegments, ReplaceSegmentsWithFormatting
+'   - SanitizeLlmResult, TryParseJson, ExtractFirstJsonStructure
+'
+' -----------------------------------------------------------------------------
+' REFERENCE / MAINTENANCE NOTES
+'   - When adding or renaming public members, update this header.
+'   - Document thread-affinity (UI vs background) on new public functions.
+'   - Avoid logging sensitive keys; use RealAPIKey / RealAPIKeyMC helpers for masked handling.
+'   - Many Default_SP_* constants are LLM prompt templates—edit carefully.
+'
+' =============================================================================
+
 Namespace SharedLibrary
 
     Public Class SharedContext

@@ -47,6 +47,200 @@ Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 
+' =============================================================================
+' Excel - ThisAddIn.vb — Overview of procedures, functions and elements
+' =============================================================================
+'
+' Purpose
+'   Excel-specific add-in entrypoint and high-level orchestration for "Red Ink".
+'   Responsibilities:
+'     - Add-in lifecycle (Startup / Shutdown / initialization)
+'     - Build and manage Excel context menus and keyboard shortcuts
+'     - User-facing commands (Translate, Correct, Improve, Shorten, Anonymize, Freestyle, etc.)
+'     - Bridge to SharedLibrary (LLM calls, prompt templates, I/O helpers)
+'     - Range/cell processing flows (cell-by-cell, range-based, batch)
+'     - Parsing and applying LLM-generated instructions to cells (values, formulas, threaded/comments)
+'     - File drag/drop and file-content extraction (docx, pdf, txt, rtf)
+'     - CSV analyzer that streams file content to the LLM in chunks and writes results to a worksheet
+'     - Undo state tracking and restore
+'     - Utilities for formula localization, safe formula setting, and Excel COM robustness
+'     - UI helpers (pane, chat form, splash, progress) and user prompts
+'
+' High-level structure
+'   - Module Module1
+'       - P/Invoke wrapper: GetAsyncKeyState
+'
+'   - Class BridgeSubs (ComVisible)
+'       - Public automation methods called by helper macros (bridge from VBA/macros to .NET)
+'       - Methods: DoInLanguage1/2, DoInOther/DoCorrect/DoImprove/DoShorten/DoAnonymize/SwitchParty,
+'                  DoFreestyleNM/AM, DoAdjustHeight, DoRegexSearchReplace, DoAdjustLegacyNotes,
+'                  DoAddContextMenu, GetLLMConfig, SignJWT, GetFileTextContent
+'       - GetFileTextContent dispatches by extension to ReadTextFile, ReadRtfAsText, ReadWordDocument, ReadPdfAsText
+'
+'   - Class ThisAddIn
+'       - Fields: mainThreadControl (marshal to UI), Shared _context (SharedContext),
+'                 chatForm (frmAIChat), allowedExtensions, many constants (prefix triggers),
+'                 undoStates list (CellState), DragDropFormLabel/Filter
+'       - Shared Property wrappers mapped to _context (extensive list: INI_*, SP_*, DecodedAPI, TokenExpiry, etc.)
+'       - Bridge to SharedLibrary: InitializeConfig, INIValuesMissing, PostCorrection, LLM, ShowSettingsWindow, ShowPromptSelector
+'       - Automation service: RequestComAddInAutomationService() returns BridgeSubs instance
+'
+' Lifecycle & initialization
+'   - ThisAddIn_Startup
+'       - create mainThreadControl.Handle, assign UpdateHandler.MainControl
+'       - determine host HWND for UpdateHandler
+'       - call SharedMethods.Initialize, InitializeAddInFeatures
+'
+'   - ThisAddIn_Shutdown
+'       - teardown: RemoveOldContextMenu
+'
+' Add-in features & context menu
+'   - InitializeAddInFeatures
+'       - InitializeConfig and AddContextMenu, schedule update checks
+'
+'   - AddContextMenu / AddSubMenuItems
+'       - Adds "Red Ink" popup to relevant Excel context menus (Cell, Row, Column, Pivot, etc.)
+'       - Adds specific commands: translate buttons, Correct, Write Neatly, Shorten, Anonymize, Switch Party, Freestyle, Excel Helpers submenu
+'       - Reads shortcuts from INI_ShortcutsWordExcel, builds dictionary and assigns macros via Application.OnKey
+'       - AssignShortcut / BuildKeyCodeFromText convert human-readable shortcuts (e.g., "CTRL-S") to Excel key code string
+'
+'   - RemoveOldContextMenu
+'       - Removes previously inserted Red Ink menu entries
+'
+' Main user commands (high-level)
+'   - InLanguage1 / InLanguage2 / InOther / InOtherFormulas
+'       - Set TranslateLanguage and call ProcessSelectedRange with SP_Translate
+'
+'   - Correct / Improve / Anonymize / Shorten / SwitchParty
+'       - Gather context if needed (e.g., context string for Improve, percent for Shorten)
+'       - Validate selection and call ProcessSelectedRange with the appropriate SP_* or custom prompt
+'
+'   - Freestyle / FreestyleNM / FreestyleAM
+'       - Interactive prompt entry (supports prefixes: Text:, CellByCell:, Pane:, Batch:, Bubbles:, Pure:, ExtTrigger {doc}, ExtWSTrigger)
+'       - Supports selecting prompt from Prompt Library when INI_PromptLib is enabled
+'       - Supports file-object inclusion, additional worksheet insertion via GatherSelectedWorksheets
+'       - Persists last prompt to My.Settings.LastPrompt
+'       - Calls ProcessSelectedRange with SP_FreestyleText or SP_RangeOfCells or direct prompt when "Pure:" prefix used
+'
+' Core processing flow
+'   - ProcessSelectedRange(SysCommand, CheckMaxToken, DoRange, DoFormulas, DoBubbles, SelectionMandatory, UseSecondAPI, Optional ...)
+'       - Entry for most commands; supports:
+'           • cell-by-cell processing: iterate cells, call LLM per cell, insert values/formulas/comments and track undoStates
+'           • range processing: convert range to LLM-friendly string and call LLM once; then parse response and apply via ApplyLLMInstructions
+'           • batch processing: iterate files in directory, call LLM per file chunk, write results
+'       - Token estimation (EstimateTokenCount) and prompt interpolation (InterpolateAtRuntime)
+'       - Handles PostCorrection of LLM outputs, ShowPaneAsync / ShowCustomWindow for user preview/edit
+'       - Uses ParseLLMResponse to extract "[Cell:...]" style instructions or ParseLLMResponse/ApplyLLMInstructions for more structured instructions
+'       - Produces undoStates for UndoAction
+'
+' Range reading / conversion
+'   - ConvertRangeToString(CellRange, IncludeFormulas, Optional DoColor, Optional TargetWorksheet)
+'       - Efficiently reads Value2 of the range into a 2D object array and iterates values
+'       - Emits LLM-friendly lines per cell when cell "shouldProcess" (value present, comments, validation list, threaded comments, or DoColor)
+'       - Extracts formulas (Formula2 / Formula), comments, threaded comments and dropdown/list options
+'       - Emits color information (font/background) when DoColor = True
+'       - Temporarily disables ScreenUpdating, events and sets Calculation = Manual for speed; always restores
+'       - Returns a textual representation packaged inside <RANGEOFCELLS> tags for LLM consumption
+'
+' Cell-level processing helpers
+'   - GetSelectedText(selectedRange, DoFormulas) : builds plain text or formulas list for a range
+'   - CellProtected(cell), AreAllCellsBlocked(range) : determine editable state (worksheet protection and AllowEditRanges)
+'   - SetFormulaSafe(cell, formulaOrValue, excelApp) : attempts Formula2, Formula2Local, FormulaLocal; handles #NAME? and locale conversion
+'   - ConvertFormulaToLocale(englishFormula, excelApp) : creates temporary workbook, writes English formula and reads FormulaLocal
+'   - ConvertRangeToMarkdown, ConvertRtfToPlainText (not present here but referenced)
+'
+' Instruction parsing & application
+'   - ParseLLMResponse(Response) : extracts top-level "[Cell: ...]" blocks from LLM output
+'   - GetCellFromInstruction(instruction) : parse cell address from "[Cell: ...]" block
+'   - GetFormulaOrValueFromInstruction(instruction) : returns the first top-level [Formula: ...], [Value: ...] or [Comment: ...] content
+'       • Helpers: StartsWithAt, ExtractBracketContent, FindMatchingBracket
+'   - ApplyLLMInstructions(instructions, DoAlsoBubbles)
+'       - Iterates parsed instructions and applies them to the active sheet:
+'           • Add threaded comments via CommentThreaded or replies
+'           • Set formulas via SetFormulaSafe or assign values with formatting safeguards (text vs numeric)
+'       - Tracks changes into undoStates for UndoAction restoration
+'       - Temporarily disables autosheet features (AutoFillFormulasInLists, AutoExpandListRange, AutoComplete, ExtendList)
+'
+' Undo & state management
+'   - undoStates list(Of CellState) holds pre-change snapshot (WorksheetName, CellAddress, OldValue, HadFormula, OldFormula)
+'   - UndoAction restores values/formulas using multiple fallback approaches (Formula, Formula2, FormulaR1C1, Value)
+'       - Restores Excel application state afterwards and forces recalculation
+'
+' CSV analysis (streaming chunked process)
+'   - AnalyzeCsvWithLLM()
+'       - User picks CSV/TXT file and parameters (separator, columns, chunk size, selection range, prompt, attempts, secondary model option)
+'       - Efficiently counts lines and reads header, then streams file in chunks
+'       - Builds chunk body with header + selected columns; calls ProcessOneChunk for each chunk
+'       - Writes structured results to worksheet with a generated header (InsertHeader action)
+'       - Persists settings to My.Settings and supports using alternate model configuration
+'
+'   - ProcessOneChunk(sysPrompt, chunkBody, chunkFirstLine, chunkLastLine, useSecond, attempts, ensureHeader, getOutRow, advanceOutRow, ws, outCol, separator)
+'       - Calls LLM with retries, parses response using TryParseLLMResponse (flat "line@@result§§§..." format), and inserts rows into worksheet
+'       - On failure inserts diagnostics into sheet
+'
+'   - CSV helpers:
+'       - ParseCsvLine(line, separator) : robust quoted-field parsing
+'       - ResolveColumns(headerColumns, columnsRaw, separator, out selectedHeaders, out selectedIdx)
+'       - BuildChunkHeader(firstHeader, headers, separator)
+'       - BuildChunkLine(absLine, fields, selectedIdx, separator)
+'       - TryParseLLMResponse(response) : parses "line@@result§§§..." → list of (line,result)
+'
+' UI & pane helpers
+'   - ShowPaneAsync(introLine, bodyText, finalRemark, header, Optional NoRtf, insertMarkdown, PreserveLiterals)
+'       - Invokes PaneManager.ShowMyPane on UI thread via mainThreadControl.Invoke when required
+'   - HandleIntelligentMerge(selectedText) / IntelligentMerge(newtext)
+'       - Parses edited pane text into instructions and calls ApplyLLMInstructions
+'   - ShowChatForm / HelpMeInky: chat UI launch using frmAIChat and frmHelpMeInky
+'   - ShowSettings: constructs Settings/SettingsTips dictionaries and calls ShowSettingsWindow (SharedMethods)
+'
+' File helpers & drag/drop
+'   - GetFileName() : opens DragDropForm for interactive file selection, returns validated full path
+'   - GetFileContent(optionalFilePath, Silent, DoOCR, AskUser) : reads file dispatching by extension to ReadTextFile, ReadRtfAsText, ReadWordDocument, ReadPdfAsText; uses SharedLibrary helpers for PDF/OCR
+'   - allowedExtensions HashSet controls supported files
+'   - GatherSelectedWorksheets(includeActiveWorksheet) : present list of worksheets, returns concatenated <RANGEOFCELLS#> blocks for chosen sheets
+'
+' RegexSearchReplace & helpers
+'   - RegexSearchReplace()
+'       - Interactive multi-pattern replace (patterns per-line, replacements per-line)
+'       - Validates patterns, compiles RegexOptions from user flags string
+'       - Applies replacements to selected range or entire sheet and reports count
+'
+' Layout & formatting helpers
+'   - AdjustHeight(Silent) : row-height auto-fit across selection, merges handling, preserves original widths and caps max height
+'   - AdjustLegacyNotes() : resizes classic comment boxes for readability
+'
+' Misc helpers & utilities
+'   - InterpolateAtRuntime(template) : replaces placeholders {FieldOrProperty} by reflecting fields/properties on ThisAddIn
+'   - GetActiveWorksheetSafe(app) : robust fallback to first workbook/sheet
+'   - SizeOfWorksheet() : approximate cell count
+'   - ReleaseObject(obj) : ReleaseComObject + GC.Collect
+'   - GetCellFromInstruction / Extract helpers for instruction parsing
+'   - GetAPIConfiguration(UseSecondAPI) : returns key/value pairs joined by "@@@" for debug/bridge consumption
+'
+' COM & threading considerations
+'   - Most Excel COM calls are done on the UI thread; long-running LLM calls are awaited asynchronously
+'   - Use mainThreadControl.Invoke / Application.DoEvents where UI interaction is required
+'   - Many operations set ScreenUpdating/EnableEvents/Calculation to Manual and always restore in Finally blocks
+'   - COM errors (0x800A03EC) are handled explicitly; many try/catch blocks ensure Outlook/Excel stability
+'
+' Error handling & logging
+'   - User-facing errors reported via ShowCustomMessageBox / ShowCustomYesNoBox (SharedMethods)
+'   - Debug.WriteLine used for diagnostics; exceptions caught and shown minimally to user to avoid crashing host
+'
+' Extension points
+'   - Add new ribbon/context menu actions → MainMenu/BridgeSubs and AddSubMenuItems
+'   - Add new SP_* prompt templates in SharedContext and wire into command flows (Freestyle/ProcessSelectedRange)
+'   - Extend file extraction (GetFileContent) to support additional file types
+'   - Add parsing for new LLM instruction syntaxes in ParseLLMResponse / GetFormulaOrValueFromInstruction
+'
+' Maintenance notes
+'   - Keep SharedProperties in sync with SharedLibrary.SharedContext
+'   - Document thread-affinity for new methods (UI vs background)
+'   - Avoid exposing API keys; use SharedLibrary.RealAPIKey helpers when needed
+'   - When editing formula logic, test across locale settings (FormulaLocal vs Formula)
+'
+' =============================================================================
+
 Module Module1
     ' Correct attribute declaration for DllImport
     <DllImport("user32.dll", CharSet:=CharSet.Auto, SetLastError:=True)>
