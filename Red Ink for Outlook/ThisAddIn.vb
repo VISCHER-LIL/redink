@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 17.11.2025
+' 18.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -424,13 +424,18 @@ Public Class ThisAddIn
 
     Private Shared Async Function EnsureUIThread() As System.Threading.Tasks.Task
         If _uiContext IsNot Nothing AndAlso SynchronizationContext.Current IsNot _uiContext Then
-            Await System.Threading.Tasks.Task.Factory.StartNew(
-                Sub()
-                    ' Continue processing here with Word objects
-                End Sub,
-                CancellationToken.None,
-                TaskCreationOptions.None,
-                TaskScheduler.FromCurrentSynchronizationContext())
+            ' Create a TaskScheduler from the saved UI context
+            Dim tcs As New TaskCompletionSource(Of Object)()
+            _uiContext.Post(
+            Sub()
+                Try
+                    ' This runs on the UI thread
+                    tcs.SetResult(Nothing)
+                Catch ex As System.Exception
+                    tcs.SetException(ex)
+                End Try
+            End Sub, Nothing)
+            Await tcs.Task
         End If
     End Function
 
@@ -440,7 +445,7 @@ Public Class ThisAddIn
     Public Const AN2 As String = "red_ink"
     Public Const AN6 As String = "Inky"
 
-    Public Const Version As String = "V.171125 Gen2 Beta Test"
+    Public Const Version As String = "V.181125 Gen2 Beta Test"
 
     ' Hardcoded configuration
 
@@ -3015,7 +3020,7 @@ Public Class ThisAddIn
 
         Dim LLMResult As String = ""
 
-        LLMResult = Await LLM(InterpolateAtRuntime(SP_MailSumup), "<MAILCHAIN>" & selectedtext & "</MAILCHAIN>", "", "", 0)
+        LLMResult = Await LLM(InterpolateAtRuntime(SP_MailSumup), "<MAILCHAIN>" & selectedtext & "</MAILCHAIN>", "", "", 0, EnsureUI:=False)
 
         If INI_PostCorrection <> "" Then
             LLMResult = Await PostCorrection(LLMResult)
@@ -3065,7 +3070,7 @@ Public Class ThisAddIn
 
         Dim LLMResult As String = ""
 
-        LLMResult = Await LLM(InterpolateAtRuntime(SP_Translate), "<TEXTTOPROCESS>" & selectedtext & "</TEXTTOPROCESS>", "", "", 0)
+        LLMResult = Await LLM(InterpolateAtRuntime(SP_Translate), "<TEXTTOPROCESS>" & selectedtext & "</TEXTTOPROCESS>", "", "", 0, EnsureUI:=False)
 
         If INI_PostCorrection <> "" Then
             LLMResult = Await PostCorrection(LLMResult)
@@ -3104,7 +3109,7 @@ Public Class ThisAddIn
 
         DateTimeNow = DateTime.Now.ToString("yyyy-MMM-dd HH:mm")
 
-        LLMResult = Await LLM(InterpolateAtRuntime(SP_MailSumup2), selectedtext, "", "", 0)
+        LLMResult = Await LLM(InterpolateAtRuntime(SP_MailSumup2), selectedtext, "", "", 0, EnsureUI:=False)
 
         If INI_PostCorrection <> "" Then
             LLMResult = Await PostCorrection(LLMResult)
@@ -3170,7 +3175,198 @@ Public Class ThisAddIn
         SLib.ShowCustomMessageBox("Could not access the clipboard after several retries (another application may be holding it).")
     End Sub
 
+
     Private Async Function InsertClipboard() As System.Threading.Tasks.Task
+        Try
+            ' 1) Configuration check (original behavior)
+            If System.String.IsNullOrWhiteSpace(INI_APICall_Object) Then
+                SLib.ShowCustomMessageBox($"Your model ({INI_Model}) is not configured to process clipboard data (binary/object).")
+                Return
+            End If
+
+            ' 2) Call LLM (may attempt to read the current clipboard object internally)
+            Dim result As String = Await LLM(
+            InterpolateAtRuntime(SP_InsertClipboard),
+            "", "", "", 0, False, False, "", "clipboard", Nothing, False
+        ).ConfigureAwait(True)  ' keep UI context
+
+            If String.IsNullOrWhiteSpace(result) Then Return
+
+            ' 3) Determine whether we have an open mail inspector + mail item
+            Dim outlookApp As Microsoft.Office.Interop.Outlook.Application = Globals.ThisAddIn.Application
+            Dim inspector As Microsoft.Office.Interop.Outlook.Inspector = ComRetry(Function() outlookApp.ActiveInspector())
+            Dim curr As Object = Nothing
+            If inspector IsNot Nothing Then
+                Try
+                    curr = ComRetry(Function() inspector.CurrentItem)
+                Catch
+                    curr = Nothing
+                End Try
+            End If
+
+            Dim haveMail As Boolean =
+            inspector IsNot Nothing AndAlso
+            curr IsNot Nothing AndAlso
+            TypeOf curr Is Microsoft.Office.Interop.Outlook.MailItem
+
+            If Not haveMail Then
+                ' 4a) No mail open (Explorer context): try to put result onto clipboard with robust fallback
+                Dim displayText As String = If(result.Length > 11000, result.Substring(0, 11000) & "…", result)
+
+                Await SwitchToUi(
+                Sub()
+                    Dim rtfText As String = Nothing
+                    Dim dataObj As New System.Windows.Forms.DataObject()
+
+                    ' RTF conversion guarded
+                    Try
+                        rtfText = MarkdownToRtfConverter.Convert(result)
+                    Catch ex As System.Exception
+                        rtfText = Nothing
+                    End Try
+
+                    If Not String.IsNullOrEmpty(rtfText) Then
+                        dataObj.SetData(System.Windows.Forms.DataFormats.Rtf, rtfText)
+                    End If
+                    dataObj.SetData(System.Windows.Forms.DataFormats.UnicodeText, result)
+                    dataObj.SetData(System.Windows.Forms.DataFormats.Text, result)
+
+                    If TrySafeSetClipboard(dataObj) Then
+                        SLib.ShowCustomMessageBox(
+                            $"The content has been copied to the clipboard:{Environment.NewLine}{Environment.NewLine}{displayText}"
+                        )
+                    Else
+                        ' Clipboard locked: show editable window so the user can copy manually,
+                        ' then attempt a best-effort copy again; if still failing, save to temp file.
+                        Dim edited As String =
+                            SLib.ShowCustomWindow(
+                                "Clipboard is busy. You can copy the result below manually (Ctrl+A, Ctrl+C) or edit it and click OK:",
+                                result,
+                                "If copying still fails, the text will be saved to a temporary file.",
+                                AN, False)
+
+                        If Not String.IsNullOrWhiteSpace(edited) Then
+                            If Not TrySetClipboardText(edited) Then
+                                Dim tmp As String = SaveTextToTempFile(edited)
+                                If Not String.IsNullOrWhiteSpace(tmp) Then
+                                    SLib.ShowCustomMessageBox($"Clipboard is locked. The result was saved to: {tmp}")
+                                Else
+                                    SLib.ShowCustomMessageBox("Clipboard is locked and saving failed.")
+                                End If
+                            Else
+                                SLib.ShowCustomMessageBox("Your edited text has been copied to the clipboard.")
+                            End If
+                        End If
+                    End If
+                End Sub
+            ).ConfigureAwait(True)
+
+                Return
+            End If
+
+            ' 4b) Mail is open – insert at cursor
+            Dim wordEditor As Microsoft.Office.Interop.Word.Document =
+            ComRetry(Function() CType(inspector.WordEditor, Microsoft.Office.Interop.Word.Document))
+            If wordEditor Is Nothing Then
+                ' Fallback to clipboard if Word editor not available
+                Await SwitchToUi(
+                Sub()
+                    If Not TrySetClipboardText(result) Then
+                        Dim edited As String =
+                            SLib.ShowCustomWindow(
+                                "Could not access the mail editor; clipboard is busy. Copy the result manually or edit and press OK:",
+                                result,
+                                "If copying still fails, the text will be saved to a temporary file.",
+                                AN, False)
+
+                        If Not String.IsNullOrWhiteSpace(edited) Then
+                            If Not TrySetClipboardText(edited) Then
+                                Dim tmp As String = SaveTextToTempFile(edited)
+                                If Not String.IsNullOrWhiteSpace(tmp) Then
+                                    SLib.ShowCustomMessageBox($"Clipboard is locked. The result was saved to: {tmp}")
+                                Else
+                                    SLib.ShowCustomMessageBox("Clipboard is locked and saving failed. The text remains visible in the window.")
+                                End If
+                            Else
+                                SLib.ShowCustomMessageBox("Your edited text has been copied to the clipboard.")
+                            End If
+                        End If
+                    Else
+                        SLib.ShowCustomMessageBox("Could not access the mail editor; result copied to clipboard instead.")
+                    End If
+                End Sub
+            ).ConfigureAwait(True)
+                Return
+            End If
+
+            Dim selection As Microsoft.Office.Interop.Word.Selection = wordEditor.Application.Selection
+            If selection IsNot Nothing Then
+                If selection.Start <> selection.End Then
+                    selection.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
+                End If
+                selection.TypeParagraph()
+                InsertTextWithMarkdown(selection, result, True)
+            End If
+
+            ' Release COM objects explicitly (only those we created here)
+            If selection IsNot Nothing Then
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(selection) : selection = Nothing
+            End If
+            If wordEditor IsNot Nothing Then
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(wordEditor) : wordEditor = Nothing
+            End If
+            If inspector IsNot Nothing Then
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(inspector) : inspector = Nothing
+            End If
+
+        Catch ex As System.Runtime.InteropServices.ExternalException
+            ' Clipboard contention or interop issue
+            SLib.ShowCustomMessageBox($"InsertClipboard clipboard error (probably locked): {ex.Message}")
+        Catch ex As System.Exception
+            SLib.ShowCustomMessageBox($"InsertClipboard failed: {ex.GetType().FullName}: {ex.Message}")
+        End Try
+    End Function
+
+    ' Helper: robustly set clipboard (no messageboxes); returns success/failure.
+    Private Function TrySafeSetClipboard(dataObj As System.Windows.Forms.DataObject,
+                                     Optional maxAttempts As Integer = 10) As Boolean
+        For attempt As Integer = 1 To maxAttempts
+            Try
+                System.Windows.Forms.Clipboard.SetDataObject(dataObj, True) ' persistent data; internal retries
+                Return True
+            Catch ex As System.Runtime.InteropServices.ExternalException
+                ' Clipboard likely locked by another process; progressive backoff with small jitter
+                System.Threading.Thread.Sleep(30 * attempt + 20)
+            Catch
+                ' Non-transient; give up
+                Return False
+            End Try
+        Next
+        Return False
+    End Function
+
+    ' Convenience: set Unicode+ANSI text with retry.
+    Private Function TrySetClipboardText(text As String) As Boolean
+        Dim dobj As New System.Windows.Forms.DataObject()
+        dobj.SetData(System.Windows.Forms.DataFormats.UnicodeText, text)
+        dobj.SetData(System.Windows.Forms.DataFormats.Text, text)
+        Return TrySafeSetClipboard(dobj)
+    End Function
+
+    ' Last‑resort: save text to a temp file (UTF‑8) and return path (or Nothing on failure).
+    Private Function SaveTextToTempFile(text As String) As String
+        Try
+            Dim name As String = "Inky_" & DateTime.UtcNow.ToString("yyyyMMdd_HHmmss") &
+                             "_" & Guid.NewGuid().ToString("N").Substring(0, 6) & ".txt"
+            Dim path As String = System.IO.Path.Combine(System.IO.Path.GetTempPath(), name)
+            System.IO.File.WriteAllText(path, text, System.Text.Encoding.UTF8)
+            Return path
+        Catch
+            Return Nothing
+        End Try
+    End Function
+
+    Private Async Function oldInsertClipboard() As System.Threading.Tasks.Task
         Try
             ' 1) Configuration check (original behavior)
             If System.String.IsNullOrWhiteSpace(INI_APICall_Object) Then
@@ -5802,8 +5998,74 @@ Public Class ThisAddIn
         End Select
     End Sub
 
-
     Private Sub StartListenerWatchdog()
+        If watchdog IsNot Nothing Then Return
+
+        watchdog = New System.Threading.Timer(
+    Sub(stateObj As System.Object)
+        Try
+            ' Skip during power transitions
+            If System.Threading.Interlocked.CompareExchange(powerChanging, 0, 0) <> 0 Then Return
+
+            ' Skip if we're in cooldown after resume
+            If IsInResumeCooldown() Then Return
+
+            ' Check active work
+            Dim inFlight As Integer = Threading.Interlocked.CompareExchange(activeRequests, 0, 0)
+            Dim jobsInFlight As Integer = Threading.Interlocked.CompareExchange(activeJobs, 0, 0)
+            If inFlight > 0 OrElse jobsInFlight > 0 Then
+                lastListenerProgressUtc = System.DateTime.UtcNow
+                Return
+            End If
+
+            ' Assess listener health without penalizing idle
+            Dim listenerIsDead As Boolean = False
+            Try
+                listenerIsDead = (httpListener Is Nothing) OrElse (Not httpListener.IsListening)
+            Catch
+                listenerIsDead = True
+            End Try
+
+            ' Simple timeout check (idle is OK; only use as a signal if listener is also not listening/faulted)
+            Dim age As Double = (System.DateTime.UtcNow - lastListenerProgressUtc).TotalSeconds
+
+            ' If the listener is gone or the loop has faulted, restart cleanly
+            Dim loopFaulted As Boolean = False
+            Try
+                loopFaulted = (listenerTask IsNot Nothing AndAlso listenerTask.IsCompleted AndAlso listenerTask.IsFaulted)
+            Catch
+                loopFaulted = True
+            End Try
+
+            If (listenerIsDead OrElse loopFaulted) AndAlso Not isShuttingDown Then
+                System.Threading.Tasks.Task.Run(
+                    Async Function()
+                        Try
+                            ' Fully stop old instance to free the port
+                            Await ShutdownHttpListener(stopUiThread:=False)
+                        Catch
+                        End Try
+                        Try
+                            StartupHttpListener()
+                        Catch
+                        End Try
+                    End Function)
+                Return
+            End If
+
+            ' Do NOT restart just because it's idle; that's expected when unused
+            ' If you still want a long-idle recovery, only do it when it's not listening
+            ' and age is very high (e.g., > 1 hour). Left intentionally disabled.
+
+        Catch
+        End Try
+    End Sub,
+    state:=Nothing,
+    dueTime:=System.TimeSpan.FromSeconds(30),
+    period:=System.TimeSpan.FromSeconds(10))
+    End Sub
+
+    Private Sub oldStartListenerWatchdog()
         If watchdog IsNot Nothing Then Return
 
         watchdog = New System.Threading.Timer(
@@ -7874,6 +8136,139 @@ Public Class ThisAddIn
 
     ' Provide model list for the browser dropdown (default, second, alternates)   
     Private Async Function GetModelListForBrowserAsync(ByVal st As InkyState) _
+    As System.Threading.Tasks.Task(Of System.Collections.Generic.List(Of Object))
+
+        Dim list As New System.Collections.Generic.List(Of Object)()
+
+        ' 0) If config is not loaded or primary name is blank, try to (re)load once
+        If (Not INIloaded) OrElse (String.IsNullOrWhiteSpace(INI_Model) AndAlso Not INI_SecondAPI) Then
+            Try
+                InitializeConfig(False, False)
+            Catch
+            End Try
+        End If
+
+        ' 1) Reconcile persisted preference
+        Try
+            Dim savedSecond As Boolean = My.Settings.Inky_UseSecondApiSelected
+            Dim savedKey As String = My.Settings.Inky_SelectedModelKey
+            Dim shouldApply As Boolean =
+            (savedSecond <> st.UseSecondApi) OrElse
+            (savedSecond AndAlso Not String.Equals(savedKey, st.SelectedModelKey, StringComparison.OrdinalIgnoreCase))
+            If shouldApply Then
+                st.UseSecondApi = savedSecond
+                st.SelectedModelKey = If(savedSecond, savedKey, "")
+                SaveInkyState(st)
+            End If
+        Catch
+        End Try
+
+        ' 2) Availability
+        Dim hasPrimary As Boolean = Not String.IsNullOrWhiteSpace(INI_Model)
+        Dim hasSecondApi As Boolean = INI_SecondAPI
+        Dim hasSecondModelName As Boolean = Not String.IsNullOrWhiteSpace(INI_Model_2)
+        Dim hasSecondary As Boolean = hasSecondApi AndAlso hasSecondModelName
+
+        ' Alt list
+        Dim alts As System.Collections.Generic.List(Of SharedLibrary.SharedLibrary.ModelConfig) = Nothing
+        Dim altCount As Integer = 0
+        Try
+            If hasSecondApi AndAlso Not String.IsNullOrWhiteSpace(INI_AlternateModelPath) Then
+                alts = LoadAlternativeModels(INI_AlternateModelPath, _context)
+                If alts IsNot Nothing Then altCount = alts.Count
+            End If
+        Catch
+            altCount = 0
+            alts = Nothing
+        End Try
+
+        ' 3) Normalize stale alternate selection EVEN if alts couldn't be loaded
+        If st.UseSecondApi AndAlso Not String.IsNullOrWhiteSpace(st.SelectedModelKey) Then
+            Dim exists As Boolean = False
+            If alts IsNot Nothing Then
+                exists = alts.Any(Function(m)
+                                      If m Is Nothing Then Return False
+                                      Dim label = If(Not String.IsNullOrWhiteSpace(m.ModelDescription), m.ModelDescription, m.Model)
+                                      Return String.Equals(label, st.SelectedModelKey, StringComparison.OrdinalIgnoreCase)
+                                  End Function)
+            Else
+                ' No alt list available → treat as not existing
+                exists = False
+            End If
+            If Not exists Then
+                st.SelectedModelKey = ""
+                SaveInkyState(st)
+            End If
+        End If
+
+        ' 4) Only primary
+        If hasPrimary AndAlso Not hasSecondary AndAlso altCount = 0 Then
+            list.Add(New With {
+            .key = "default",
+            .label = INI_Model,
+            .selected = (Not st.UseSecondApi), ' if state was second, still prefer primary as only available
+            .disabled = False,
+            .isSeparator = False
+        })
+            Return list
+        End If
+
+        ' 5) Build list
+        If hasPrimary Then
+            list.Add(New With {.key = "__hdr_primary__", .label = "Primary model:", .selected = False, .disabled = True, .isSeparator = False})
+            list.Add(New With {
+            .key = "default",
+            .label = INI_Model,
+            .selected = (Not st.UseSecondApi),
+            .disabled = False,
+            .isSeparator = False
+        })
+        End If
+
+        If hasSecondary Then
+            list.Add(New With {.key = "__hdr_secondary__", .label = "Secondary model:", .selected = False, .disabled = True, .isSeparator = False})
+            list.Add(New With {
+            .key = "__second__",
+            .label = INI_Model_2,
+            .selected = (st.UseSecondApi AndAlso String.IsNullOrWhiteSpace(st.SelectedModelKey)),
+            .disabled = False,
+            .isSeparator = False
+        })
+        End If
+
+        If altCount > 0 AndAlso alts IsNot Nothing Then
+            list.Add(New With {.key = "__sep__", .label = "Alternative models:", .selected = False, .disabled = True, .isSeparator = True})
+            For Each m In alts
+                If m Is Nothing Then Continue For
+                Dim label = If(Not String.IsNullOrWhiteSpace(m.ModelDescription), m.ModelDescription, m.Model)
+                If String.IsNullOrWhiteSpace(label) Then label = "Model"
+                list.Add(New With {
+                .key = label,
+                .label = label,
+                .selected = (st.UseSecondApi AndAlso String.Equals(st.SelectedModelKey, label, StringComparison.OrdinalIgnoreCase)),
+                .disabled = False,
+                .isSeparator = False
+            })
+            Next
+        End If
+
+        ' 6) Never return an empty list → synthesize a safe primary entry
+        If list.Count = 0 Then
+            Dim lbl = If(String.IsNullOrWhiteSpace(INI_Model), "Primary model (not configured)", INI_Model)
+            list.Add(New With {
+            .key = "default",
+            .label = lbl,
+            .selected = True,
+            .disabled = String.IsNullOrWhiteSpace(INI_Model),
+            .isSeparator = False
+        })
+        End If
+
+        Return list
+    End Function
+
+    ' Provide model list for the browser dropdown (default, second, alternates)   
+    Private Async Function oldGetModelListForBrowserAsync(ByVal st As InkyState) _
         As System.Threading.Tasks.Task(Of System.Collections.Generic.List(Of Object))
 
         Dim list As New System.Collections.Generic.List(Of Object)()
@@ -7904,11 +8299,7 @@ Public Class ThisAddIn
         ' --- 2) Gather availability info based on (potentially updated) state ---
         Dim hasPrimary As Boolean = Not String.IsNullOrWhiteSpace(INI_Model)
         Dim hasSecondApi As Boolean = INI_SecondAPI
-
-        ' IMPORTANT FIX: Always use the ORIGINAL secondary model name for display
-        ' not whatever alternate model might be currently active
-        Dim secondaryModelName As String = OriginalSecondaryModelName ' Use your ReadOnly field
-        Dim hasSecondModelName As Boolean = Not String.IsNullOrWhiteSpace(secondaryModelName)
+        Dim hasSecondModelName As Boolean = Not String.IsNullOrWhiteSpace(INI_Model_2)
         Dim hasSecondary As Boolean = hasSecondApi AndAlso hasSecondModelName
 
         Dim alts As System.Collections.Generic.List(Of SharedLibrary.SharedLibrary.ModelConfig) = Nothing
@@ -7972,19 +8363,19 @@ Public Class ThisAddIn
 
         If hasSecondary Then
             list.Add(New With {
-            .key = "__hdr_secondary__",
-            .label = "Secondary model:",
-            .selected = False,
-            .disabled = True,
-            .isSeparator = False
-        })
+                .key = "__hdr_secondary__",
+                .label = "Secondary model:",
+                .selected = False,
+                .disabled = True,
+                .isSeparator = False
+            })
             list.Add(New With {
-            .key = "__second__",
-            .label = secondaryModelName,  ' Use the original name, not INI_Model_2 which might be changed
-            .selected = (st.UseSecondApi AndAlso String.IsNullOrWhiteSpace(st.SelectedModelKey)),
-            .disabled = False,
-            .isSeparator = False
-        })
+                .key = "__second__",
+                .label = INI_Model_2,
+                .selected = (st.UseSecondApi AndAlso String.IsNullOrWhiteSpace(st.SelectedModelKey)),
+                .disabled = False,
+                .isSeparator = False
+            })
         End If
 
         If altCount > 0 AndAlso alts IsNot Nothing Then
@@ -8013,6 +8404,7 @@ Public Class ThisAddIn
 
         Return list
     End Function
+
 
 
 

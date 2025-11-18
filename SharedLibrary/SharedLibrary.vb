@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 17.11.2025
+' 18.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -1975,38 +1975,39 @@ Namespace SharedLibrary
                    promptText As String,
                    Optional headerText As String = Nothing)
 
-                ' ---------- global font & scaling ----------
+                Const baseWidth As Integer = 400
+                Const sidePadding As Integer = 10
+                Const bottomPadding As Integer = 24
+
+                Me.SuspendLayout()
+
                 Dim stdFont As New System.Drawing.Font("Segoe UI", 9.0F,
                                                System.Drawing.FontStyle.Regular,
                                                System.Drawing.GraphicsUnit.Point)
                 Me.Font = stdFont
                 Me.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font
 
-                ' ---------- caption & icon ----------
                 If String.IsNullOrWhiteSpace(headerText) Then headerText = AN
                 Me.Text = headerText
 
                 Dim bmp As New System.Drawing.Bitmap(My.Resources.Red_Ink_Logo)
                 Me.Icon = System.Drawing.Icon.FromHandle(bmp.GetHicon())
 
-                ' ---------- base width & centre-screen ----------
-                Const baseWidth As Integer = 400
-                Me.ClientSize = New System.Drawing.Size(baseWidth, 100)            ' temp height
+                Me.ClientSize = New System.Drawing.Size(baseWidth, 100)
                 Me.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen
                 Me.KeyPreview = True
 
-                ' ---------- label ----------
                 _lbl = New System.Windows.Forms.Label With {
             .AutoSize = True,
             .Text = promptText,
-            .Location = New System.Drawing.Point(10, 10),
+            .Location = New System.Drawing.Point(sidePadding, sidePadding),
             .Anchor = System.Windows.Forms.AnchorStyles.Top Or
                       System.Windows.Forms.AnchorStyles.Left Or
                       System.Windows.Forms.AnchorStyles.Right
         }
                 Controls.Add(_lbl)
 
-                ' ---------- listbox ----------
+                ' Important: do NOT anchor Bottom yet (avoid early stretch)
                 _lst = New System.Windows.Forms.ListBox With {
             .IntegralHeight = False,
             .SelectionMode = System.Windows.Forms.SelectionMode.One,
@@ -2016,35 +2017,43 @@ Namespace SharedLibrary
         }
                 Dim visibleRows As Integer = Math.Min(5, items.Count)
                 _lst.ItemHeight = CInt(stdFont.GetHeight())
-                _lst.Height = _lst.ItemHeight * visibleRows + 9
-                _lst.Location = New System.Drawing.Point(10, _lbl.Bottom + 10)
-                _lst.Width = ClientSize.Width - 20
+                Dim desiredListHeight As Integer = _lst.ItemHeight * visibleRows + 9
+
+                _lst.Location = New System.Drawing.Point(sidePadding, _lbl.Bottom + 10)
+                _lst.Width = baseWidth - (2 * sidePadding)
+                _lst.Height = desiredListHeight
                 Controls.Add(_lst)
 
-                ' ---------- populate ----------
                 For Each it In items : _lst.Items.Add(it) : Next
 
-                ' ---------- default selection ----------
                 Dim defIdx As Integer = items.ToList().FindIndex(Function(it) it.Value = defaultValue)
                 If defIdx >= 0 Then
                     _lst.SelectedIndex = defIdx
                     _result = items(defIdx).Value
                 End If
-                _lst.Focus()
 
-                ' ---------- adjust form height ----------
-                Dim requiredHeight As Integer = _lst.Bottom + 20         ' ▶ was “+ 10”
+                ' Now compute final ClientSize based on desired list height + padding
+                Dim requiredHeight As Integer = _lst.Top + desiredListHeight + bottomPadding
                 Me.ClientSize = New System.Drawing.Size(baseWidth, requiredHeight)
+
+                ' After ClientSize is finalized, enable Bottom anchoring
+                _lst.Anchor = System.Windows.Forms.AnchorStyles.Top Or
+                      System.Windows.Forms.AnchorStyles.Left Or
+                      System.Windows.Forms.AnchorStyles.Right Or
+                      System.Windows.Forms.AnchorStyles.Bottom
+
+                ' Ensure width matches final client width
+                _lst.Width = Me.ClientSize.Width - (2 * sidePadding)
+
+                ' Optional: keep a reasonable minimum, using current size
                 Me.MinimumSize = Me.Size
 
-                ' ---------- ENTER / double-click confirm ----------
                 AddHandler _lst.KeyDown,
             Sub(s, e)
                 If e.KeyCode = System.Windows.Forms.Keys.Enter Then AcceptCurrentSelection()
             End Sub
                 AddHandler _lst.DoubleClick, Sub() AcceptCurrentSelection()
 
-                ' ---------- ESC cancel ----------
                 AddHandler Me.KeyDown,
             Sub(sender, e)
                 If e.KeyCode = System.Windows.Forms.Keys.Escape Then
@@ -2054,11 +2063,23 @@ Namespace SharedLibrary
                 End If
             End Sub
 
-                ' ---------- close button ----------
                 AddHandler Me.FormClosing,
             Sub(s, e)
                 If Me.DialogResult <> System.Windows.Forms.DialogResult.OK Then _result = 0
             End Sub
+
+                ' Keep padding and width on resize
+                AddHandler Me.Resize,
+            Sub()
+                _lbl.Width = Me.ClientSize.Width - (2 * sidePadding)
+                _lst.Width = Me.ClientSize.Width - (2 * sidePadding)
+                Dim newHeight = Me.ClientSize.Height - _lst.Top - bottomPadding
+                If newHeight > 40 Then _lst.Height = newHeight
+            End Sub
+
+                Me.ResumeLayout(False)
+                Me.PerformLayout()
+                _lst.Focus()
             End Sub
 
             Private Sub AcceptCurrentSelection()
@@ -2076,6 +2097,7 @@ Namespace SharedLibrary
                 End Get
             End Property
         End Class
+
 
 
         Public Shared Function SelectValue(items As IEnumerable(Of SelectionItem),
