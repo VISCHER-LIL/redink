@@ -23,7 +23,8 @@
     <DefineDebug>true</DefineDebug>
     <DefineTrace>true</DefineTrace>
     <OutputPath>bin\Debug\</OutputPath>
-    <DocumentationFile>SharedLibrary.xml</DocumentationFile>
+    <DocumentationFile>
+    </DocumentationFile>
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
@@ -32,7 +33,8 @@
     <DefineTrace>true</DefineTrace>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
-    <DocumentationFile>SharedLibrary.xml</DocumentationFile>
+    <DocumentationFile>
+    </DocumentationFile>
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
   </PropertyGroup>
   <PropertyGroup>
@@ -52,7 +54,8 @@
     <DefineDebug>true</DefineDebug>
     <DefineTrace>true</DefineTrace>
     <OutputPath>bin\x64\Debug\</OutputPath>
-    <DocumentationFile>SharedLibrary.xml</DocumentationFile>
+    <DocumentationFile>
+    </DocumentationFile>
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
     <DebugType>full</DebugType>
     <PlatformTarget>x64</PlatformTarget>
@@ -60,7 +63,8 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
     <DefineTrace>true</DefineTrace>
     <OutputPath>bin\x64\Release\</OutputPath>
-    <DocumentationFile>SharedLibrary.xml</DocumentationFile>
+    <DocumentationFile>
+    </DocumentationFile>
     <Optimize>true</Optimize>
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
     <DebugType>pdbonly</DebugType>
@@ -283,7 +287,77 @@
     <Import Include="System.Threading.Tasks" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="SharedLibrary.vb" />
+    <Compile Include="Code\CommonFeatures\SharedMethods.MyStyleHelpers.vb" />
+    <Compile Include="Code\CommonFeatures\SharedMethods.PromptLibrary.vb" />
+    <Compile Include="Code\CommonFeatures\SharedMethods.TextFileEditor.vb" />
+    <Compile Include="Code\CommonFeatures\UpdateHandler.vb" />
+    <Compile Include="Code\CommonFeatures\Embeddings\TextChunk.vb" />
+    <Compile Include="Code\CommonFeatures\Embeddings\SearchResult.vb" />
+    <Compile Include="Code\CommonFeatures\Embeddings\TokenOffset.vb" />
+    <Compile Include="Code\CommonFeatures\Embeddings\EmbeddingStore.vb" />
+    <Compile Include="Code\CommonFeatures\Embeddings\EmbeddingStore_BagofWords.vb" />
+    <Compile Include="Code\CommonFeatures\Embeddings\MlNetTokenizer.vb" />
+    <Compile Include="Code\CommonFeatures\Embeddings\OnnxAnonymizer.vb" />
+    <Compile Include="Code\CommonFeatures\HelpMeInky.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Code\CommonFeatures\AnonymizationModule.vb" />
+    <Compile Include="Code\CommonFeatures\InstallationWizard\AppConfigurationVariable.vb" />
+    <Compile Include="Code\CommonFeatures\InstallationWizard\InitialConfig.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Code\CommonFeatures\WebAgentInterpreter.vb" />
+    <Compile Include="Code\Core\Clipboard\SharedMethods.ClipboardSnapshot.vb" />
+    <Compile Include="Code\Core\Clipboard\SharedMethods.PutInClipboard.vb" />
+    <Compile Include="Code\Core\Clipboard\SharedMethods.StoreAndRestoreClipboard.vb" />
+    <Compile Include="Code\Core\Config\SharedMethods.LoadConfig.vb" />
+    <Compile Include="Code\Core\Config\SharedMethods.Settings.vb" />
+    <Compile Include="Code\Core\Definitions\SharedContext.vb" />
+    <Compile Include="Code\Core\Converter\MarkdownToRtfConverter.vb" />
+    <Compile Include="Code\Core\Definitions\SharedMethods.Constants.vb" />
+    <Compile Include="Code\Core\LLM\ModelSelection\SharedMethods.AlternateModels.vb" />
+    <Compile Include="Code\Core\LLM\SharedMethods.GoogleOAuthHelper.vb" />
+    <Compile Include="Code\Core\LLM\SharedMethods.MainLLM.vb" />
+    <Compile Include="Code\Core\LLM\SharedMethods.Signing.vb" />
+    <Compile Include="Code\Core\Texthandling\SharedMethods.Diff.vb" />
+    <Compile Include="Code\Core\LLM\ImageDecoder.vb" />
+    <Compile Include="Code\Core\LLM\JsonTemplateFormatter.vb" />
+    <Compile Include="Code\Core\LLM\ModelSelection\ModelConfig.vb" />
+    <Compile Include="Code\Core\LLM\ModelSelection\ModelSelectorForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Code\Core\LLM\ModelSelection\MultiModelSelectorForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Code\Core\Texthandling\SharedMethods.TextHandling.vb" />
+    <Compile Include="Code\Core\Texthandling\SharedMethods.TextHandlingExcel.vb" />
+    <Compile Include="Code\Core\UI\SharedMethods.Infobox.vb" />
+    <Compile Include="Code\Core\UI\SharedMethods.Pane.vb" />
+    <Compile Include="Code\Core\UI\SharedMethods.SelectionFormSmall.vb" />
+    <Compile Include="Code\Core\UI\SharedMethods.SplashScreen.vb" />
+    <Compile Include="Code\Core\UI\ShowMethods.CustomForms.vb" />
+    <Compile Include="Code\Core\Various\SharedMethods.FileImporter.vb" />
+    <Compile Include="Code\Core\Various\SharedMethods.ProcessParameterPlaceholders.vb" />
+    <Compile Include="Code\Core\Various\SharedMethods.VarHelpers.vb" />
+    <Compile Include="Code\Core\UI\SplashScreenWorks.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Code\Core\UI\SplashScreenCountDown.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Code\Core\UI\DPIProgressForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Code\Core\UI\ProgressForm.vb">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Code\Core\LLM\MimeHelper.vb" />
+    <Compile Include="Code\Core\Clipboard\ClipboardHelper.vb" />
+    <Compile Include="Code\Core\UI\ProgressBarModule.vb" />
+    <Compile Include="Code\Core\Clipboard\NativeClipboard.vb" />
+    <Compile Include="Code\Interop\NativeMethods.vb" />
+    <Compile Include="Code\Interop\WindowsWrapper.vb" />
+    <Compile Include="Code\Interop\WinAPI.vb" />
     <Compile Include="My Project\AssemblyInfo.vb" />
     <Compile Include="My Project\Application.Designer.vb">
       <AutoGen>True</AutoGen>
@@ -334,11 +408,13 @@
     </COMReference>
   </ItemGroup>
   <ItemGroup>
+    <Content Include="Code\Overview.txt" />
     <Content Include="license.txt" />
     <None Include="Resources\Red_Ink_Logo_Medium.png" />
     <None Include="Resources\Red_Ink_Logo_Large.png" />
     <None Include="Resources\Red_Ink_Logo.png" />
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.VisualBasic.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>

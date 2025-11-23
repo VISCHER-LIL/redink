@@ -1,27 +1,43 @@
-﻿' Red Ink for Excel -- Chatbot Form Code
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
+﻿' =============================================================================
+' File: Form1.vb (frmAIChat)
+' Part of: Red Ink for Excel
+' Purpose: Provides a Windows Forms chat interface to an LLM for an Excel add-in.
+'          Supports sending user prompts, including worksheet content or a cell
+'          selection, persisting chat history, switching between two models,
+'          and executing structured commands returned by the LLM against the
+'          active Excel workbook.
 '
-' 18.11.2025
+' Copyright: David Rosenthal, david.rosenthal@vischer.com
+' License: May only be used with an appropriate license (see redink.ai)
 '
-' The compiled version of Red Ink also ...
-'
-' Includes DiffPlex in unchanged form; Copyright (c) 2023 Matthew Manela; licensed under the Appache-2.0 license (http://www.apache.org/licenses/LICENSE-2.0) at GitHub (https://github.com/mmanela/diffplex).
-' Includes Newtonsoft.Json in unchanged form; Copyright (c) 2023 James Newton-King; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://www.newtonsoft.com/json
-' Includes HtmlAgilityPack in unchanged form; Copyright (c) 2024 ZZZ Projects, Simon Mourrier,Jeff Klawiter,Stephan Grell; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://html-agility-pack.net/
-' Includes Bouncycastle.Cryptography in unchanged form; Copyright (c) 2024 Legion of the Bouncy Castle Inc.; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://www.bouncycastle.org/download/bouncy-castle-c/
-' Includes PdfPig in unchanged form; Copyright (c) 2024 UglyToad, EliotJones PdfPig, BobLd; licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://github.com/UglyToad/PdfPig
-' Includes MarkDig in unchanged form; Copyright (c) 2024 Alexandre Mutel; licensed under the BSD 2 Clause (Simplified) license (https://licenses.nuget.org/BSD-2-Clause) at https://github.com/xoofx/markdig
-' Includes NAudio in unchanged form; Copyright (c) 2020 Mark Heath; licensed under a proprietary open source license (https://www.nuget.org/packages/NAudio/2.2.1/license) at https://github.com/naudio/NAudio
-' Includes Vosk in unchanged form; Copyright (c) 2022 Alpha Cephei Inc.; licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://alphacephei.com/vosk/
-' Includes Whisper.net in unchanged form; Copyright (c) 2024 Sandro Hanea; licensed under the MIT License under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/sandrohanea/whisper.net
-' Includes Grpc.core in unchanged form; Copyright (c) 2023 The gRPC Authors; licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://github.com/grpc/grpc
-' Includes Google Speech V1 library and related API libraries in unchanged form; Copyright (c) 2024 Google LLC; licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://github.com/googleapis/google-cloud-dotnet
-' Includes Google Protobuf in unchanged form; Copyright (c) 2025 Google Inc.; licensed under the BSD-3-Clause license (https://licenses.nuget.org/BSD-3-Clause) at https://github.com/protocolbuffers/protobuf
-' Includes MarkdownToRTF in modified form; Copyright (c) 2025 Gustavo Hennig; original licensed under the MIT License under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/GustavoHennig/MarkdownToRtf
-' Includes Nito.AsyncEx in unchanged form; Copyright (c) 2021 Stephen Cleary; licensed under the MIT License under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/StephenCleary/AsyncEx
-' Includes also various Microsoft libraries copyrighted by Microsoft Corporation and available, among others, under the Microsoft EULA and the MIT License; Copyright (c) 2016- Microsoft Corp.
+' Architecture:
+' - UI Composition: Dynamically builds a TableLayoutPanel containing an instructions
+'   label, chat history textbox, user input textbox, a checkbox panel, and a button panel.
+'   Two FlowLayoutPanels host action buttons and option checkboxes.
+' - State Persistence: Uses My.Settings to store last chat history snippet (bounded by
+'   INI_ChatCap), window size/location, and user option selections.
+' - Conversation Handling: Maintains an in‑memory List of (Role, Content) tuples for
+'   current session; previous persisted chat appended once when sending first message.
+' - Prompt Construction: Builds a system prompt from SharedContext plus optional worksheet
+'   (entire UsedRange) or selection data. Additional worksheets may be injected via a trigger.
+' - Worksheet Access: Uses Microsoft.Office.Interop.Excel to read ActiveWorkbook / ActiveSheet,
+'   UsedRange, and current Selection; verifies availability before including content.
+' - Command Execution: Parses embedded command blocks in LLM responses and applies resulting
+'   instructions to Excel via Globals.ThisAddIn.ApplyLLMInstructions; supports undo state tracking.
+' - Model Switching: Toggles between two configured models (INI_Model / INI_Model_2) if second
+'   API is enabled (INI_SecondAPI).
+' - Asynchronous Flow: Uses async/await for LLM calls; inserts a temporary “Thinking...” line
+'   and replaces it with the final response.
+' - Formatting: Normalizes bullet points, strips Markdown emphasis, and optionally executes
+'   commands if write access is granted.
+' - UI Thread Safety: Marshals updates through UpdateUIAsync / Invoke checks.
+' - Clipboard Support: Copy entire chat or last assistant answer to clipboard.
+' - Lifecycle: Restores previous chat, saves state on close, and sends a time‑aware welcome
+'   message on first load if history is empty.
+' =============================================================================
 
+Option Explicit On
+Option Strict Off
 
 Imports System.Diagnostics
 Imports System.Drawing
@@ -35,166 +51,54 @@ Imports System.Runtime.InteropServices
 Imports Microsoft.Office.Interop.Excel
 Imports System.Globalization
 Imports Microsoft.Office.Core
-Imports Microsoft.VisualBasic.ApplicationServices
-Imports System.Reflection
 
-
-' =============================================================================
-' Excel Chatbot - Form1.vb — Reference overview
-' =============================================================================
-'
-' Purpose
-'   Chat UI for the Excel add-in ("Red Ink" / "Inky"). Provides:
-'     - a lightweight chat window for calling the LLM via `SharedMethods.LLM`
-'     - optional inclusion of worksheet content or selection in prompts
-'     - model selection toggle (primary / secondary)
-'     - simple persistence of transcript and window state via `My.Settings`
-'     - parsing and execution of LLM-produced instructions via the host add-in
-'
-' High-level structure
-'   - P/Invoke
-'       - `SetForegroundWindow(hWnd As IntPtr)` — bring Excel window forward when executing commands
-'
-'   - Form-level fields & UI
-'       - Buttons: `btnSend`, `btnCopy`, `btnCopyLastAnswer`, `btnClear`, `btnExit`, `btnSwitchModel`
-'       - Checkboxes: `chkIncludeDocText` ("Include worksheet"), `chkIncludeselection`, `chkPermitCommands`, `chkStayOnTop`
-'       - Panels: `pnlButtons`, `pnlCheckboxes`
-'       - Text controls (designer): `txtChatHistory`, `txtUserInput`, `lblInstructions`
-'       - State:
-'           • `_context As ISharedContext` — SharedLibrary settings/context
-'           • `_useSecondApi` — whether to call second model
-'           • `_chatHistory` — List(Of (Role, Content)) holding conversation turns
-'           • `OldChat`, `PreceedingNewline`, `UserLanguage`, `SystemPrompt`
-'       - Constants / triggers: `ExtWSTrigger = "(addws)"`
-'
-' Lifecycle & initialization
-'   - `New(context As ISharedContext)` — builds layout programmatically (TableLayoutPanel),
-'       configures controls, stores `_context`.
-'   - `frmAIChat_Load` — restores `My.Settings.LastChatHistory`, sets window title, icon, size,
-'       wires event handlers, optionally shows a `WelcomeMessage`, warns on large worksheets.
-'   - `frmAIChat_FormClosing` — persists `My.Settings.LastChatHistory`, `FormLocation`, `FormSize`.
-'
-' UI helpers
-'   - `UpdateUIAsync(action As Action)` — marshals UI updates with `Invoke` when required.
-'   - `AppendToChatHistory(text As String)` — append text to `txtChatHistory` thread-safely.
-'   - `RemoveLastLineFromChatHistory()` — removes final line from transcript.
-'   - Keyboard handlers:
-'       • `UserInput_KeyDown` sends on Enter (Shift+Enter for newline)
-'       • `oldUserInput_KeyDown` supports Ctrl+Enter
-'       • `frmAIChat_KeyDown` closes on Escape (saves transcript within `_context.INI_ChatCap`)
-'
-' Conversation flow
-'   - `btnSend_Click` — main handler:
-'       1. Build `SystemPrompt` using `_context.SP_ChatExcel()` and checkbox flags.
-'       2. Build conversation context via `BuildConversationString(_chatHistory)` and `OldChat`.
-'       3. Validate Excel host availability when worksheet/selection inclusion is requested.
-'       4. Optionally gather:
-'           - entire worksheet (`Globals.ThisAddIn.ConvertRangeToString`)
-'           - selection (`ConvertRangeToString` on the intersected selection)
-'           - additional worksheets when user includes `ExtWSTrigger` via `Globals.ThisAddIn.GatherSelectedWorksheets()`
-'       5. Construct `fullPrompt` with `<RANGEOFCELLS>` wrappers when passing range content.
-'       6. Append user message to UI and `_chatHistory`.
-'       7. Call `SharedMethods.LLM(_context, SystemPrompt, fullPrompt, ..., _useSecondApi, True)` asynchronously.
-'       8. Sanitize LLM output:
-'           - `RemoveMarkdownFormatting` usage (form is kept simple here)
-'           - optionally extract `CommandsString` when `My.Settings.DoCommands` is true
-'       9. Append assistant answer to UI and call `ExecuteAnyCommands(CommandsString)` when permitted.
-'      10. Add assistant turn to `_chatHistory`.
-'
-' Welcome flow
-'   - `WelcomeMessage()` — calls LLM for a localized greeting, appends result to transcript and `_chatHistory`.
-'
-' Conversation helpers
-'   - `BuildConversationString(history)` — concatenates reversed history up to `_context.INI_ChatCap` characters.
-'   - `GetCursorContext` is not present in this Excel form; selection context is gathered via `ConvertRangeToString`.
-'
-' Settings & model UI
-'   - `btnSwitchModel_Click` — toggles `_useSecondApi` and updates the window title to reflect `INI_Model`/`INI_Model_2`.
-'   - `UpdateDocumentCheckboxesState` (not present here) is in Word; Excel version disables model-dependent UI only when needed.
-'   - `chkStayontop_Click`, `chkIncludeDocText_Click`, `chkIncludeselection_Click`, `chkPermitCommands_Click`
-'       — manage `My.Settings` flags, validate selection via `IsSelectionEmpty(selection)`, and show warnings for large worksheets.
-'
-' Command parsing & execution
-'   - `ParseCommands(input)` — parses command blocks of the form:
-'       `[#command: @@argument1@@ §§argument2§§ #]`
-'       • returns `List(Of ParsedCommand)` with `Command`, `Argument1`, `Argument2`
-'       • regex-based parser tolerant to missing `arg2`
-'   - `RemoveCommands(input)` — strips those command blocks from text and collapses excessive blank lines
-'   - `ExecuteAnyCommands(commands As String)` — high-level executor:
-'       1. Temporarily clear `TopMost` and bring Excel forward using `SetForegroundWindow`.
-'       2. Calls `Globals.ThisAddIn.ParseLLMResponse(commands)` to obtain actionable `instructions` (list of `[Cell:...]` blocks).
-'       3. If instructions exist:
-'           - clears `Globals.ThisAddIn.undoStates`
-'           - calls `Globals.ThisAddIn.ApplyLLMInstructions(instructions, True)` to apply changes (values, formulas, comments)
-'           - updates undo UI via `Globals.Ribbons.Ribbon1.UpdateUndoButton()`
-'       4. Restores form topmost and focus.
-'
-' Notes about command execution
-'   - Actual cell-level changes, comments, and formula handling execute inside `ThisAddIn.ApplyLLMInstructions` and associated helpers (Excel ThisAddIn).
-'   - Undo state is managed by `Globals.ThisAddIn.undoStates` so host ribbon UI can enable undo.
-'   - `ExecuteAnyCommands` is deliberately simple: it transforms LLM result into the host add-in's instruction format (via `ParseLLMResponse`) and delegates application.
-'
-' Parsing utilities
-'   - `ParsedCommand` helper DTO (properties: `Command`, `Argument1`, `Argument2`).
-'   - `IsSelectionEmpty(selection As Excel.Range)` — checks intersection with `UsedRange` to detect a meaningful selection.
-'
-' Persistence & UX details
-'   - Transcript persisted in `My.Settings.LastChatHistory` (capped by `_context.INI_ChatCap`).
-'   - `My.Settings` stores checkbox preferences: `IncludeDocument`, `IncludeSelection`, `DoCommands`, `NotAlwaysOnTop`.
-'   - `frmAIChat` uses `My.Resources.Red_Ink_Logo` as icon when available.
-'   - Warns the user when including a large worksheet (uses `Globals.ThisAddIn.SizeOfWorksheet()` and `LargeWorksheetSize`).
-'
-' Threading & UI safety
-'   - LLM calls are async/awaited; UI updates are marshaled via `UpdateUIAsync`.
-'   - COM calls that read ranges are made synchronously on UI thread via `Globals.ThisAddIn` helpers.
-'   - The form uses `Invoke` checks for thread-safe UI updates.
-'
-' Extension points & maintenance
-'   - Add new chat commands: extend `ParseCommands` pattern and update callers that execute parsed commands (`ExecuteAnyCommands` or host `ApplyLLMInstructions`).
-'   - For richer HTML chat like Word's version, a `WebBrowser` based renderer and Markdig pipeline could be reused (not present in this Excel form).
-'   - When adding features that touch host ranges, reuse `Globals.ThisAddIn.ConvertRangeToString`, `GetFileContent`, and `ApplyLLMInstructions` to keep behavior consistent across hosts.
-'   - Keep `_context` usage minimal in UI code; business logic should live in `SharedMethods` / `ThisAddIn`.
-'
-' Quick navigation (important methods)
-'   - Constructor: `New(context As ISharedContext)`
-'   - Load: `frmAIChat_Load`
-'   - Send / LLM call: `btnSend_Click`
-'   - Welcome: `WelcomeMessage`
-'   - Command parsing: `ParseCommands`, `RemoveCommands`
-'   - Command execution: `ExecuteAnyCommands`
-'   - Helpers: `BuildConversationString`, `IsSelectionEmpty`, `AppendToChatHistory`, `UpdateUIAsync`
-'
-' =============================================================================
-
-
+''' <summary>
+''' Chat form integrating an LLM with Excel context (worksheet / selection) and optional command execution.
+''' </summary>
 Public Class frmAIChat
 
     <DllImport("user32.dll")>
     Private Shared Function SetForegroundWindow(hWnd As IntPtr) As Boolean
     End Function
 
+    ''' <summary>Application name.</summary>
     Const AN As String = "Red Ink"
+    ''' <summary>Alias used for chatbot display.</summary>
     Const AN5 As String = "Inky"   ' for Chatbox
+    ''' <summary>Trigger token to include additional worksheets.</summary>
     Private Const ExtWSTrigger As String = "(addws)"
 
+    ''' <summary>Tracks whether a newline precedes next appended user text.</summary>
     Private PreceedingNewline As String = ""
+    ''' <summary>Persisted prior chat restored once at start of session.</summary>
     Private OldChat As String = ""
+    ''' <summary>User interface culture name derived from Excel UI language.</summary>
     Private UserLanguage As String = New CultureInfo(Globals.ThisAddIn.Application.LanguageSettings.LanguageID(MsoAppLanguageID.msoLanguageIDUI)).Name
+    ''' <summary>System (instruction) prompt sent with each LLM call.</summary>
     Private SystemPrompt As String = ""
 
-
+    ''' <summary>Button: copy entire chat history.</summary>
     Private WithEvents btnCopy As New System.Windows.Forms.Button() With {.Text = "Copy All", .AutoSize = True}
+    ''' <summary>Button: copy last assistant answer.</summary>
     Private WithEvents btnCopyLastAnswer As New System.Windows.Forms.Button() With {.Text = "Copy Last Answer", .AutoSize = True}
+    ''' <summary>Button: clear current conversation.</summary>
     Private WithEvents btnClear As New System.Windows.Forms.Button() With {.Text = "Clear", .AutoSize = True}
+    ''' <summary>Button: close form.</summary>
     Private WithEvents btnExit As New System.Windows.Forms.Button() With {.Text = "Close", .AutoSize = True}
+    ''' <summary>Button: send prompt to LLM.</summary>
     Private WithEvents btnSend As New System.Windows.Forms.Button() With {.Text = "Send", .AutoSize = True}
+    ''' <summary>Button: toggle between two configured models.</summary>
     Private WithEvents btnSwitchModel As New System.Windows.Forms.Button() With {.Text = "Switch Model", .AutoSize = True}
+    ''' <summary>Checkbox: include entire worksheet UsedRange.</summary>
     Private WithEvents chkIncludeDocText As New System.Windows.Forms.CheckBox() With {.Text = "Include worksheet", .AutoSize = True, .Checked = My.Settings.IncludeDocument}
+    ''' <summary>Checkbox: include only current selection (if not including entire sheet).</summary>
     Private WithEvents chkIncludeselection As New System.Windows.Forms.CheckBox() With {.Text = "Include selection", .AutoSize = True, .Checked = If(My.Settings.IncludeDocument, False, My.Settings.IncludeSelection)}
+    ''' <summary>Checkbox: permit execution of commands returned by LLM.</summary>
     Private WithEvents chkPermitCommands As New System.Windows.Forms.CheckBox() With {.Text = "Grant write access", .AutoSize = True, .Checked = My.Settings.DoCommands}
+    ''' <summary>Checkbox: control TopMost behavior.</summary>
     Private WithEvents chkStayOnTop As New System.Windows.Forms.CheckBox() With {.Text = "Do not stay on top", .AutoSize = True, .Checked = My.Settings.NotAlwaysOnTop}
 
-
+    ''' <summary>Panel hosting action buttons.</summary>
     Dim pnlButtons As New FlowLayoutPanel() With {
         .Dock = DockStyle.Bottom,
         .FlowDirection = FlowDirection.LeftToRight,
@@ -203,6 +107,7 @@ Public Class frmAIChat
         .Height = 40
     }
 
+    ''' <summary>Panel hosting option checkboxes.</summary>
     Dim pnlCheckboxes As New FlowLayoutPanel() With {
         .Dock = DockStyle.Bottom,
         .FlowDirection = FlowDirection.LeftToRight,
@@ -211,15 +116,19 @@ Public Class frmAIChat
         .Height = 40
     }
 
+    ''' <summary>Shared context providing configuration and prompts.</summary>
     Private _context As ISharedContext = New SharedContext()
 
-    ' Tracks whether we are using the second model/API.
+    ''' <summary>Indicates whether second model/API is active.</summary>
     Private _useSecondApi As Boolean = False
 
-    ' We keep the entire conversation in a List of (role, content).
+    ''' <summary>Current session chat messages (role, content).</summary>
     Private _chatHistory As New List(Of (Role As String, Content As String))
 
-
+    ''' <summary>
+    ''' Initializes the chat form, constructing dynamic layout and binding provided context.
+    ''' </summary>
+    ''' <param name="context">Shared context instance used for prompt and settings.</param>
     Public Sub New(context As ISharedContext)
         ' This call is required by the designer.
         InitializeComponent()
@@ -229,51 +138,52 @@ Public Class frmAIChat
         txtChatHistory.Multiline = True
         txtUserInput.Multiline = True
 
-        ' 1) TableLayoutPanel anlegen
+        ' 1) Create TableLayoutPanel
         Dim mainLayout As New TableLayoutPanel() With {
-        .ColumnCount = 1,
-        .RowCount = 5,
-        .Dock = DockStyle.Fill,
-        .AutoSize = False,
-        .Padding = New Padding(10)   ' wird gleich überschrieben
-    }
+            .ColumnCount = 1,
+            .RowCount = 5,
+            .Dock = DockStyle.Fill,
+            .AutoSize = False,
+            .Padding = New Padding(10)   ' will be overridden
+        }
 
-        ' 2) Spalten‑Breite auf 100 % setzen
+        ' 2) Set column width to 100%
         mainLayout.ColumnStyles.Clear()
         mainLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
 
-        ' 3) Rechts 20 px Innenabstand
+        ' 3) Right inner padding 20 px
         mainLayout.Padding = New Padding(left:=10, top:=10, right:=20, bottom:=10)
 
-        ' 4) Zeilen definieren
+        ' 4) Define rows
         mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         mainLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
 
-        ' 5) Controls konfigurieren
+        ' 5) Configure controls
         lblInstructions.AutoSize = True
         lblInstructions.Dock = DockStyle.Top
         txtChatHistory.Dock = DockStyle.Fill
         txtUserInput.Dock = DockStyle.Fill
 
-        ' 6) Controls in die Tabelle packen
+        ' 6) Add controls to table
         mainLayout.Controls.Add(lblInstructions, 0, 0)
         mainLayout.Controls.Add(txtChatHistory, 0, 1)
         mainLayout.Controls.Add(txtUserInput, 0, 2)
         mainLayout.Controls.Add(pnlCheckboxes, 0, 3)
         mainLayout.Controls.Add(pnlButtons, 0, 4)
 
-        ' 7) Form neu befüllen
+        ' 7) Refill form
         Me.Controls.Clear()
         Me.Controls.Add(mainLayout)
 
         _context = context
     End Sub
 
-
-    ' Runs once when form loads.
+    ''' <summary>
+    ''' Handles form load: restores state, initializes UI, attaches handlers, sends welcome if no history.
+    ''' </summary>
     Private Async Sub frmAIChat_Load(sender As Object, e As EventArgs) Handles MyBase.Load
 
         Me.StartPosition = FormStartPosition.Manual
@@ -314,7 +224,6 @@ Public Class frmAIChat
         lblInstructions.TextAlign = ContentAlignment.MiddleLeft
 
         ' FlowLayoutPanel for buttons
-
         pnlButtons.Padding = New Padding(0, 2, 8, 12)
         pnlButtons.Controls.Add(btnSend)
         pnlButtons.Controls.Add(btnCopyLastAnswer)
@@ -329,7 +238,6 @@ Public Class frmAIChat
         pnlCheckboxes.Controls.Add(chkPermitCommands)
         pnlCheckboxes.Controls.Add(chkStayOnTop)
 
-
         AddHandler btnCopy.Click, AddressOf btnCopy_Click
         AddHandler btnClear.Click, AddressOf btnClear_Click
         AddHandler btnSend.Click, AddressOf btnSend_Click
@@ -341,13 +249,11 @@ Public Class frmAIChat
         AddHandler chkPermitCommands.Click, AddressOf chkPermitCommands_Click
         AddHandler chkStayOnTop.Click, AddressOf chkStayontop_Click
 
-
         If String.IsNullOrWhiteSpace(txtChatHistory.Text) Then
             Dim result = Await WelcomeMessage()
         Else
             txtChatHistory.SelectionStart = txtChatHistory.Text.Length
             txtChatHistory.ScrollToCaret()
-
         End If
 
         If Globals.ThisAddIn.SizeOfWorksheet() > Globals.ThisAddIn.LargeWorksheetSize And chkIncludeDocText.Checked Then
@@ -358,31 +264,34 @@ Public Class frmAIChat
 
     End Sub
 
-
-
-    ' When the user clicks Send, we call the LLM with context.
-    ' Then append the AI response to the conversation.
-
+    ''' <summary>
+    ''' Sends user prompt: builds context, includes worksheet/selection, calls LLM, appends response, executes commands if allowed.
+    ''' </summary>
     Private Async Sub btnSend_Click(sender As Object, e As EventArgs)
         Dim userPrompt As String = txtUserInput.Text.Trim()
         If userPrompt = "" Then Return
 
         Try
             ' Build entire conversation so far into one string for context
-            SystemPrompt = _context.SP_ChatExcel().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("MMMM dd, yyyy hh:mm tt")}. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland. " & If(chkIncludeDocText.Checked, "\nYou have access to the user's document. \n", "") & If(chkIncludeselection.Checked, "\nYou have access to a selection of user's document. \n ", "") & If(My.Settings.DoCommands, _context.SP_Add_ChatExcel_Commands, _context.SP_Add_Chat_NoCommands)
+            SystemPrompt = _context.SP_ChatExcel().Replace("{UserLanguage}", UserLanguage) &
+                $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("MMMM dd, yyyy hh:mm tt")}. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland. " &
+                If(chkIncludeDocText.Checked, vbLf & "You have access to the user's document. " & vbLf, "") &
+                If(chkIncludeselection.Checked, vbLf & "You have access to a selection of user's document. " & vbLf & " ", "") &
+                If(My.Settings.DoCommands, _context.SP_Add_ChatExcel_Commands, _context.SP_Add_Chat_NoCommands)
+
             Dim conversationSoFar As String = BuildConversationString(_chatHistory)
             If Not String.IsNullOrWhiteSpace(OldChat) Then
-                conversationSoFar += "\n" & OldChat
+                conversationSoFar += vbLf & OldChat
                 OldChat = ""
             End If
 
             Dim appGuard As Microsoft.Office.Interop.Excel.Application = Globals.ThisAddIn.Application
             If (chkIncludeDocText.Checked Or chkIncludeselection.Checked) AndAlso
-                                (appGuard Is Nothing _
-                               OrElse appGuard.Workbooks Is Nothing _
-                               OrElse appGuard.Workbooks.Count = 0 _
-                               OrElse appGuard.ActiveWorkbook Is Nothing _
-                               OrElse appGuard.ActiveSheet Is Nothing) Then
+               (appGuard Is Nothing _
+               OrElse appGuard.Workbooks Is Nothing _
+               OrElse appGuard.Workbooks.Count = 0 _
+               OrElse appGuard.ActiveWorkbook Is Nothing _
+               OrElse appGuard.ActiveSheet Is Nothing) Then
 
                 ShowCustomMessageBox("There is no active Excel worksheet. Please open or activate a workbook, then try again.")
                 Return
@@ -393,11 +302,13 @@ Public Class frmAIChat
             Dim selectiontext As String = ""
             Dim selectedcells As String = ""
             Dim InsertWS As String = ""
+
             If chkIncludeDocText.Checked Then
                 Dim ws As Excel.Worksheet = Globals.ThisAddIn.Application.ActiveSheet
                 Dim selectedRange As Excel.Range = ws.UsedRange
                 docText = Globals.ThisAddIn.ConvertRangeToString(selectedRange, True)
             End If
+
             If chkIncludeselection.Checked Or chkIncludeDocText.Checked Then
                 Dim appx As Excel.Application = Globals.ThisAddIn.Application
                 Dim selected As Excel.Range = appx.Selection
@@ -430,7 +341,6 @@ Public Class frmAIChat
                         ShowCustomMessageBox($"There are no other worksheets to add - doing without them.")
                         InsertWS = ""
                     End If
-
                 End If
                 userPrompt = Regex.Replace(userPrompt, Regex.Escape(ExtWSTrigger), "", RegexOptions.IgnoreCase)
             End If
@@ -461,9 +371,8 @@ Public Class frmAIChat
                 fullPrompt.AppendLine("The user also provided you access to the following additional worksheet(s): " & InsertWS)
             End If
 
-
             fullPrompt.AppendLine("User: " & userPrompt)
-            fullPrompt.AppendLine("The conversation so far (not including any previously added worksheet content):\n" & conversationSoFar)
+            fullPrompt.AppendLine("The conversation so far (not including any previously added worksheet content):" & vbLf & conversationSoFar)
 
             ' Update UI on the UI thread
             Await UpdateUIAsync(Sub()
@@ -479,14 +388,12 @@ Public Class frmAIChat
                                     AppendToChatHistory($"{AN5}: Thinking...")
                                 End Sub)
 
-
             ' Call the LLM function asynchronously
             Dim aiResponse As String = Await SharedMethods.LLM(_context, SystemPrompt, fullPrompt.ToString(), "", "", 0, _useSecondApi, True)
             aiResponse = aiResponse.TrimEnd()
             aiResponse = aiResponse.Replace($"{vbCrLf}* ", vbCrLf & ChrW(8226) & " ").Replace($"{vbCr}* ", vbCr & ChrW(8226) & " ").Replace($"{vbLf}* ", vbLf & ChrW(8226) & " ")
             aiResponse = aiResponse.Replace($"  *  ", "  " & ChrW(8226) & "  ")
             aiResponse = RemoveMarkdownFormatting(aiResponse)
-            'aiResponse = aiResponse.Replace("**", "").Replace("_", "").Replace("`", "")
 
             Dim CommandsString As String = ""
             If My.Settings.DoCommands Then
@@ -510,17 +417,20 @@ Public Class frmAIChat
         End Try
     End Sub
 
-
-
+    ''' <summary>
+    ''' Sends a localized welcome message referencing current time of day.
+    ''' </summary>
     Private Async Function WelcomeMessage() As Task(Of String)
-
         Try
             ' Build entire conversation so far into one string for context
-            SystemPrompt = _context.SP_ChatExcel().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("F")}. "
+            SystemPrompt = _context.SP_ChatExcel().Replace("{UserLanguage}", UserLanguage) &
+                $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("F")}. "
             txtUserInput.Text = ""
 
             ' Call the LLM function asynchronously
-            Dim aiResponse As String = Await SharedMethods.LLM(_context, SystemPrompt, $"Welcome the user in {UserLanguage} by (1) referring to the time of day based on the current time in {UserLanguage} , such as in 'good morning', and (2) asking in {UserLanguage} what you can do, but do not say your name.", "", "", 0, _useSecondApi, True)
+            Dim aiResponse As String = Await SharedMethods.LLM(_context, SystemPrompt,
+                $"Welcome the user in {UserLanguage} by (1) referring to the time of day based on the current time in {UserLanguage} , such as in 'good morning', and (2) asking in {UserLanguage} what you can do, but do not say your name.",
+                "", "", 0, _useSecondApi, True)
 
             aiResponse = aiResponse.Replace(vbLf, "").Replace(vbCr, "").Replace(vbCrLf, "") & vbCrLf
             aiResponse = aiResponse.Replace("**", "").Replace("_", "").Replace("`", "")
@@ -533,17 +443,16 @@ Public Class frmAIChat
             _chatHistory.Add(("assistant", aiResponse))
 
             PreceedingNewline = Environment.NewLine
-
             Return ""
 
         Catch ex As System.Exception
-            'MsgBox("Error in WelcomeMessage: " & ex.Message, MsgBoxStyle.Critical)
             Return ""
         End Try
     End Function
 
-
-    ' Helper method to ensure UI updates occur on the correct thread
+    ''' <summary>
+    ''' Safely executes a UI update action on the UI thread.
+    ''' </summary>
     Private Async Function UpdateUIAsync(action As System.Action) As System.Threading.Tasks.Task
         If InvokeRequired Then
             Await System.Threading.Tasks.Task.Run(Sub() Me.Invoke(action))
@@ -552,6 +461,9 @@ Public Class frmAIChat
         End If
     End Function
 
+    ''' <summary>
+    ''' Appends text to the chat history textbox.
+    ''' </summary>
     Private Sub AppendToChatHistory(text As String)
         If txtChatHistory.InvokeRequired Then
             txtChatHistory.Invoke(Sub() txtChatHistory.AppendText(text))
@@ -560,8 +472,9 @@ Public Class frmAIChat
         End If
     End Sub
 
-
-
+    ''' <summary>
+    ''' Removes the last line from chat history textbox.
+    ''' </summary>
     Private Sub RemoveLastLineFromChatHistory()
         If txtChatHistory.InvokeRequired Then
             txtChatHistory.Invoke(Sub() RemoveLastLineFromChatHistory())
@@ -573,19 +486,26 @@ Public Class frmAIChat
         End If
     End Sub
 
+    ''' <summary>
+    ''' Toggles TopMost state and persists setting.
+    ''' </summary>
     Private Sub chkStayontop_Click(sender As Object, e As EventArgs)
         Me.TopMost = Not Me.TopMost
         My.Settings.NotAlwaysOnTop = Me.TopMost
         My.Settings.Save()
     End Sub
 
+    ''' <summary>
+    ''' Toggles command execution permission and saves setting.
+    ''' </summary>
     Private Sub chkPermitCommands_Click(sender As Object, e As EventArgs)
         My.Settings.DoCommands = Not My.Settings.DoCommands
-
         My.Settings.Save()
     End Sub
 
-
+    ''' <summary>
+    ''' Handles inclusion of selection: validates selection, toggles worksheet inclusion, persists setting.
+    ''' </summary>
     Private Sub chkIncludeselection_Click(sender As Object, e As EventArgs) Handles chkIncludeselection.Click
         Dim app As Excel.Application = Globals.ThisAddIn.Application
         Dim selection As Excel.Range = TryCast(app.Selection, Excel.Range)
@@ -599,9 +519,11 @@ Public Class frmAIChat
 
         My.Settings.IncludeSelection = chkIncludeselection.Checked
         My.Settings.Save()
-
     End Sub
 
+    ''' <summary>
+    ''' Determines if selection intersects with meaningful UsedRange content.
+    ''' </summary>
     Private Function IsSelectionEmpty(selection As Excel.Range) As Boolean
         Dim ws As Excel.Worksheet = selection.Worksheet
         Dim app As Excel.Application = ws.Application
@@ -622,8 +544,9 @@ Public Class frmAIChat
         Return (intersected Is Nothing) OrElse (intersected.Cells.Count = 0)
     End Function
 
-
-
+    ''' <summary>
+    ''' Handles inclusion of entire worksheet and warns if large; mutually exclusive with selection.
+    ''' </summary>
     Private Sub chkIncludeDocText_Click(sender As Object, e As EventArgs)
 
         If chkIncludeselection.Checked Then
@@ -638,16 +561,16 @@ Public Class frmAIChat
 
     End Sub
 
-
-    ' Copies the entire conversation to the clipboard.
-
+    ''' <summary>
+    ''' Copies entire chat history to clipboard.
+    ''' </summary>
     Private Sub btnCopy_Click(sender As Object, e As EventArgs)
         My.Computer.Clipboard.SetText(txtChatHistory.Text)
     End Sub
 
-
-    ' Copies only the last AI answer to the clipboard.
-
+    ''' <summary>
+    ''' Copies last assistant message content to clipboard.
+    ''' </summary>
     Private Sub btnCopyLastAnswer_Click(sender As Object, e As EventArgs)
         Dim lastAssistantMsg = _chatHistory.Where(Function(x) x.Role = "assistant").LastOrDefault()
         If lastAssistantMsg.Content IsNot Nothing Then
@@ -657,17 +580,17 @@ Public Class frmAIChat
         End If
     End Sub
 
-
-    ' Switches the model from model1 to model2 and vice versa.
-
+    ''' <summary>
+    ''' Toggles active model between primary and secondary and updates title text.
+    ''' </summary>
     Private Sub btnSwitchModel_Click(sender As Object, e As EventArgs)
         _useSecondApi = Not _useSecondApi
         Me.Text = $"Chat (using " & If(_useSecondApi, _context.INI_Model_2, _context.INI_Model) & ")"
     End Sub
 
-
-    ' Clears the conversation from both the UI and saved settings.
-
+    ''' <summary>
+    ''' Clears chat history (memory + UI + persisted), sends a new welcome message.
+    ''' </summary>
     Private Sub btnClear_Click(sender As Object, e As EventArgs)
 
         _chatHistory.Clear()
@@ -679,9 +602,9 @@ Public Class frmAIChat
         Dim result = WelcomeMessage()
     End Sub
 
-
-    ' Press Escape to close. Also button-based exit.
-
+    ''' <summary>
+    ''' Handles Escape key to save bounded chat snippet and close form.
+    ''' </summary>
     Private Sub frmAIChat_KeyDown(sender As Object, e As KeyEventArgs) Handles Me.KeyDown
         If e.KeyCode = Keys.Escape Then
             Dim conversation As String = txtChatHistory.Text
@@ -694,6 +617,9 @@ Public Class frmAIChat
         End If
     End Sub
 
+    ''' <summary>
+    ''' Button-driven exit: saves bounded chat snippet then closes.
+    ''' </summary>
     Private Sub btnExit_Click(sender As Object, e As EventArgs)
         Dim conversation As String = txtChatHistory.Text
         If conversation.Length > _context.INI_ChatCap Then
@@ -704,6 +630,9 @@ Public Class frmAIChat
         Close()
     End Sub
 
+    ''' <summary>
+    ''' Persists chat snippet, window bounds, and settings on form closing.
+    ''' </summary>
     Private Sub frmAIChat_FormClosing(sender As Object, e As FormClosingEventArgs) Handles Me.FormClosing
         ' Save the chat history before the form closes
         Dim conversation As String = txtChatHistory.Text
@@ -722,12 +651,11 @@ Public Class frmAIChat
             My.Settings.FormSize = Me.RestoreBounds.Size
         End If
         My.Settings.Save()
-
     End Sub
 
-
-    ' Trigger the Send button on Ctrl+Enter in the user input textbox.
-
+    ''' <summary>
+    ''' Legacy handler for Ctrl+Enter send (unused).
+    ''' </summary>
     Private Sub oldUserInput_KeyDown(sender As Object, e As KeyEventArgs)
         If e.Control AndAlso e.KeyCode = Keys.Enter Then
             btnSend.PerformClick()
@@ -735,7 +663,9 @@ Public Class frmAIChat
         End If
     End Sub
 
-    ' Trigger the Send button on Enter, allow Shift+Enter for new line
+    ''' <summary>
+    ''' Handles Enter to send; Shift+Enter inserts newline; suppresses default Enter behavior when sending.
+    ''' </summary>
     Private Sub UserInput_KeyDown(sender As Object, e As KeyEventArgs)
         If e.KeyCode = Keys.Enter Then
             If e.Shift Then
@@ -750,9 +680,9 @@ Public Class frmAIChat
         End If
     End Sub
 
-
-    ' Builds the conversation history as a single string.
-
+    ''' <summary>
+    ''' Builds bounded conversation context string prefixed with role identifiers.
+    ''' </summary>
     Private Function BuildConversationString(history As List(Of (Role As String, Content As String))) As String
         Dim sb As New StringBuilder()
         Dim totalLength As Integer = 0
@@ -785,37 +715,26 @@ Public Class frmAIChat
         Return sb.ToString()
     End Function
 
-
+    ''' <summary>
+    ''' Paint handler (unused placeholder) for checkbox panel.
+    ''' </summary>
     Private Sub pnlCheckboxes_Paint(sender As Object, e As PaintEventArgs)
-
     End Sub
 
+    ''' <summary>Represents one parsed embedded command.</summary>
     Public Class ParsedCommand
         Public Property Command As String
         Public Property Argument1 As String
         Public Property Argument2 As String
     End Class
 
-
-    ' Parses the input string for embedded commands of the format:
-    ' [#command: @@argument1@@ §§argument2§§ #]
-    ' Returns a List of ParsedCommand objects.
-    ' argument2 is optional; if not present, it defaults to "".
+    ''' <summary>
+    ''' Parses embedded commands of format [#command: @@argument1@@ §§argument2§§ #] into a list.
+    ''' </summary>
     Private Function ParseCommands(input As String) As List(Of ParsedCommand)
         Dim results As New List(Of ParsedCommand)
 
         Try
-            ' Regex Explanation:
-            ' \[#       matches literal [#
-            ' (?<cmd>[^:]+)    matches 1 or more characters that are not :, captured as group "cmd"
-            ' :\s*     matches a colon and optional whitespace
-            ' @@(?<arg1>[^@]+)@@   matches @@ + 1 or more non-@ chars + @@, capturing as group "arg1"
-            ' \s*      optional whitespace
-            ' (?:§§(?<arg2>[^§]+)§§)?  optional group: §§ + 1 or more non-§ chars + §§, captured as "arg2"
-            ' \s*      optional whitespace
-            ' #\]      literal #]
-            ' The "?" after the group means "optional"
-
             Dim pattern As String = "\[#(?<cmd>[^:]+):\s*@@(?<arg1>[^@]+)@@\s*(?:§§(?<arg2>[^§]*)§§)?\s*#\]"
             Dim regex As New Regex(pattern)
 
@@ -849,19 +768,16 @@ Public Class frmAIChat
         Return results
     End Function
 
-
-    ' Removes all commands of the format:
-    ' [#command: @@argument1@@ §§argument2§§ #]
-    ' from the input string.
+    ''' <summary>
+    ''' Removes embedded command blocks and collapses excessive line breaks.
+    ''' </summary>
     Public Function RemoveCommands(input As String) As String
         Dim output As String = input
         Try
-            ' Remove the commands along with immediate surrounding whitespace and line breaks
             Dim commandPattern As String = "\s*[\r\n]*\s*\[#[^:]+:\s*@@[^@]+@@\s*(?:§§[^§]*§§)?\s*#\]\s*[\r\n]*\s*"
             Dim regex As New Regex(commandPattern)
             output = regex.Replace(input, "")
 
-            ' Collapse multiple consecutive line breaks into a single line break
             Dim whitespacePattern As String = "[\r\n]{3,}"
             Dim collapseRegex As New Regex(whitespacePattern)
             output = collapseRegex.Replace(output, Environment.NewLine)
@@ -873,9 +789,12 @@ Public Class frmAIChat
         Return output
     End Function
 
-
+    ''' <summary>Holds concatenated commands (unused placeholder).</summary>
     Private CommandsList As String = ""
 
+    ''' <summary>
+    ''' Executes parsed commands by bringing Excel to foreground and applying instructions.
+    ''' </summary>
     Public Sub ExecuteAnyCommands(commands As String)
         Dim topmost As Boolean = Me.TopMost
         Me.TopMost = False
@@ -893,13 +812,10 @@ Public Class frmAIChat
             Globals.ThisAddIn.undoStates.Clear()
             Globals.ThisAddIn.ApplyLLMInstructions(instructions, True)
             Dim result = Globals.Ribbons.Ribbon1.UpdateUndoButton()
-
         End If
-
 
         Me.TopMost = topmost
         Me.Focus()
     End Sub
-
 
 End Class

@@ -1,4 +1,8 @@
-﻿Imports System.Windows.Forms
+﻿' Part of: Red Ink for Word
+' Copyright by David Rosenthal, david.rosenthal@vischer.com
+' May only be used under with an appropriate license (see vischer.com/redink)
+
+Imports System.Windows.Forms
 Imports System.Drawing
 
 Public Class DragDropForm

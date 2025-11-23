@@ -36,7 +36,7 @@
     <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\redink_prerelease\excel\</PublishUrl>
     <InstallUrl>https://apps.vischer.com/redink/excel/</InstallUrl>
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.1.1.67</ApplicationVersion>
+    <ApplicationVersion>0.1.1.69</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
@@ -284,6 +284,7 @@
   -->
   <ItemGroup>
     <AppDesigner Include="My Project\" />
+    <Compile Include="BridgeSubs.vb" />
     <Compile Include="DragDropForm.Designer.vb" />
     <Compile Include="DragDropForm.vb">
       <SubType>Form</SubType>
@@ -298,6 +299,16 @@
     <Compile Include="Ribbon1.vb">
       <SubType>Component</SubType>
     </Compile>
+    <Compile Include="ThisAddIn.Commands.vb" />
+    <Compile Include="ThisAddIn.CSVAnalyzer.vb" />
+    <Compile Include="ThisAddIn.ExcelHelpers.vb" />
+    <Compile Include="ThisAddIn.FileHelpers.vb" />
+    <Compile Include="ThisAddIn.Helpers.vb" />
+    <Compile Include="ThisAddIn.MenuContext.vb" />
+    <Compile Include="ThisAddIn.Pane.vb" />
+    <Compile Include="ThisAddIn.Processing.InsertIntoWorksheet.vb" />
+    <Compile Include="ThisAddIn.Processing.vb" />
+    <Compile Include="ThisAddIn.Properties.vb" />
     <Compile Include="ThisAddIn.vb">
       <SubType>Code</SubType>
     </Compile>
@@ -341,15 +352,15 @@
     </Compile>
   </ItemGroup>
   <ItemGroup>
+    <Content Include="License.txt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\SharedLibrary\SharedLibrary.vbproj">
       <Project>{26ad9d75-3b7f-4e7e-afbd-108d2d343538}</Project>
       <Name>SharedLibrary</Name>
     </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
-    <Content Include="License.txt">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>

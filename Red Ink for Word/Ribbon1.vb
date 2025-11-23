@@ -1,6 +1,6 @@
-﻿' Red Ink Ribbon Code
+﻿' Part of: Red Ink for Word
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
+' May only be used under with an appropriate license (see vischer.com/redink)
 '
 ' 8.11.2025
 

@@ -36,7 +36,7 @@
     <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\redink_prerelease\outlook\</PublishUrl>
     <InstallUrl>https://apps.vischer.com/redink/outlook/</InstallUrl>
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.1.1.76</ApplicationVersion>
+    <ApplicationVersion>0.1.1.79</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
@@ -321,9 +321,16 @@
     <Compile Include="Ribbon1.vb">
       <SubType>Component</SubType>
     </Compile>
+    <Compile Include="ThisAddIn.Commands.vb" />
+    <Compile Include="ThisAddIn.Helpers.vb" />
+    <Compile Include="ThisAddIn.Processing.vb" />
+    <Compile Include="ThisAddIn.Properties.vb" />
     <Compile Include="ThisAddIn.vb">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="ThisAddIn.WebExtension.FileHelpers.vb" />
+    <Compile Include="ThisAddIn.WebExtension.ListenerAndPower.vb" />
+    <Compile Include="ThisAddIn.WebExtension.vb" />
     <EmbeddedResource Include="Ribbon1.resx">
       <DependentUpon>Ribbon1.vb</DependentUpon>
     </EmbeddedResource>
@@ -358,18 +365,18 @@
     </Compile>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\SharedLibrary\SharedLibrary.vbproj">
-      <Project>{26ad9d75-3b7f-4e7e-afbd-108d2d343538}</Project>
-      <Name>SharedLibrary</Name>
-    </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
     <Content Include="License.txt">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <None Include="Resources\Red_Ink_Logo_Medium.png" />
     <None Include="Resources\Red_Ink_Logo_Large.png" />
     <None Include="Resources\Red_Ink_Logo.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SharedLibrary\SharedLibrary.vbproj">
+      <Project>{26ad9d75-3b7f-4e7e-afbd-108d2d343538}</Project>
+      <Name>SharedLibrary</Name>
+    </ProjectReference>
   </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>

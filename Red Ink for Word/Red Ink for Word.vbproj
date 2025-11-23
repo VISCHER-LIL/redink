@@ -40,7 +40,7 @@
     <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\redink_prerelease\word\</PublishUrl>
     <InstallUrl>https://apps.vischer.com/redink/word/</InstallUrl>
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.1.1.96</ApplicationVersion>
+    <ApplicationVersion>0.1.1.98</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
@@ -574,6 +574,7 @@
   -->
   <ItemGroup>
     <AppDesigner Include="My Project\" />
+    <Compile Include="BridgeSubs.vb" />
     <Compile Include="DragDropForm.Designer.vb">
       <DependentUpon>DragDropForm.vb</DependentUpon>
     </Compile>
@@ -592,9 +593,37 @@
     <Compile Include="Ribbon1.vb">
       <SubType>Component</SubType>
     </Compile>
+    <Compile Include="ThisAddIn.Commands.Freestyle.vb" />
+    <Compile Include="ThisAddIn.Commands.vb" />
+    <Compile Include="ThisAddIn.ContextSearch.vb" />
+    <Compile Include="ThisAddIn.DocCheck.vb" />
+    <Compile Include="ThisAddIn.FileHelpers.vb" />
+    <Compile Include="ThisAddIn.FindClause.vb" />
+    <Compile Include="ThisAddIn.FindHiddenPrompt.vb" />
+    <Compile Include="ThisAddIn.Helpers.vb" />
+    <Compile Include="ThisAddIn.Menu.vb" />
+    <Compile Include="ThisAddIn.PaneAndMerge.vb" />
+    <Compile Include="ThisAddIn.Processing.Comments.vb" />
+    <Compile Include="ThisAddIn.Processing.FileRAG.vb" />
+    <Compile Include="ThisAddIn.Processing.FormatSaveAndRestore.vb" />
+    <Compile Include="ThisAddIn.Processing.HTMLToWord.vb" />
+    <Compile Include="ThisAddIn.Processing.SearchGrounding.vb" />
+    <Compile Include="ThisAddIn.Processing.vb" />
+    <Compile Include="ThisAddIn.Properties.vb" />
+    <Compile Include="ThisAddIn.Redactions.vb" />
+    <Compile Include="ThisAddIn.Slides.vb" />
+    <Compile Include="ThisAddIn.SpecialServices.vb" />
+    <Compile Include="ThisAddIn.TextToSpeech.Commands.vb" />
+    <Compile Include="ThisAddIn.TextToSpeech.Form.vb" />
+    <Compile Include="ThisAddIn.TextToSpeech.vb" />
+    <Compile Include="ThisAddIn.Transcriptor.vb" />
     <Compile Include="ThisAddIn.vb">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="ThisAddIn.WebAgent.vb" />
+    <Compile Include="ThisAddIn.WebExtension.vb" />
+    <Compile Include="ThisAddIn.WordHelpers.vb" />
+    <Compile Include="ThisAddIn.WordSearchHelper.vb" />
     <None Include="Resources\Red_Ink_Logo_Large.png" />
     <None Include="Resources\Red_Ink_Logo_Medium.png" />
     <Content Include="VBA Helper\RI_Helper_Code_Word.bas" />
@@ -666,7 +695,6 @@
     <None Include="protos\google\type\postal_address.proto" />
     <None Include="protos\google\type\quaternion.proto" />
     <None Include="protos\google\type\timeofday.proto" />
-    <None Include="readme.md" />
     <None Include="ThisAddIn.Designer.xml">
       <DependentUpon>ThisAddIn.vb</DependentUpon>
     </None>
@@ -696,12 +724,6 @@
     </Compile>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\SharedLibrary\SharedLibrary.vbproj">
-      <Project>{26ad9d75-3b7f-4e7e-afbd-108d2d343538}</Project>
-      <Name>SharedLibrary</Name>
-    </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
     <Content Include="libgcc_s_seh-1.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
@@ -718,6 +740,12 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <None Include="Resources\Red_Ink_Logo.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SharedLibrary\SharedLibrary.vbproj">
+      <Project>{26ad9d75-3b7f-4e7e-afbd-108d2d343538}</Project>
+      <Name>SharedLibrary</Name>
+    </ProjectReference>
   </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>
