@@ -269,6 +269,186 @@ Namespace My
                 Me("CSV_UseSecondModel") = value
             End Set
         End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_ManualInstruction() As String
+            Get
+                Return CType(Me("Extractor_ManualInstruction"),String)
+            End Get
+            Set
+                Me("Extractor_ManualInstruction") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_DateColumns() As String
+            Get
+                Return CType(Me("Extractor_DateColumns"),String)
+            End Get
+            Set
+                Me("Extractor_DateColumns") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_SortColumn() As String
+            Get
+                Return CType(Me("Extractor_SortColumn"),String)
+            End Get
+            Set
+                Me("Extractor_SortColumn") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_SortDirection() As String
+            Get
+                Return CType(Me("Extractor_SortDirection"),String)
+            End Get
+            Set
+                Me("Extractor_SortDirection") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("False")>  _
+        Public Property Extractor_DoOcr() As Boolean
+            Get
+                Return CType(Me("Extractor_DoOcr"),Boolean)
+            End Get
+            Set
+                Me("Extractor_DoOcr") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_DateClampFrom() As String
+            Get
+                Return CType(Me("Extractor_DateClampFrom"),String)
+            End Get
+            Set
+                Me("Extractor_DateClampFrom") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_DateClampTo() As String
+            Get
+                Return CType(Me("Extractor_DateClampTo"),String)
+            End Get
+            Set
+                Me("Extractor_DateClampTo") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_OutputLanguage() As String
+            Get
+                Return CType(Me("Extractor_OutputLanguage"),String)
+            End Get
+            Set
+                Me("Extractor_OutputLanguage") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_DateOutputFormat() As String
+            Get
+                Return CType(Me("Extractor_DateOutputFormat"),String)
+            End Get
+            Set
+                Me("Extractor_DateOutputFormat") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_ManualSchema() As String
+            Get
+                Return CType(Me("Extractor_ManualSchema"),String)
+            End Get
+            Set
+                Me("Extractor_ManualSchema") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Rename_ManualInstruction() As String
+            Get
+                Return CType(Me("Rename_ManualInstruction"),String)
+            End Get
+            Set
+                Me("Rename_ManualInstruction") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Rename_OutputLanguage() As String
+            Get
+                Return CType(Me("Rename_OutputLanguage"),String)
+            End Get
+            Set
+                Me("Rename_OutputLanguage") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("False")>  _
+        Public Property Extractor_MergeEnable() As Boolean
+            Get
+                Return CType(Me("Extractor_MergeEnable"),Boolean)
+            End Get
+            Set
+                Me("Extractor_MergeEnable") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_MergeDateColumn() As String
+            Get
+                Return CType(Me("Extractor_MergeDateColumn"),String)
+            End Get
+            Set
+                Me("Extractor_MergeDateColumn") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property Extractor_MergeInstruction() As String
+            Get
+                Return CType(Me("Extractor_MergeInstruction"),String)
+            End Get
+            Set
+                Me("Extractor_MergeInstruction") = value
+            End Set
+        End Property
     End Class
 End Namespace
 

@@ -787,19 +787,6 @@ Partial Public Class ThisAddIn
             End Try
         End Function
 
-        Private Shared Function SelectPdfFile() As System.String
-            Dim dialog As New System.Windows.Forms.OpenFileDialog()
-            dialog.Filter = "PDF files (*.pdf)|*.pdf"
-            dialog.Title = "Select PDF to redact"
-
-            Dim result As System.Windows.Forms.DialogResult = dialog.ShowDialog()
-            If result = System.Windows.Forms.DialogResult.OK Then
-                Return dialog.FileName
-            End If
-
-            Return System.String.Empty
-        End Function
-
 
         Private Shared Function FindTextOccurrences(fullText As String, searchText As String) As List(Of RedactionRangeDto)
             Dim ranges As New List(Of RedactionRangeDto)()

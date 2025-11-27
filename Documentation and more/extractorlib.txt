@@ -1,0 +1,45 @@
+; RED INK FACT EXTRACTION LIBRARY
+;
+; FILE FORMAT (PIPE-SEPARATED FIELDS):
+;   Title | Instruction | SchemaSpec | MergeEnabled | MergeDateColumn | MergeInstruction
+;
+; REQUIRED:
+;   Title            : Display name in dropdown.
+;
+; OPTIONAL:
+;   Instruction      : Natural-language extraction request. If blank and no manual override,
+;                      fallback "Extract key factual data points from the document." is used.
+;   SchemaSpec       : Semicolon list: Name[:type][*]; Name[:type][*]; ...
+;                      Types (case-insensitive): text, number, integer, decimal, date, datetime, other.
+;                      Asterisk marks preferred sort column if user selects "auto".
+;   MergeEnabled     : True / False (case-insensitive). If True, rows sharing the same date
+;                      (in MergeDateColumn) will be merged via LLM.
+;   MergeDateColumn  : 1-based index of the date column to group on (refers to schema columns only;
+;                      the automatically added "File" column is not counted).
+;   MergeInstruction : Extra guidance for the LLM when merging grouped rows (e.g., summarize,
+;                      list distinct sources, avoid legal interpretations). If blank, only the
+;                      default merge rules are applied.
+;
+; BEHAVIOR:
+;   - If MergeEnabled=False or MergeDateColumn <= 0 => no merging performed.
+;   - Dates are normalized before grouping.
+;   - You can embed advanced hints (word limits, strategy) directly into MergeInstruction text.
+;   - Lines starting with ";" are comments and skipped.
+;   - Empty lines are skipped.
+;
+; EXAMPLES OF MergeInstruction IDEAS (put directly into field 6 when needed):
+;   "Summarize all events concisely; avoid duplication."
+;   "Provide neutral factual narrative; exclude speculation."
+;   "Concatenate descriptions with ' | ' if synthesis not possible."
+;
+
+Legal Timeline | Extract chronological factual legal case events: event type, parties, description, source. | Event Date:date*; Event Type:text; Parties:text; Description:text; Source:text | True | 1 | Produce one fact-focused narrative for the date; avoid legal conclusions; include distinct sources.
+
+Email Communications | Extract email metadata and salient points. | Sent Date:date*; Sender:text; Recipients:text; Subject:text; Key Points:text | True | 1 | Merge key points into distilled summary; list distinct subjects; aggregate unique senders and recipients.
+
+Project Daily Log | Extract internal project log items (tasks, blockers, decisions). | Log Date:date*; Tasks:text; Blockers:text; Decisions:text; File:text | True | 1 | Consolidate tasks; merge blockers; summarize decisions; list distinct file sources.
+
+Financial Ledger | Extract ledger entries (date, account, description, debit, credit). | Date:date*; Account:text; Description:text; Debit:number; Credit:number | True | 1 | Combine descriptions succinctly; sum debit and credit columns; include net indication (Debit - Credit).
+
+Invoices Basic | Extract invoice number, invoice date, vendor, line item descriptions, net amount, tax, total. | Invoice #:text; Invoice Date:date*; Vendor:text; Line Items:text; Net Amount:number; Tax:number; Total:number | True | 2 | Summarize line items into one concise description; keep monetary values verbatim.
+

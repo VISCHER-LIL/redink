@@ -898,6 +898,33 @@ Partial Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Extract As String
+        Get
+            Return _context.SP_Extract
+        End Get
+        Set(value As String)
+            _context.SP_Extract = value
+        End Set
+    End Property
+
+    Public Shared Property SP_ExtractSchema As String
+        Get
+            Return _context.SP_ExtractSchema
+        End Get
+        Set(value As String)
+            _context.SP_ExtractSchema = value
+        End Set
+    End Property
+
+    Public Shared Property SP_MergeDateRows As String
+        Get
+            Return _context.SP_MergeDateRows
+        End Get
+        Set(value As String)
+            _context.SP_MergeDateRows = value
+        End Set
+    End Property
+
     Public Shared Property SP_Redact As String
         Get
             Return _context.SP_Redact
@@ -906,6 +933,16 @@ Partial Public Class ThisAddIn
             _context.SP_Redact = value
         End Set
     End Property
+
+    Public Shared Property SP_Rename As String
+        Get
+            Return _context.SP_Rename
+        End Get
+        Set(value As String)
+            _context.SP_Rename = value
+        End Set
+    End Property
+
 
     Public Shared Property SP_CheckforII As String
         Get
@@ -1481,6 +1518,42 @@ Partial Public Class ThisAddIn
         End Set
     End Property
 
+
+    Public Shared Property INI_ExtractorPath As String
+        Get
+            Return _context.INI_ExtractorPath
+        End Get
+        Set(value As String)
+            _context.INI_ExtractorPath = value
+        End Set
+    End Property
+
+    Public Shared Property INI_ExtractorPathLocal As String
+        Get
+            Return _context.INI_ExtractorPathLocal
+        End Get
+        Set(value As String)
+            _context.INI_ExtractorPathLocal = value
+        End Set
+    End Property
+
+    Public Shared Property INI_RenameLibPath As String
+        Get
+            Return _context.INI_RenameLibPath
+        End Get
+        Set(value As String)
+            _context.INI_RenameLibPath = value
+        End Set
+    End Property
+
+    Public Shared Property INI_RenameLibPathLocal As String
+        Get
+            Return _context.INI_RenameLibPathLocal
+        End Get
+        Set(value As String)
+            _context.INI_RenameLibPathLocal = value
+        End Set
+    End Property
 
     Public Shared Property INI_SpeechModelPath As String
         Get

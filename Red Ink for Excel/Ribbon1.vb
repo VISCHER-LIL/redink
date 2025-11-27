@@ -168,4 +168,12 @@ Public Class Ribbon1
     Private Sub RI_HelpMe_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_HelpMe.Click
         Globals.ThisAddIn.HelpMeInky()
     End Sub
+
+    Private Sub RI_Extractor_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Extractor.Click
+        Globals.ThisAddIn.FactExtraction()
+    End Sub
+
+    Private Sub RI_Renamer_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Renamer.Click
+        Globals.ThisAddIn.RenameDocumentsWithAi()
+    End Sub
 End Class

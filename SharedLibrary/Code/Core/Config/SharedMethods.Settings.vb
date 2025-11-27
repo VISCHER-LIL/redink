@@ -775,6 +775,14 @@ Namespace SharedLibrary
                     Return context.INI_RedactionInstructionsPath
                 Case "RedactionInstructionsPathLocal"
                     Return context.INI_RedactionInstructionsPathLocal
+                Case "ExtractorPath"
+                    Return context.INI_ExtractorPath
+                Case "ExtractorPathLocal"
+                    Return context.INI_ExtractorPathLocal
+                Case "RenameLibPath"
+                    Return context.INI_RenameLibPath
+                Case "RenameLibPathLocal"
+                    Return context.INI_RenameLibPathLocal
                 Case "TTSEndpoint"
                     Return context.INI_TTSEndpoint
                 Case "OAuth2"
@@ -1004,6 +1012,14 @@ Namespace SharedLibrary
                     context.INI_RedactionInstructionsPath = value
                 Case "RedactionInstructionsPathLocal"
                     context.INI_RedactionInstructionsPathLocal = value
+                Case "ExtractorPath"
+                    context.INI_ExtractorPath = value
+                Case "ExtractorPathLocal"
+                    context.INI_ExtractorPathLocal = value
+                Case "RenameLibPath"
+                    context.INI_RenameLibPath = value
+                Case "RenameLibPathLocal"
+                    context.INI_RenameLibPathLocal = value
 
                 Case Else
                     MessageBox.Show($"Error in SetSettingValue - could not save the value for '{settingName}'.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
@@ -1255,6 +1271,10 @@ Namespace SharedLibrary
                     {"HelpMeInkyPath", context.INI_HelpMeInkyPath},
                     {"RedactionInstructionsPath", context.INI_RedactionInstructionsPath},
                     {"RedactionInstructionsPathLocal", context.INI_RedactionInstructionsPathLocal},
+                    {"ExtractorPath", context.INI_ExtractorPath},
+                    {"ExtractorPathLocal", context.INI_ExtractorPathLocal},
+                    {"RenameLibPath", context.INI_RenameLibPath},
+                    {"RenameLibPathLocal", context.INI_RenameLibPathLocal},
                     {"SpeechModelPath", context.INI_SpeechModelPath},
                     {"LocalModelPath", context.INI_LocalModelPath},
                     {"TTSEndpoint", context.INI_TTSEndpoint},
@@ -1298,8 +1318,12 @@ Namespace SharedLibrary
                     {"SP_FreestyleNoText", context.SP_FreestyleNoText},
                     {"SP_SwitchParty", context.SP_SwitchParty},
                     {"SP_Anonymize", context.SP_Anonymize},
+                    {"SP_Rename", context.SP_Rename},
                     {"SP_Redact", context.SP_Redact},
                     {"SP_CheckforII", context.SP_CheckforII},
+                    {"SP_Extract", context.SP_Extract},
+                    {"SP_ExtractSchema", context.SP_ExtractSchema},
+                    {"SP_MergeDateRows", context.SP_MergeDateRows},
                     {"SP_ContextSearch", context.SP_ContextSearch},
                     {"SP_ContextSearchMulti", context.SP_ContextSearchMulti},
                     {"SP_RangeOfCells", context.SP_RangeOfCells},
@@ -1362,8 +1386,12 @@ Namespace SharedLibrary
                     {"SP_FreestyleNoText", Default_SP_FreestyleNoText},
                     {"SP_SwitchParty", Default_SP_SwitchParty},
                     {"SP_Anonymize", Default_SP_Anonymize},
+                    {"SP_Rename", Default_SP_Rename},
                     {"SP_Redact", Default_SP_Redact},
                     {"SP_CheckforII", Default_SP_CheckforII},
+                    {"SP_Extract", Default_SP_Extract},
+                    {"SP_ExtractSchema", Default_SP_ExtractSchema},
+                    {"SP_MergeDateRows", Default_SP_MergeDateRows},
                     {"SP_ContextSearch", Default_SP_ContextSearch},
                     {"SP_ContextSearchMulti", Default_SP_ContextSearchMulti},
                     {"SP_RangeOfCells", Default_SP_RangeOfCells},
@@ -1582,6 +1610,10 @@ Namespace SharedLibrary
                     {"PromptLib_Transcript", context.INI_PromptLibPath_Transcript},
                     {"RedactionInstructionsPath", context.INI_RedactionInstructionsPath},
                     {"RedactionInstructionsPathLocal", context.INI_RedactionInstructionsPathLocal},
+                    {"ExtractorPath", context.INI_ExtractorPath},
+                    {"ExtractorPathLocal", context.INI_ExtractorPathLocal},
+                    {"RenameLibPath", context.INI_RenameLibPath},
+                    {"RenameLibPathLocal", context.INI_RenameLibPathLocal},
                     {"HelpMeInkyPath", context.INI_HelpMeInkyPath},
                     {"UpdateCheckInterval", context.INI_UpdateCheckInterval.ToString()},
                     {"UpdatePath", context.INI_UpdatePath}
@@ -1984,6 +2016,10 @@ Namespace SharedLibrary
             variableValues.Add("HelpMeInkyPath", context.INI_HelpMeInkyPath)
             variableValues.Add("RedactionInstructionsPath", context.INI_RedactionInstructionsPath)
             variableValues.Add("RedactionInstructionsPathLocal", context.INI_RedactionInstructionsPathLocal)
+            variableValues.Add("ExtractorPath", context.INI_ExtractorPath)
+            variableValues.Add("ExtractorPathLocal", context.INI_ExtractorPathLocal)
+            variableValues.Add("RenameLibPath", context.INI_RenameLibPath)
+            variableValues.Add("RenameLibPathLocal", context.INI_RenameLibPathLocal)
             variableValues.Add("SpeechModelPath", context.INI_SpeechModelPath)
             variableValues.Add("LocalModelPath", context.INI_LocalModelPath)
             variableValues.Add("TTSEndpoint", context.INI_TTSEndpoint)
@@ -2028,8 +2064,12 @@ Namespace SharedLibrary
             variableValues.Add("SP_FreestyleNoText", context.SP_FreestyleNoText)
             variableValues.Add("SP_SwitchParty", context.SP_SwitchParty)
             variableValues.Add("SP_Anonymize", context.SP_Anonymize)
+            variableValues.Add("SP_Rename", context.SP_Rename)
             variableValues.Add("SP_Redact", context.SP_Redact)
             variableValues.Add("SP_CheckforII", context.SP_CheckforII)
+            variableValues.Add("SP_Extract", context.SP_Extract)
+            variableValues.Add("SP_ExtractSchema", context.SP_ExtractSchema)
+            variableValues.Add("SP_MergeDateRows", context.SP_MergeDateRows)
             variableValues.Add("SP_ContextSearch", context.SP_ContextSearch)
             variableValues.Add("SP_ContextSearchMulti", context.SP_ContextSearchMulti)
             variableValues.Add("SP_RangeOfCells", context.SP_RangeOfCells)
@@ -2162,8 +2202,12 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_FreestyleNoText") Then context.SP_FreestyleNoText = CStr(updatedValues("SP_FreestyleNoText"))
                 If updatedValues.ContainsKey("SP_SwitchParty") Then context.SP_SwitchParty = CStr(updatedValues("SP_SwitchParty"))
                 If updatedValues.ContainsKey("SP_Anonymize") Then context.SP_Anonymize = CStr(updatedValues("SP_Anonymize"))
+                If updatedValues.ContainsKey("SP_Rename") Then context.SP_Rename = CStr(updatedValues("SP_Rename"))
                 If updatedValues.ContainsKey("SP_Redact") Then context.SP_Redact = CStr(updatedValues("SP_Redact"))
                 If updatedValues.ContainsKey("SP_CheckforII") Then context.SP_CheckforII = CStr(updatedValues("SP_CheckforII"))
+                If updatedValues.ContainsKey("SP_Extract") Then context.SP_Extract = CStr(updatedValues("SP_Extract"))
+                If updatedValues.ContainsKey("SP_ExtractSchema") Then context.SP_ExtractSchema = CStr(updatedValues("SP_ExtractSchema"))
+                If updatedValues.ContainsKey("SP_MergeDateRows") Then context.SP_MergeDateRows = CStr(updatedValues("SP_MergeDateRows"))
                 If updatedValues.ContainsKey("SP_ContextSearch") Then context.SP_ContextSearch = CStr(updatedValues("SP_ContextSearch"))
                 If updatedValues.ContainsKey("SP_ContextSearchMulti") Then context.SP_ContextSearchMulti = CStr(updatedValues("SP_ContextSearchMulti"))
                 If updatedValues.ContainsKey("SP_RangeOfCells") Then context.SP_RangeOfCells = CStr(updatedValues("SP_RangeOfCells"))
@@ -2222,6 +2266,10 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("HelpMeInkyPath") Then context.INI_HelpMeInkyPath = CStr(updatedValues("HelpMeInkyPath"))
                 If updatedValues.ContainsKey("RedactionInstructionsPath") Then context.INI_RedactionInstructionsPath = CStr(updatedValues("RedactionInstructionsPath"))
                 If updatedValues.ContainsKey("RedactionInstructionsPathLocal") Then context.INI_RedactionInstructionsPathLocal = CStr(updatedValues("RedactionInstructionsPathLocal"))
+                If updatedValues.ContainsKey("ExtractorPath") Then context.INI_ExtractorPath = CStr(updatedValues("ExtractorPath"))
+                If updatedValues.ContainsKey("ExtractorPathLocal") Then context.INI_ExtractorPathLocal = CStr(updatedValues("ExtractorPathLocal"))
+                If updatedValues.ContainsKey("RenameLibPath") Then context.INI_RenameLibPath = CStr(updatedValues("RenameLibPath"))
+                If updatedValues.ContainsKey("RenameLibPathLocal") Then context.INI_RenameLibPathLocal = CStr(updatedValues("RenameLibPathLocal"))
                 If updatedValues.ContainsKey("SpeechModelPath") Then context.INI_SpeechModelPath = CStr(updatedValues("SpeechModelPath"))
                 If updatedValues.ContainsKey("LocalModelPath") Then context.INI_LocalModelPath = CStr(updatedValues("LocalModelPath"))
                 If updatedValues.ContainsKey("TTSEndpoint") Then context.INI_TTSEndpoint = CStr(updatedValues("TTSEndpoint"))

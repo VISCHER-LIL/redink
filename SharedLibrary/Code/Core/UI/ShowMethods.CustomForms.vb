@@ -1167,7 +1167,10 @@ Namespace SharedLibrary
         Public Shared Function ShowCustomVariableInputForm(
                                             ByVal prompt As String,
                                             ByVal header As String,
-                                            ByRef params() As InputParameter
+                                            ByRef params() As InputParameter,
+                                            Optional extraButtonText As System.String = Nothing,
+                                            Optional extraButtonAction As System.Action = Nothing,
+                                            Optional CloseAfterExtra As System.Boolean = False
                                         ) As Boolean
             If String.IsNullOrWhiteSpace(header) Then header = String.Empty
 
@@ -1339,6 +1342,30 @@ Namespace SharedLibrary
             buttonFlow.Controls.Add(btnCancel)
             buttonFlow.Controls.Add(btnOK)
 
+            ' Optional extra button: same behavior as ShowCustomMessageBox
+            If (Not System.String.IsNullOrEmpty(extraButtonText)) AndAlso (extraButtonAction IsNot Nothing) Then
+                Dim extraButton As New System.Windows.Forms.Button() With {
+                    .Text = extraButtonText,
+                    .AutoSize = True,
+                    .Margin = New System.Windows.Forms.Padding(8, btnOK.Margin.Top, 0, btnOK.Margin.Bottom)
+                }
+                AddHandler extraButton.Click,
+                    Sub()
+                        Try
+                            extraButtonAction.Invoke()
+                        Catch ex As System.Exception
+                            ' swallow to keep dialog functional; mirror ShowCustomMessageBox behavior
+                        End Try
+                        If CloseAfterExtra Then
+                            inputForm.DialogResult = DialogResult.Cancel ' do not commit changes implicitly
+                            inputForm.Close()
+                        End If
+                    End Sub
+
+                ' Place the extra button to the left of OK (i.e., between Cancel and OK in RightToLeft flow)
+                buttonFlow.Controls.Add(extraButton)
+            End If
+
             inputForm.Controls.Add(mainLayout)
             inputForm.Controls.Add(buttonFlow)
 
@@ -1390,7 +1417,6 @@ Namespace SharedLibrary
             inputForm.Dispose()
             Return (result = DialogResult.OK)
         End Function
-
 
         Public Shared Function ShowCustomWindow(
             introLine As String,

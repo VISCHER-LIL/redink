@@ -102,6 +102,11 @@ Namespace SharedLibrary
             Property INI_UpdateCheckInterval As Integer
             Property INI_UpdatePath As String
             Property INI_HelpMeInkyPath As String
+            Property INI_ExtractorPath As String
+            Property INI_ExtractorPathLocal As String
+            Property INI_RenameLibPath As String
+            Property INI_RenameLibPathLocal As String
+
             Property INI_RedactionInstructionsPath As String
             Property INI_RedactionInstructionsPathLocal As String
             Property INI_SpeechModelPath As String
@@ -137,6 +142,12 @@ Namespace SharedLibrary
             Property SP_FreestyleNoText As String
             Property SP_SwitchParty As String
             Property SP_Anonymize As String
+
+            Property SP_Extract As String
+            Property SP_ExtractSchema As String
+
+            Property SP_MergeDateRows As String
+            Property SP_Rename As String
             Property SP_Redact As String
             Property SP_CheckforII As String
             Property SP_ContextSearch As String
@@ -313,6 +324,11 @@ Namespace SharedLibrary
         Public Property INI_UpdateCheckInterval As Integer Implements ISharedContext.INI_UpdateCheckInterval
         Public Property INI_UpdatePath As String Implements ISharedContext.INI_UpdatePath
         Public Property INI_HelpMeInkyPath As String Implements ISharedContext.INI_HelpMeInkyPath
+        Public Property INI_ExtractorPath As String Implements ISharedContext.INI_ExtractorPath
+        Public Property INI_ExtractorPathLocal As String Implements ISharedContext.INI_ExtractorPathLocal
+        Public Property INI_RenameLibPath As String Implements ISharedContext.INI_RenameLibPath
+        Public Property INI_RenameLibPathLocal As String Implements ISharedContext.INI_RenameLibPathLocal
+
         Public Property INI_RedactionInstructionsPath As String Implements ISharedContext.INI_RedactionInstructionsPath
         Public Property INI_RedactionInstructionsPathLocal As String Implements ISharedContext.INI_RedactionInstructionsPathLocal
         Public Property INI_SpeechModelPath As String Implements ISharedContext.INI_SpeechModelPath
@@ -347,6 +363,11 @@ Namespace SharedLibrary
         Public Property SP_FreestyleNoText As String Implements ISharedContext.SP_FreestyleNoText
         Public Property SP_SwitchParty As String Implements ISharedContext.SP_SwitchParty
         Public Property SP_Anonymize As String Implements ISharedContext.SP_Anonymize
+        Public Property SP_Extract As String Implements ISharedContext.SP_Extract
+        Public Property SP_ExtractSchema As String Implements ISharedContext.SP_ExtractSchema
+
+        Public Property SP_MergeDateRows As String Implements ISharedContext.SP_MergeDateRows
+        Public Property SP_Rename As String Implements ISharedContext.SP_Rename
         Public Property SP_Redact As String Implements ISharedContext.SP_Redact
         Public Property SP_CheckforII As String Implements ISharedContext.SP_CheckforII
         Public Property SP_ContextSearch As String Implements ISharedContext.SP_ContextSearch

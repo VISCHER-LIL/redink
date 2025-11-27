@@ -817,30 +817,36 @@ Partial Public Class ThisAddIn
                         DragDropFormFilter = ""
                         doc = Await GetFileContent(Nothing, False, Not String.IsNullOrWhiteSpace(INI_APICall_Object))
                         If String.IsNullOrWhiteSpace(doc) Then
-                            ShowCustomMessageBox($"The file you selected for occurrence #{occurrence} is empty or not supported - will abort.")
-                            Return
+                            Dim answer As Integer = ShowCustomYesNoBox($"The file you selected for occurrence #{occurrence} is empty, not supported or you cancelled the upload. Do you want to continue or abort?", "Continue", "Abort")
+                            If answer = 2 Then Return
                         End If
 
-                        ' Determine if this particular occurrence is already wrapped by any tag
-                        Dim isWrappedThis As Boolean = False
-                        Dim mcol As MatchCollection = Regex.Matches(OtherPrompt, wrappedPattern, RegexOptions.IgnoreCase)
-                        For Each m As Match In mcol
-                            If idx >= m.Index AndAlso idx < m.Index + m.Length Then
-                                isWrappedThis = True
-                                Exit For
-                            End If
-                        Next
+                        Dim replacementText As String = ""
 
-                        Dim replacementText As String =
-                        If(isWrappedThis, doc, $"<document{occurrence}>{doc}</document{occurrence}>")
+                        If Not String.IsNullOrEmpty(doc) Then
+                            ' Determine if this particular occurrence is already wrapped by any tag
+                            Dim isWrappedThis As Boolean = False
+                            Dim mcol As MatchCollection = Regex.Matches(OtherPrompt, wrappedPattern, RegexOptions.IgnoreCase)
+                            For Each m As Match In mcol
+                                If idx >= m.Index AndAlso idx < m.Index + m.Length Then
+                                    isWrappedThis = True
+                                    Exit For
+                                End If
+                            Next
+
+                            replacementText = If(isWrappedThis, doc, $"<document{occurrence}>{doc}</document{occurrence}>")
+
+                        End If
 
                         ' Replace only the first remaining occurrence manually
                         OtherPrompt = OtherPrompt.Substring(0, idx) &
                                   replacementText &
                                   OtherPrompt.Substring(idx + ExtTrigger.Length)
 
-                        ShowCustomMessageBox($"This file will be included at occurrence #{occurrence} (of {totalOccurrences}) where you used {ExtTrigger}:" &
+                        If Not String.IsNullOrWhiteSpace(doc) Then
+                            ShowCustomMessageBox($"This file will be included at occurrence #{occurrence} (of {totalOccurrences}) where you used {ExtTrigger}:" &
                                          vbCrLf & vbCrLf & doc)
+                        End If
                     Next
                 End If
             End If

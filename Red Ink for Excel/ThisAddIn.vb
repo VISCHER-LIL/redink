@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 23.11.2025
+' 27.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -48,7 +48,7 @@ Partial Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.231125 Gen2 Beta Test"
+    Public Const Version As String = "V.271125 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -77,6 +77,9 @@ Partial Public Class ThisAddIn
     ' Publicly declared variables so that InterpolateAtRuntime can access them; case-sensitive
 
     Public TranslateLanguage As String
+    Public OutputLanguage As String
+    Public FileNameBody As String
+    Public FileDate As String
     Public ShortenLength As Double
     Public SummaryLength As Integer
     Public OtherPrompt As String = ""

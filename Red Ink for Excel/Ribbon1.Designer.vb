@@ -65,6 +65,10 @@ Partial Class Ribbon1
         Me.RI_Shorten = Me.Factory.CreateRibbonButton
         Me.RI_Anonymize = Me.Factory.CreateRibbonButton
         Me.RI_SwitchParty = Me.Factory.CreateRibbonButton
+        Me.Menu3 = Me.Factory.CreateRibbonMenu
+        Me.RI_CSVAnalyze = Me.Factory.CreateRibbonButton
+        Me.RI_Extractor = Me.Factory.CreateRibbonButton
+        Me.RI_Renamer = Me.Factory.CreateRibbonButton
         Me.RI_FreestyleNM = Me.Factory.CreateRibbonButton
         Me.RI_FreestyleAM = Me.Factory.CreateRibbonButton
         Me.RI_Undo = Me.Factory.CreateRibbonButton
@@ -72,7 +76,6 @@ Partial Class Ribbon1
         Me.RI_AdjustHeight = Me.Factory.CreateRibbonButton
         Me.RI_AdjustLegacyNotes = Me.Factory.CreateRibbonButton
         Me.RI_Regex = Me.Factory.CreateRibbonButton
-        Me.RI_CSVAnalyze = Me.Factory.CreateRibbonButton
         Me.RI_Chat = Me.Factory.CreateRibbonButton
         Me.RI_HelpMe = Me.Factory.CreateRibbonButton
         Me.Settings = Me.Factory.CreateRibbonButton
@@ -113,11 +116,11 @@ Partial Class Ribbon1
         Me.Menu1.Items.Add(Me.RI_Shorten)
         Me.Menu1.Items.Add(Me.RI_Anonymize)
         Me.Menu1.Items.Add(Me.RI_SwitchParty)
+        Me.Menu1.Items.Add(Me.Menu3)
         Me.Menu1.Items.Add(Me.RI_FreestyleNM)
         Me.Menu1.Items.Add(Me.RI_FreestyleAM)
         Me.Menu1.Items.Add(Me.RI_Undo)
         Me.Menu1.Items.Add(Me.Menu2)
-        Me.Menu1.Items.Add(Me.RI_CSVAnalyze)
         Me.Menu1.Items.Add(Me.RI_Chat)
         Me.Menu1.Items.Add(Me.RI_HelpMe)
         Me.Menu1.Items.Add(Me.Settings)
@@ -199,6 +202,43 @@ Partial Class Ribbon1
         Me.RI_SwitchParty.ScreenTip = "Will switch two parties in the text of the selected cells"
         Me.RI_SwitchParty.ShowImage = True
         '
+        'Menu3
+        '
+        Me.Menu3.Items.Add(Me.RI_CSVAnalyze)
+        Me.Menu3.Items.Add(Me.RI_Extractor)
+        Me.Menu3.Items.Add(Me.RI_Renamer)
+        Me.Menu3.Label = "Analyze"
+        Me.Menu3.Name = "Menu3"
+        Me.Menu3.OfficeImageId = "WhatIfAnalysisMenu"
+        Me.Menu3.ScreenTip = "Functions that analyze CSV files, extract data from documents and change file nam" &
+    "es"
+        Me.Menu3.ShowImage = True
+        '
+        'RI_CSVAnalyze
+        '
+        Me.RI_CSVAnalyze.Label = "Analyze CSV"
+        Me.RI_CSVAnalyze.Name = "RI_CSVAnalyze"
+        Me.RI_CSVAnalyze.OfficeImageId = "GetPowerQueryDataFromCsv"
+        Me.RI_CSVAnalyze.ScreenTip = "Will parse through a CSV and analyze its content"
+        Me.RI_CSVAnalyze.ShowImage = True
+        '
+        'RI_Extractor
+        '
+        Me.RI_Extractor.Label = "Data Extractor"
+        Me.RI_Extractor.Name = "RI_Extractor"
+        Me.RI_Extractor.OfficeImageId = "ExportSavedExports"
+        Me.RI_Extractor.ScreenTip = "Extracts from a text file or directory of text file the information you define wi" &
+    "th your prompt"
+        Me.RI_Extractor.ShowImage = True
+        '
+        'RI_Renamer
+        '
+        Me.RI_Renamer.Label = "Rename Files"
+        Me.RI_Renamer.Name = "RI_Renamer"
+        Me.RI_Renamer.OfficeImageId = "FileUpdate"
+        Me.RI_Renamer.ScreenTip = "Renames document files in a directory based on their content"
+        Me.RI_Renamer.ShowImage = True
+        '
         'RI_FreestyleNM
         '
         Me.RI_FreestyleNM.Label = "Freestyle"
@@ -259,14 +299,6 @@ Partial Class Ribbon1
         Me.RI_Regex.OfficeImageId = "ReplaceDialog"
         Me.RI_Regex.ScreenTip = "Will perform a RegEx search (and replace)"
         Me.RI_Regex.ShowImage = True
-        '
-        'RI_CSVAnalyze
-        '
-        Me.RI_CSVAnalyze.Label = "Analyze CSV"
-        Me.RI_CSVAnalyze.Name = "RI_CSVAnalyze"
-        Me.RI_CSVAnalyze.OfficeImageId = "GetPowerQueryDataFromCsv"
-        Me.RI_CSVAnalyze.ScreenTip = "Will parse through a CSV and analyze its content"
-        Me.RI_CSVAnalyze.ShowImage = True
         '
         'RI_Chat
         '
@@ -415,6 +447,9 @@ Partial Class Ribbon1
     Friend WithEvents RI_Chat As RibbonButton
     Friend WithEvents RI_CSVAnalyze As RibbonButton
     Friend WithEvents RI_HelpMe As RibbonButton
+    Friend WithEvents RI_Extractor As RibbonButton
+    Friend WithEvents Menu3 As RibbonMenu
+    Friend WithEvents RI_Renamer As RibbonButton
 End Class
 
 Partial Class ThisRibbonCollection
