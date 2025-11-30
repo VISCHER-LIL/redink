@@ -75,6 +75,27 @@ Partial Public Class ThisAddIn
         Return allLocked
     End Function
 
+
+    ''' Returns count of real words: sequences of letters (A–Z, unicode letters) optionally containing internal apostrophes or hyphens; numbers/symbol-only tokens are ignored.
+    ''' </summary>
+    ''' <param name="text">Text to evaluate.</param>
+    ''' <returns>Real word count.</returns>
+    Public Function GetNumberOfWords(text As String) As Integer
+        If String.IsNullOrWhiteSpace(text) Then
+            Return 0
+        End If
+
+        ' Pattern explanation:
+        ' \b                 Word boundary
+        ' [\p{L}]+           At least one Unicode letter
+        ' (?:['’-][\p{L}]+)* Optional groups of (apostrophe or hyphen) + letters (e.g., don't, mother-in-law)
+        ' \b                 Word boundary
+        ' This excludes tokens containing digits or standalone punctuation.
+        Dim pattern As String = "\b[\p{L}]+(?:['’-][\p{L}]+)*\b"
+
+        Return Regex.Matches(text, pattern).Count
+    End Function
+
     ''' <summary>
     ''' Determines if a specific cell is protected considering worksheet protection,
     ''' cell lock status, and AllowEditRanges.

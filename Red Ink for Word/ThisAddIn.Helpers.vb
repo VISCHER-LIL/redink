@@ -234,7 +234,7 @@ Partial Public Class ThisAddIn
 
     End Function
 
-    Private Function GetSelectedTextLength() As Integer
+    Private Function oldGetSelectedTextLength() As Integer
         Try
             ' Get the active Word application
             Dim wordApp As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
@@ -259,6 +259,35 @@ Partial Public Class ThisAddIn
             Return 0
         End Try
     End Function
+
+    ''' <summary>
+    ''' Counts real words in the current selection: sequences of letters (Unicode) optionally joined by internal apostrophes or hyphens; numeric/mixed tokens are ignored.
+    ''' </summary>
+    Private Function GetSelectedTextLength() As Integer
+        Try
+            Dim wordApp As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
+            Dim selection As Microsoft.Office.Interop.Word.Selection = wordApp.Selection
+
+            Dim selectedText As String = selection.Text
+            If String.IsNullOrWhiteSpace(selectedText) Then
+                Return 0
+            End If
+
+            ' Pattern:
+            ' \b                Word boundary
+            ' [\p{L}]+          One or more Unicode letters
+            ' (?:['’\-‑–][\p{L}]+)*  Optional internal apostrophe/hyphen/dash + letters (e.g. don't, mother-in-law, rock’n’roll)
+            ' \b                Word boundary
+            ' Excludes tokens containing digits or starting with punctuation.
+            Dim pattern As String = "\b[\p{L}]+(?:['’\-‑–][\p{L}]+)*\b"
+
+            Return Regex.Matches(selectedText, pattern).Count
+        Catch ex As System.Exception
+            Return 0
+        End Try
+    End Function
+
+
     Public Function InterpolateAtRuntime(ByVal template As String) As String
         If template Is Nothing Then
             MessageBox.Show("Error InterpolateAtRuntime: Template is Nothing.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)

@@ -205,7 +205,7 @@ Partial Public Class ThisAddIn
                             SLib.ShowCustomMessageBox("Please enter a valid percentage between 1 And 99.")
                         End If
                     Loop
-                    ShortenLength = (Textlength - (Textlength * (100 - ShortenPercent) / 100))
+                    ShortenLength = (Textlength * (100 - ShortenPercent) / 100)
                     Command_InsertAfter(InterpolateAtRuntime(SP_Shorten), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "Sumup"
 
@@ -317,25 +317,44 @@ Partial Public Class ThisAddIn
                         For Each mail As Microsoft.Office.Interop.Outlook.MailItem In mailItems
 
                             Dim lastVerb As Integer = 0
-
                             Try
                                 lastVerb = mail.PropertyAccessor.GetProperty(PR_LAST_VERB_EXECUTED)
                             Catch comEx As COMException
-                                ' Property not set → not answered yet
+                                ' Property not set → treat as not answered yet
                                 lastVerb = 0
                             Catch ex As System.Exception
-                                ' Ensure System.Exception is fully qualified
                                 lastVerb = 0
                             End Try
 
+                            ' Include:
+                            ' - Unanswered (not Reply/ReplyAll)
+                            ' - Answered-but-unread (Reply/ReplyAll AND UnRead=True)
+                            Dim include As Boolean = False
 
+                            ' Unanswered mails
                             If lastVerb <> 102 AndAlso lastVerb <> 103 Then
-                                Dim tag As String = count.ToString("D4") ' Format count with four digits
+                                include = True
+                            End If
+
+                            ' Answered (Reply/ReplyAll) but still unread
+                            If Not include AndAlso mail.UnRead AndAlso (lastVerb = 102 OrElse lastVerb = 103) Then
+                                include = True
+                            End If
+
+                            ' If you also want to treat Forward as "answered", add lastVerb = 104 to the check above.
+
+                            If include Then
+                                Dim tag As String = count.ToString("D4") ' 0001, 0002, ...
                                 Dim latestBody As String = GetLatestMailBody(mail.Body)
                                 selectedText &= "<EMAIL" & tag & ">" & latestBody & "</EMAIL" & tag & ">"
                                 count += 1
                             End If
                         Next
+
+                        If String.IsNullOrWhiteSpace(selectedText) Then
+                            ShowCustomMessageBox("No unanswered or answered-but-unread emails found in the selection.")
+                            Return
+                        End If
 
                         ShowSumup2(selectedText)
                         Return
@@ -713,7 +732,7 @@ Partial Public Class ThisAddIn
                 htmlText &
               "</body></html>"
 
-        ShowHTMLCustomMessageBox(fullHtml, $"{AN} Sum-up (of unanswered mails)")
+        ShowHTMLCustomMessageBox(fullHtml, $"{AN} Sum-up (of unanswered/unread mails)")
 
     End Sub
 

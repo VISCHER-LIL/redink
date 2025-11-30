@@ -395,7 +395,8 @@ Namespace SharedLibrary
                                              Optional progressCallback As Action(Of Integer, Integer, String) = Nothing,
                                              Optional mergeDateColumn As Integer = 0,
                                              Optional mergeRowsViaLlm As Boolean = False,
-                                             Optional mergeInstruction As String = Nothing) _
+                                             Optional mergeInstruction As String = Nothing,
+                                             Optional cancellationRequested As Func(Of Boolean) = Nothing) _
                                              As Threading.Tasks.Task(Of FactExtractionAggregateResult)
 
             Dim agg As New FactExtractionAggregateResult With {
@@ -412,9 +413,15 @@ Namespace SharedLibrary
             End If
 
             For i = 0 To filePaths.Count - 1
+                If cancellationRequested IsNot Nothing AndAlso cancellationRequested() Then
+                    agg.Errors.Add("Cancelled by user.")
+                    Exit For
+                End If
+
                 Dim path = filePaths(i)
                 If progressCallback IsNot Nothing Then
-                    progressCallback(i, filePaths.Count, "Processing " & System.IO.Path.GetFileName(path) & " (" & (i + 1).ToString() & " of " & filePaths.Count.ToString() & ")")
+                    progressCallback(i, filePaths.Count, "Processing " & System.IO.Path.GetFileName(path) &
+                                         " (" & (i + 1).ToString() & " of " & filePaths.Count.ToString() & ")")
                 End If
 
                 If Not File.Exists(path) Then
@@ -422,16 +429,21 @@ Namespace SharedLibrary
                     Continue For
                 End If
                 Dim text = Await GetFileContentFunc(path, False, doOcr, False)
+                If cancellationRequested IsNot Nothing AndAlso cancellationRequested() Then
+                    agg.Errors.Add("Cancelled by user.")
+                    Exit For
+                End If
                 If String.IsNullOrWhiteSpace(text) Then
                     agg.FailedFileNames.Add(System.IO.Path.GetFileName(path))
                     Continue For
                 End If
-                Dim userText = "<TEXTTOPROCESS>" & text & "</TEXTTOPROCESS>"
 
+                Dim userText = "<TEXTTOPROCESS>" & text & "</TEXTTOPROCESS>"
                 Dim sysPrompt = interpolateSystemPromptFunc(context.SP_Extract)
                 If fixedSchema IsNot Nothing AndAlso fixedSchema.Count > 0 Then
                     sysPrompt = BuildConstrainedSystemPrompt(sysPrompt, fixedSchema)
                 End If
+
                 Dim jsonResp As String = Nothing
                 Try
                     jsonResp = Await llmFunc(sysPrompt, userText, "", "", 0, useSecondApi, False)
@@ -446,6 +458,7 @@ Namespace SharedLibrary
                     agg.FailedFileNames.Add(System.IO.Path.GetFileName(path))
                     Continue For
                 End If
+
                 Dim parsed = ParseSingleFileJson(jsonResp)
                 If fixedSchema IsNot Nothing AndAlso fixedSchema.Count > 0 AndAlso parsed.schema.Count = 0 Then
                     parsed.schema.AddRange(fixedSchema.Select(Function(c) New ExtractionSchemaColumn With {.Name = c.Name, .Type = c.Type}))
@@ -459,87 +472,102 @@ Namespace SharedLibrary
                 agg.ProcessedFiles += 1
             Next
 
+            If cancellationRequested IsNot Nothing AndAlso cancellationRequested() Then
+                If progressCallback IsNot Nothing Then
+                    progressCallback(agg.ProcessedFiles, Math.Max(1, filePaths.Count), "Cancelled.")
+                End If
+                agg.FailedFiles = agg.FailedFileNames.Count
+                Return agg
+            End If
+
             ApplyDateClamps(agg, dateColumnsUser, clampFrom, clampTo)
 
-            ' Perform merging if requested
+            ' Generic merge (any column)
             If mergeRowsViaLlm AndAlso mergeDateColumn > 0 Then
-                If progressCallback IsNot Nothing Then
-                    progressCallback(filePaths.Count, filePaths.Count, "Merging rows by date...")
-                End If
-                Await MergeRowsByDateAsync(agg,
-                               mergeDateColumn,
-                               mergeInstruction,
-                               useSecondApi,
-                               interpolateSystemPromptFunc,
-                               llmFunc,
-                               context,
-                               baseCur:=filePaths.Count,
-                               baseTotal:=filePaths.Count,
-                               progressCallback:=progressCallback)
+                Await MergeRowsByKeyAsync(agg,
+                                          mergeDateColumn,
+                                          mergeInstruction,
+                                          useSecondApi,
+                                          interpolateSystemPromptFunc,
+                                          llmFunc,
+                                          context,
+                                          progressCallback,
+                                          cancellationRequested)
             End If
 
             agg.FailedFiles = agg.FailedFileNames.Count
             If sortColumn > 0 Then SortAggregate(agg, sortColumn, sortDirection)
 
             If progressCallback IsNot Nothing Then
-                progressCallback(filePaths.Count, filePaths.Count, "Completed.")
+                progressCallback(filePaths.Count, filePaths.Count, If(cancellationRequested IsNot Nothing AndAlso cancellationRequested(), "Cancelled.", "Completed."))
             End If
 
             Return agg
         End Function
 
 
-        ' Update signature of MergeRowsByDateAsync to accept the callback and base values, and emit progress per group
-        Private Async Function MergeRowsByDateAsync(agg As FactExtractionAggregateResult,
-                                            dateColumn As Integer,
-                                            mergeInstruction As String,
-                                            useSecondApi As Boolean,
-                                            interpolateSystemPromptFunc As Func(Of String, String),
-                                            llmFunc As Func(Of String, String, String, String, Integer, Boolean, Boolean, Threading.Tasks.Task(Of String)),
-                                            context As ISharedContext,
-                                            Optional baseCur As Integer = 0,
-                                            Optional baseTotal As Integer = 0,
-                                            Optional progressCallback As Action(Of Integer, Integer, String) = Nothing) As Threading.Tasks.Task
+        Private Async Function MergeRowsByKeyAsync(agg As FactExtractionAggregateResult,
+                                                   keyColumn As Integer,
+                                                   mergeInstruction As String,
+                                                   useSecondApi As Boolean,
+                                                   interpolateSystemPromptFunc As Func(Of String, String),
+                                                   llmFunc As Func(Of String, String, String, String, Integer, Boolean, Boolean, Threading.Tasks.Task(Of String)),
+                                                   context As ISharedContext,
+                                                   progressCallback As Action(Of Integer, Integer, String),
+                                                   cancellationRequested As Func(Of Boolean)) As Threading.Tasks.Task
             If agg Is Nothing OrElse agg.Rows.Count = 0 Then Return
-            If dateColumn <= 0 Then Return
-            Dim dateIdx = dateColumn - 1
-            If dateIdx >= agg.Schema.Count Then Return
+            If keyColumn <= 0 Then Return
+            Dim keyIdx = keyColumn - 1
+            If keyIdx >= agg.Schema.Count Then Return
 
-            ' Group rows by normalized date
+            ' Build grouping key (normalize only if date/datetime)
+            Dim isDateLike = {"date", "datetime"}.Contains(agg.Schema(keyIdx).Type)
             Dim groups = agg.Rows.
-        GroupBy(Function(r) GetNormalizedDateValue(r, dateIdx)).
-        Where(Function(g) Not String.IsNullOrWhiteSpace(g.Key)).
-        ToList()
+                GroupBy(Function(r)
+                            Dim raw = ""
+                            If keyIdx < r.Values.Count AndAlso r.Values(keyIdx) IsNot Nothing Then
+                                raw = r.Values(keyIdx).ToString().Trim()
+                            End If
+                            If String.IsNullOrWhiteSpace(raw) Then Return ""
+                            If isDateLike Then Return NormalizeDate(raw)
+                            Return raw
+                        End Function).
+                Where(Function(g) Not String.IsNullOrWhiteSpace(g.Key)).
+                ToList()
 
             If groups.Count = 0 Then Return
 
-            Dim newRows As New System.Collections.Generic.List(Of ExtractionRow)
-            Dim schemaNames = agg.Schema.Select(Function(c) c.Name).ToList()
+            ' Reset progress bar for merge phase
+            If progressCallback IsNot Nothing Then
+                progressCallback(0, groups.Count, "Merging groups...")
+            End If
 
+            Dim newRows As New System.Collections.Generic.List(Of ExtractionRow)
             Dim totalGroups = groups.Count
             Dim groupIndex As Integer = 0
 
             For Each g In groups
                 groupIndex += 1
-                If progressCallback IsNot Nothing Then
-                    Dim label As String = $"Merging rows by date... ({groupIndex}/{totalGroups}) [{g.Key}]"
-                    ' Keep bar position at baseCur/baseTotal so it does not jump, but label shows merge progress.
-                    progressCallback(baseCur, baseTotal, label)
+                If cancellationRequested IsNot Nothing AndAlso cancellationRequested() Then
+                    Exit For
                 End If
 
-                Dim groupRows = g.ToList()
-                ' Build JSON input for LLM
+                If progressCallback IsNot Nothing Then
+                    progressCallback(groupIndex, totalGroups, $"Merging ({groupIndex}/{totalGroups}) key='{g.Key}'")
+                End If
+
+                Dim mergedRow As ExtractionRow = Nothing
+                ' Build JSON input (re-use merge prompt expecting date; provide generic input)
+                Dim schemaNames = agg.Schema.Select(Function(c) c.Name).ToList()
                 Dim rowsArray As New System.Text.StringBuilder()
-                rowsArray.Append("{""date"":""" & g.Key & """,""schema"":[""" & String.Join(""" ,""", schemaNames) & """],""rows"":[")
+                rowsArray.Append("{""merge_key"":""" & g.Key.Replace("""", "\""") & """,""schema"":[""" & String.Join(""" ,""", schemaNames.Select(Function(s) s.Replace("""", "\"""))) & """],""rows"":[")
+                Dim groupRows = g.ToList()
                 For ri = 0 To groupRows.Count - 1
                     Dim r = groupRows(ri)
                     rowsArray.Append("[")
                     For ci = 0 To agg.Schema.Count - 1
                         Dim val As String = ""
-                        If ci < r.Values.Count AndAlso r.Values(ci) IsNot Nothing Then
-                            val = r.Values(ci).ToString()
-                        End If
-                        ' Escape quotes
+                        If ci < r.Values.Count AndAlso r.Values(ci) IsNot Nothing Then val = r.Values(ci).ToString()
                         val = val.Replace("""", "\""")
                         rowsArray.Append("""" & val & """")
                         If ci < agg.Schema.Count - 1 Then rowsArray.Append(",")
@@ -549,14 +577,12 @@ Namespace SharedLibrary
                 Next
                 rowsArray.Append("]}")
 
-                Dim systemTemplate = context.SP_MergeDateRows
+                Dim systemTemplate = context.SP_MergeDateRows ' reuse existing prompt (still works)
                 Dim systemPrompt = interpolateSystemPromptFunc(systemTemplate)
-
                 Dim userText =
-                "MERGE_INSTRUCTION: " & If(String.IsNullOrWhiteSpace(mergeInstruction), "(none)", mergeInstruction) & vbCrLf &
-                "INPUT_GROUP_JSON:" & vbCrLf & rowsArray.ToString()
+                    "MERGE_INSTRUCTION: " & If(String.IsNullOrWhiteSpace(mergeInstruction), "(none)", mergeInstruction) & vbCrLf &
+                    "INPUT_GROUP_JSON:" & vbCrLf & rowsArray.ToString()
 
-                Dim mergedRow As ExtractionRow = Nothing
                 Try
                     Dim resp = Await llmFunc(systemPrompt, userText, "", "", 0, useSecondApi, False)
                     resp = WebAgentInterpreter.SanitizeLlmResult(resp)
@@ -573,18 +599,34 @@ Namespace SharedLibrary
                         End If
                     End If
                 Catch ex As Exception
-                    agg.Errors.Add("Merge LLM failed for date " & g.Key & ": " & ex.Message)
+                    agg.Errors.Add("Merge LLM failed for key " & g.Key & ": " & ex.Message)
                 End Try
 
                 If mergedRow Is Nothing Then
-                    mergedRow = FallbackMergeRows(groupRows, agg.Schema, dateIdx)
+                    mergedRow = FallbackMergeRowsGeneric(groupRows, agg.Schema, keyIdx, isDateLike)
                 End If
                 newRows.Add(mergedRow)
             Next
 
-            ' Replace rows: keep any rows that had empty/invalid date (not grouped) + merged grouped
-            Dim ungroupped = agg.Rows.Where(Function(r) String.IsNullOrWhiteSpace(GetNormalizedDateValue(r, dateIdx))).ToList()
-            agg.Rows = ungroupped.Concat(newRows).ToList()
+            ' Preserve rows without a usable key + merged ones
+            Dim unGrouped = agg.Rows.Where(Function(r)
+                                               Dim raw = ""
+                                               If keyIdx < r.Values.Count AndAlso r.Values(keyIdx) IsNot Nothing Then
+                                                   raw = r.Values(keyIdx).ToString().Trim()
+                                               End If
+                                               If String.IsNullOrWhiteSpace(raw) Then Return True
+                                               If isDateLike Then
+                                                   Return String.IsNullOrWhiteSpace(NormalizeDate(raw))
+                                               End If
+                                               Return False
+                                           End Function).ToList()
+
+            agg.Rows = unGrouped.Concat(newRows).ToList()
+
+            ' Restore progress bar to file phase completion if not cancelled
+            If progressCallback IsNot Nothing Then
+                progressCallback(totalGroups, totalGroups, If(cancellationRequested IsNot Nothing AndAlso cancellationRequested(), "Merge cancelled.", "Merge completed"))
+            End If
         End Function
 
         Private Function GetNormalizedDateValue(row As ExtractionRow, dateColIdxZeroBased As Integer) As String
@@ -594,18 +636,23 @@ Namespace SharedLibrary
             Return NormalizeDate(raw)
         End Function
 
-        Private Function FallbackMergeRows(rows As System.Collections.Generic.List(Of ExtractionRow),
-                                           schema As System.Collections.Generic.List(Of ExtractionSchemaColumn),
-                                           dateColIdxZeroBased As Integer) As ExtractionRow
-            ' Simple heuristic: keep date, first non-empty for others; concatenate text fields.
+        Private Function FallbackMergeRowsGeneric(rows As System.Collections.Generic.List(Of ExtractionRow),
+                                                  schema As System.Collections.Generic.List(Of ExtractionSchemaColumn),
+                                                  keyColIdx As Integer,
+                                                  keyIsDate As Boolean) As ExtractionRow
             Dim merged As New ExtractionRow With {.Values = New System.Collections.Generic.List(Of Object)()}
             For i = 0 To schema.Count - 1
-                If i = dateColIdxZeroBased Then
-                    merged.Values.Add(GetNormalizedDateValue(rows(0), dateColIdxZeroBased))
+                If i = keyColIdx Then
+                    Dim keyVal = ""
+                    If rows(0).Values.Count > keyColIdx AndAlso rows(0).Values(keyColIdx) IsNot Nothing Then
+                        keyVal = rows(0).Values(keyColIdx).ToString()
+                        If keyIsDate Then keyVal = NormalizeDate(keyVal)
+                    End If
+                    merged.Values.Add(keyVal)
                     Continue For
                 End If
                 Dim colType = schema(i).Type
-                Dim collectedText As New System.Text.StringBuilder()
+                Dim collected As New System.Text.StringBuilder()
                 Dim chosen As Object = ""
                 For Each r In rows
                     If i < r.Values.Count Then
@@ -613,20 +660,20 @@ Namespace SharedLibrary
                         If v IsNot Nothing Then
                             Dim s = v.ToString().Trim()
                             If s.Length > 0 Then
-                                If colType = "number" OrElse colType = "date" OrElse colType = "datetime" Then
+                                If {"number", "date", "datetime"}.Contains(colType) Then
                                     chosen = s
                                     Exit For
                                 Else
-                                    If collectedText.Length > 0 Then collectedText.Append(" | ")
-                                    collectedText.Append(s)
-                                    If chosen Is Nothing OrElse CStr(chosen).Length = 0 Then chosen = s
+                                    If collected.Length > 0 Then collected.Append(" | ")
+                                    collected.Append(s)
+                                    If String.IsNullOrWhiteSpace(CStr(chosen)) Then chosen = s
                                 End If
                             End If
                         End If
                     End If
                 Next
-                If colType = "text" OrElse colType = "other" Then
-                    merged.Values.Add(If(collectedText.Length > 0, collectedText.ToString(), CStr(chosen)))
+                If {"text", "other"}.Contains(colType) Then
+                    merged.Values.Add(If(collected.Length > 0, collected.ToString(), CStr(chosen)))
                 Else
                     merged.Values.Add(chosen)
                 End If

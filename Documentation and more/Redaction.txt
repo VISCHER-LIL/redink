@@ -1,5 +1,0 @@
-; Sample Redaction Instructions
-
-Basic|Redact any and all names or parts of names and any other direct identifiers.
-
-Extended|First, redact any and all identifiers. Second, analyze which parts could identify the individuals in the text only indirectly, based on context, for example by searching the internet or because someone is known (e.g., by his position in a company, by known activities, by a product associated with him). If you find any content that could indirectly identify such a person, redact is as well. In case of doubt, redact. Check the document twice.

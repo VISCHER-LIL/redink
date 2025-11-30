@@ -1699,7 +1699,114 @@ Partial Public Class ThisAddIn
         Return result
     End Function
 
+
     Private Sub SearchAndReplace(oldText As String, newText As String, OnlySelection As Boolean, Marker As String)
+        Dim doc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
+        Dim trackChangesEnabled As Boolean = doc.TrackRevisions
+        Dim originalAuthor As String = doc.Application.UserName
+
+        Try
+            ' 1) Arbeitsbereich festlegen
+            Dim workRange As Microsoft.Office.Interop.Word.Range
+            If OnlySelection AndAlso doc.Application.Selection IsNot Nothing _
+               AndAlso doc.Application.Selection.Range.Text <> "" Then
+                workRange = doc.Application.Selection.Range.Duplicate
+            Else
+                workRange = doc.Content.Duplicate
+                OnlySelection = False
+            End If
+
+            ' 2) Marker in neuen Text einfügen
+            Dim newTextWithMarker As String
+            If newText.Length > 2 AndAlso Marker <> "" Then
+                newTextWithMarker = newText.Substring(0, newText.Length - 2) & Marker & newText.Substring(newText.Length - 2)
+            Else
+                newTextWithMarker = newText
+            End If
+
+            ' 3) Ursprüngliche Selektion merken
+            Dim selectionStart As Integer = doc.Application.Selection.Start
+            Dim selectionEnd As Integer = doc.Application.Selection.End
+
+            ' 4) Chunk‑ oder Standard‑Suche
+
+            ' --- Long‑Chunk‑Suche ----------------------------------------
+            doc.Application.Selection.SetRange(workRange.Start, workRange.End)
+            Dim foundAny As Boolean = False
+
+            Do While Globals.ThisAddIn.FindLongTextInChunks(oldText, doc.Application.Selection)
+                If doc.Application.Selection Is Nothing Then Exit Do
+                ' Escape‑Taste prüfen
+                If (GetAsyncKeyState(VK_ESCAPE) And 1) <> 0 Then Exit Do
+
+                foundAny = True
+                Dim selRange As Microsoft.Office.Interop.Word.Range = doc.Application.Selection.Range
+
+                ' Auf Löschungen prüfen
+                Dim isDeleted As Boolean = False
+                For Each rev As Microsoft.Office.Interop.Word.Revision In selRange.Revisions
+                    If rev.Type = Microsoft.Office.Interop.Word.WdRevisionType.wdRevisionDelete Then
+                        isDeleted = True
+                        Exit For
+                    End If
+                Next
+
+                ' Ersetzen
+                Dim replaceStart As Integer = selRange.Start
+                Dim replaceEnd As Integer = selRange.End
+
+                If Not isDeleted Then
+                    selRange.Text = newTextWithMarker
+
+                    ' advance replaceEnd and selectionEnd by inserted length
+                    replaceEnd = replaceStart + newTextWithMarker.Length
+                    selectionEnd += newTextWithMarker.Length
+
+                    ' hard clamp after mutation
+                    selectionEnd = System.Math.Min(selectionEnd, doc.Content.End)
+                    replaceEnd = System.Math.Min(replaceEnd, doc.Content.End)
+                End If
+
+                ' Clamping und Range‑Vorschub
+                Dim newStart As Integer = System.Math.Max(doc.Content.Start, System.Math.Min(replaceEnd, doc.Content.End))
+
+                ' Ensure the next search window is valid and non‑negative length
+                Dim desiredEnd As Integer = If(OnlySelection,
+                                               System.Math.Min(selectionEnd, doc.Content.End),
+                                               doc.Content.End)
+
+                ' Guarantee monotonic forward progress: end >= start
+                Dim newEnd As Integer = System.Math.Max(newStart, desiredEnd)
+
+                ' Final clamps
+                newStart = System.Math.Max(doc.Content.Start, System.Math.Min(newStart, doc.Content.End))
+                newEnd = System.Math.Max(doc.Content.Start, System.Math.Min(newEnd, doc.Content.End))
+
+                If newStart <= newEnd Then
+                    doc.Application.Selection.SetRange(newStart, newEnd)
+                Else
+                    Exit Do
+                End If
+            Loop
+
+            ' Selektion nur bei Treffern wiederherstellen
+            If foundAny Then
+                selectionStart = System.Math.Max(doc.Content.Start, System.Math.Min(selectionStart, doc.Content.End))
+                selectionEnd = System.Math.Max(doc.Content.Start, System.Math.Min(selectionEnd, doc.Content.End))
+                If selectionStart <= selectionEnd Then
+                    doc.Application.Selection.SetRange(selectionStart, selectionEnd)
+                    doc.Application.Selection.Select()
+                End If
+            Else
+                Debug.WriteLine("Hinweis: Begriff nicht gefunden, Restore übersprungen.")
+            End If
+
+        Catch ex As System.Exception
+            MsgBox("Error in SearchReplace: " & ex.Message, MsgBoxStyle.Critical)
+        End Try
+    End Sub
+
+    Private Sub oldSearchAndReplace(oldText As String, newText As String, OnlySelection As Boolean, Marker As String)
         Dim doc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
         Dim trackChangesEnabled As Boolean = doc.TrackRevisions
         Dim originalAuthor As String = doc.Application.UserName

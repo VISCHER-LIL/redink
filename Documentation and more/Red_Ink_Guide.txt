@@ -8,7 +8,7 @@ David Rosenthal, VISCHER AG
 
 
 Date:
-27. November 2025 (updated continuously)
+1. December 2025 (updated continuously)
 
 
 Topic:
@@ -41,32 +41,32 @@ U.	Data Extractor	93
 V.	File Renamer	99
 W.	Red Ink functions in Outlook	101
 X.	Separate chatbot "Inky"	105
-Y.	Browser extension	106
-Z.	Using Red Ink in other programs	108
+Y.	Browser extension	107
+Z.	Using Red Ink in other programs	109
 III.	INSTALLATION	111
 A.	For those who can't wait: The one-click installation	111
 B.	The installation in more detail	112
-C.	Preparation: API access	114
-D.	Step 1: Download the installer/installations package	115
-E.	Step 2: Run the installer	117
-F.	Step 3: Initial configuration using the wizard	118
-G.	Step 4: Install helper (optional, can be done later)	120
-H.	Step 5: Using add-ins	121
-I.	Step 6: Making further adjustments as necessary	122
-J.	Installation of the browser extension	122
-IV.	CONFIGURATION (FOR ADVANCED USERS)	123
-A.	Configuration file "redink.ini"	123
-B.	Prompt library	148
-C.	Other alternative language models	149
-D.	OAuth2.0 (e.g. Google Vertex API)	150
-E.	Configuration of Advanced API Calls	151
-F.	Security features	154
-V.	FAQS	157
-VI.	RELEASE NOTES	169
-VII.	ROADMAP	177
-ANNEX 1: IDEAS TO GET TO KNOW RED INK	178
-ANNEX 2: PROGRAMMING RESPONSE TEMPLATES	180
-ANNEX 3: WEB AGENT SCRIPTING	183
+C.	Preparation: API access	115
+D.	Step 1: Download the installer/installations package	116
+E.	Step 2: Run the installer	118
+F.	Step 3: Initial configuration using the wizard	119
+G.	Step 4: Install helper (optional, can be done later)	121
+H.	Step 5: Using add-ins	122
+I.	Step 6: Making further adjustments as necessary	123
+J.	Installation of the browser extension	123
+IV.	CONFIGURATION (FOR ADVANCED USERS)	124
+A.	Configuration file "redink.ini"	124
+B.	Prompt library	149
+C.	Other alternative language models	150
+D.	OAuth2.0 (e.g. Google Vertex API)	151
+E.	Configuration of Advanced API Calls	152
+F.	Security features	155
+V.	FAQS	158
+VI.	RELEASE NOTES	170
+VII.	ROADMAP	178
+ANNEX 1: IDEAS TO GET TO KNOW RED INK	179
+ANNEX 2: PROGRAMMING RESPONSE TEMPLATES	181
+ANNEX 3: WEB AGENT SCRIPTING	184
 
 I. OVERVIEW
 1 Red Ink is an AI tool that we originally developed for our internal needs as a commercial law firm. It is integrated directly into Word, Excel and Outlook in the form of Office add-ins, where it allows a wide range of AI functions to be carried out with your own texts, spreadsheets and emails. Prompts can be entered directly, but it is also possible to have a selected text, cells in a worksheet or email chains translated, revised, summarised, commented on and searched by the AI. There is even a chatbot available, the tool can do transcriptions, create audiobooks from text and it can also be accessed in the browser. 
@@ -587,7 +587,7 @@ P. Word-integrated chatbot "Inky"
 211 The chatbot works with the primary language model that is configured. If a secondary model is configured, you can switch back and forth using "Switch Model". If other alternative models are configured, the desired alternative model can be selected instead. It will then apply from the next request. This can be used for internet research, for example. For confidential documents, however, it must be taken into account that the current document or the current selection is always transmitted to the model, depending on the status of the relevant checkboxes. Therefore, only models where this is permitted should be selected. For security reasons, the chatbot will automatically deselect the existing checkboxes when switching to alternative models.
 212 If "Include all other open Word docs" is selected, the chatbot will also see all other currently open Word documents with every question, even if "Include document" or "Include selection" is not checked. For security reasons, this is deactivated by default. However, the function can be very useful if questions are to be asked to the chatbot about the current document for which it should be able to refer to other documents (e.g., other contract appendices). In Freestyle, this can be controlled individually via "(adddoc)"; here, you simply have to pay attention to which documents are open. In the chatbot, they can be referred to by using their file name.
 
-213 In addition to this integrated chatbot Inky, there is also a separate chatbot that can be used with a normal browser (see para. 105 et seq.).
+213 In addition to this integrated chatbot Inky, there is also a separate chatbot that can be used with a normal browser (see para. 106 et seq.).
 Q. Interactive help function: Help me, Inky
 214 To make it easier for the user to use Red Ink without having to read the entire manual, the chatbot "Help me, Inky" can be called up from the main menu (also in the add-in for Excel and Outlook). It knows this manual and can answer questions about the use of Red Ink based on it (e.g. "How do I insert additional documents in Freestyle?"). It is only intended for such questions. For other questions, the chatbot integrated in Word or the separate chatbot should be used. 
 
@@ -715,8 +715,8 @@ MMMM yyyy
 yyyyMMdd
 dd MMM yyyy
 yyyy-MM-dd HH:mm
-* Permit row merging: If this parameter is selected, Red Ink will ask the AI to merge those rows that have the same date after creating the table. This is done based on the information stored in the library (if an extraction based on a predefined instruction is used) or based on subsequent information.
-* Date column to merge: Here you can specify whether and which column should be used for merging (if it is activated with the preceding parameter). If a value is specified, this overrides any merging instruction stored in the predefined extraction instruction selected by the user.
+* Permit row merging: If this parameter is selected, Red Ink will ask the AI to merge those rows that have the same date or other value (e.g., a name) ter creating the table. This is done based on the information stored in the library (if an extraction based on a predefined instruction is used) or based on subsequent information.
+* Column to merge/group: Here you can specify whether and which column should be used for merging (if it is activated with the preceding parameter). If a value is specified, this overrides any merging instruction stored in the predefined extraction instruction selected by the user.
 * Additional merge instructions: Here, an optional further instruction can be specified on how the merge should be performed (e.g., "Produce one fact-focused narrative for the date; avoid legal conclusions; include distinct sources."). However, it will only be considered if a column is specified in the previous parameter and "Permit row merging" is selected.
 * Use a secondary model: By selecting this, the user can indicate that they want to use the alternative model for this task or, if several alternative models are available, select the model to be used.
 252 Once the parameters have been entered and the user clicks on OK, the schema is first created using AI, which the user must confirm (if it was not specified or is not stored). The user is then prompted for the file or directory. The analysis then begins and ends with the table of extracted data being inserted into the current worksheet starting from cell A1. From here, it can be copied or exported to other programs, e.g., to a tool for creating a timeline, or the information can be used as a prompt for an AI model that creates a timeline graphic based on it. If the cells from A1 onwards are already filled with values, Red Ink will ask if the table should be inserted after them. A table can look like this, for example:
@@ -728,8 +728,8 @@ The elements are each separated by a vertical bar ("|"):
 * Designation of the instruction (is displayed to the user, automatically with the suffix "(local)" if the instruction comes from their local library);
 * The instruction for extracting the data;
 * Optional: The schema, according to the format above;
-* Optional: Whether rows with the same date should be merged (True = Yes); this switch allows the merging to be temporarily disabled without having to remove the rest of the line;
-* Optional: The column with the date by which to merge;
+* Optional: Whether rows with the same date/value should be merged (True = Yes); this switch allows the merging to be temporarily disabled without having to remove the rest of the line;
+* Optional: The column with the date/other value by which to merge;
 * Optional: An additional instruction on how the merging should be performed.
 255 If errors occur with multiple files, this will be indicated at the end (and copied to the clipboard).
 V. File Renamer
@@ -757,7 +757,7 @@ W. Red Ink functions in Outlook
 267 The Sum-up function summarises the email chain (by contact). The AI is instructed to do so in the language of the mail. You must be replying to the relevant email or forwarding it. Then select the relevant parts (or the entire email chain will be taken into account) and select the "Sum-up" function. The AI will display a summary of the email chain at the top of the email. This can be useful for longer emails to get a quick overview. 
 268 Unlike all other Red Ink for Outlook features, the functions Sum-up and Translate can also be used with emails that are not open for composing. It is sufficient to select an email in the Outlook overview for it to be displayed in the field on the right. If Sum-up is then pressed, Red Ink creates a summary or a translation (as the case may be in the language entered) and displays it in a separate window: 
 
-269 If multiple e-mails have been selected (with none of the opened), then sum-up will go through all selected e-mails (and try to extract only the latest one of each mail-chain to save time) and provide a short overview of the most important and most urgent of these e-mails. E-mails that have already been answered are disregarded.
+269 If multiple e-mails have been selected (with none of the opened), then sum-up will go through all selected e-mails (and try to extract only the latest one of each mail-chain to save time) and provide a short overview of the most important and most urgent of these e-mails. E-mails that have already been answered (except those marked as unread) are disregarded.
 270 Certain functions (in Freestyle by adding "Markup:" before the prompt) work with a markup function, although Outlook does not actually offer one. In this case, the AI's text is displayed first, followed by "MARKUP:" and a markup that shows the insertions and deletions made by the AI in colour. Because these markups technically cannot be "accepted" within Outlook, the output is for information purposes only. It must be deleted manually by the user as soon as they are satisfied with the text. As in Word (para. 25), Settings can be used to specify which markup method should be used, although in Outlook only "Word", "Diff" and 'DiffW' are available because only these make technical sense here. For "Diff", the same character limit is used as in Word and handled in the same way. However, it is possible to configure independently of Word whether markup should be created automatically for the pre-programmed functions where it makes sense (e.g. for "Correct" and "Shorten"). As in Word, it is also possible to cancel the "Diff" markup output with the "Esc" key if it takes too long. In practice, "DiffW" has proven to be ideal for everyday use.
 271 As in Word (para. 25), the configuration can be used to determine for all functions (except Freestyle, Reply and Sum-up) whether the text generated by the AI should replace the existing text or be added to it.
 272 Further configuration is possible, as in Word (para. 25), to determine whether the add-in should attempt to preserve basic formatting (such as font and bullet points) when using the translation, correction, improvement and abbreviation functions, or whether it should work in pure text mode (which means that special formatting will be lost in the output; Red Ink, however, tries to preserve simple formatting such as bold text). The latter takes more time because all formatting must also be transferred to the AI (which occurs in HTML format). To keep the response times within limits, only the most important formatting is retained. When it is reproduced, it is possible that it will not exactly match the previous display. The function for limiting the preservation of formatting to a certain number of characters is also available here and can be configured via Settings or switched off with 0.
@@ -778,7 +778,7 @@ Y. Browser extension
 285 Red Ink also has an extension for Chromium-based browsers (e.g., Edge, Chrome). Once installed, users can select text in their browser (e.g. when working on a website) and have Red Ink perform certain actions on the selected text:
 
 286 The commands are:
-* Translate: A window opens and the user enters the desired output language. The translated text is displayed in place of the selected text.
+* Translate: A window opens and the user enters the desired output language. The translated text is displayed in place of the selected text. This allows texts on websites to be translated (as long as they can be selected) as well as texts in input fields.
 * Correct: The text is linguistically corrected and a markup is displayed in a window. If the user does not press "Esc", the selected text is replaced by the corrected text (without markup).
 * Freestyle: You can enter any prompt (the prompt library is also available). However, formatting commands and functions such as "bubbles" does not work here, of course. By default, the AI's response is displayed in a separate window (and placed on the clipboard), just like when the prefix "Clipboard:" is used in Word. However, if you want Red Ink to send the generated output back to the browser for insertion, you must prefix the prompt with "Insert:". Markups are also possible, similar to Correct. For this, "Markup:" must be prepended; this prefix also includes an "Insert:" command, i.e., the content is sent back to the browser, unless cancelled beforehand. Freestyle is the only command that can be used even if no text is selected in the browser.
 * Send to Word: The text selected in the browser is inserted at the current position in the document in Word (without copy and paste).
@@ -2407,6 +2407,12 @@ Entire code split into smaller, logical units and additionally documented (addit
 W=0.1.1.98
 E=0.1.1.72
 Data Extractor (Excel); File Renamer (Excel); minor adjustments (e.g., when inserting documents, adapting the prompt for SP_RangeOfCells); correction of the example for "IniPath" (Registry) in this documentation
+30.11.2025
+
+W=0.1.1.99
+E=0.1.173
+O=0.1.1.79
+Various small improvements (e.g., Ctrl-Enter advances in parameter windows, Data Extractor merges not only dates, premature abort possible when using multiple doc-triggers in Freestyle, quicker startup of http server in Outlook, various prompts), Bug fixes (Word, Excel, Outlook, including re Data Extractor, Shorten), Edge extension improved (inserting of AI response in source, compatibility with Firefox), updated various libraries
 
 VII. ROADMAP
 407 Further planned developments:
@@ -3123,7 +3129,10 @@ Practical example
 
 
 
-27. November 2025	1
+1. December 2025	1
+
+
+
 
 
 

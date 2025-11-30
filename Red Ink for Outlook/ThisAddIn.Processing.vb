@@ -824,10 +824,17 @@ Partial Public Class ThisAddIn
             End If
 
             ' Word splitting
-            Dim words = selectedText.Split(New Char() {" "c, ControlChars.Tab, ControlChars.Cr, ControlChars.Lf},
-                                       StringSplitOptions.RemoveEmptyEntries)
+            ' Dim words = selectedText.Split(New Char() {" "c, ControlChars.Tab, ControlChars.Cr, ControlChars.Lf},
+            '                           StringSplitOptions.RemoveEmptyEntries)
+            ' Return words.Length
 
-            Return words.Length
+            ' Count only real words:
+            ' \b[\p{L}]+(?:['’\-‑–][\p{L}]+)*\b
+            ' - one or more Unicode letters
+            ' - optionally followed by groups of apostrophe/hyphen/dash + letters (e.g., don't, mother-in-law)
+            ' - excludes digits and symbol-only tokens
+            Dim pattern As String = "\b[\p{L}]+(?:['’\-‑–][\p{L}]+)*\b"
+            Return Regex.Matches(selectedText, pattern).Count
 
         Catch ex As System.Exception  ' Explicitly referencing System.Exception per your guideline
             Return 0

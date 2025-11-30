@@ -1,11 +1,12 @@
 ﻿' =============================================================================
 ' File: ThisAddIn.FactExtractor.vb
 ' Part of: Red Ink for Excel
-' Purpose: Orchestrates fact extraction from one or multiple documents into Excel.
-'          Loads prepared instruction/schema entries, applies manual overrides,
-'          resolves merge rules, optional secondary model usage, performs extraction,
-'          and writes a normalized fact table with optional date clamping, sorting,
-'          formatting, and summary metadata.
+' Purpose:
+'   Orchestrates fact extraction from one or multiple documents into Excel.
+'   Loads prepared instruction/schema entries, applies manual overrides,
+'   resolves merge rules, optional secondary model usage, performs extraction,
+'   and writes a normalized fact table with optional date clamping, sorting,
+'   formatting, and summary metadata.
 '
 ' Copyright: David Rosenthal, david.rosenthal@vischer.com
 ' License: May only be used with an appropriate license (see redink.ai)
@@ -13,14 +14,14 @@
 ' Architecture:
 '   - Instruction/Schema Library: Text files (local/global) enumerated; each line pipe-delimited:
 '       Title | Instruction | SchemaSpec | MergeEnable | MergeDateCol | MergeInstruction
-'   - Parameter Collection: User dialog builds effective instruction, schema, date columns,
-'       clamp bounds, sort parameters, OCR toggle, output language, merge intent.
-'   - Merge Resolution Rules (inline summary retained in code): Determines whether row merging
-'       is active based on checkbox, manual date column, and library metadata.
-'   - Schema Handling: Manual schema overrides; fallback to prepared; AI generation if needed.
-'   - Execution: Single-file or folder batch; progress reporting via global progress variables.
-'   - Result Insertion: Writes headers, rows, applies date formatting (only for date/datetime),
-'       wraps text, auto-fit columns within bounds, and appends summary rows.
+'   - Parameters: Builds effective instruction, schema, date columns, clamp bounds,
+'       sort parameters, OCR toggle, output language, and merge intent.
+'   - Merge Resolution: Based on checkbox, manual merge key column, and library metadata
+'       (backwards-compatible with MergeDateCol).
+'   - Schema Handling: Manual overrides; prepared; optional AI generation.
+'   - Execution: Single-file or folder batch; progress via global progress variables.
+'   - Result Insertion: Headers, rows, optional date formatting (date/datetime only), wrapping,
+'       bounded auto-fit, and appended summary rows.
 '   - Cleanup: Restores original model configuration if a secondary model was temporarily loaded.
 ' =============================================================================
 
@@ -202,7 +203,7 @@ Partial Public Class ThisAddIn
             Dim p9 As New SLib.InputParameter("Output language", UserOutputLanguage)
             Dim p10 As New SLib.InputParameter("Date format (e.g., yyyy-MM-dd; empty=default)", dateOutputFormat)
             Dim pMergeEnable As New SLib.InputParameter("Permit row merging (if requested)", mergeRowsViaLlm)
-            Dim pMergeDateCol As New SLib.InputParameter("Date column to merge on (1-based)", If(mergeDateColumn <= 0, "", mergeDateColumn.ToString()))
+            Dim pMergeDateCol As New SLib.InputParameter("Column to merge/group on (1-based)", If(mergeDateColumn <= 0, "", mergeDateColumn.ToString()))
             Dim pMergeInstruction As New SLib.InputParameter("Additional merge instructions (optional, overrides)", mergeInstruction)
 
             Dim p11 As SLib.InputParameter = Nothing
@@ -313,13 +314,15 @@ Partial Public Class ThisAddIn
             End If
 
             ' Rule summary:
+            ' Rule summary:
             ' 1. Checkbox (mergeRowsViaLlm) must be True to allow any merging.
-            ' 2. If user supplied a MergeDateColumn (>0) AND checkbox True => manual override (use user's date column and instruction as-is; instruction may be blank).
-            ' 3. If user did NOT supply a date column (>0) but checkbox True:
-            '       Use library entry ONLY if library MergeEnabled=True AND library MergeDateColumn>0.
-            '       Otherwise disable merging (set mergeRowsViaLlm False, clear date column & instruction).
-            ' 4. If checkbox False => merging disabled regardless of other inputs.
-            ' 5. An instruction alone without a date column never triggers merging.
+            ' 2. If user supplied a merge column (>0) AND checkbox True => manual override (use user's column & instruction).
+            ' 3. If user did NOT supply a merge column (>0) but checkbox True:
+            '       Use library entry ONLY if library MergeEnabled=True AND library MergeDateColumn>0 (treated as generic key column).
+            '       Otherwise disable merging.
+            ' 4. If checkbox False => merging disabled.
+            ' 5. An instruction alone without a merge key column never triggers merging.
+
             Dim userRequestedMerge As Boolean = mergeRowsViaLlm
             Dim userProvidedDateColumn As Boolean = (mergeDateColumn > 0)
 
@@ -516,6 +519,8 @@ Partial Public Class ThisAddIn
                 GlobalProgressValue = 0
                 GlobalProgressLabel = "Starting..."
 
+                Dim cancelFunc As Func(Of Boolean) = Function() ProgressBarModule.CancelOperation
+
                 Dim res As FactExtractionAggregateResult = Nothing
                 Try
                     res = Await RunFactExtractionAsync(list,
@@ -534,20 +539,19 @@ Partial Public Class ThisAddIn
                                                        clampFrom,
                                                        clampTo,
                                                        Sub(cur, total, label)
-                                                           ' cur progresses from 0 to total; final callback uses total/total ("Completed.")
                                                            GlobalProgressValue = cur
                                                            GlobalProgressMax = total
                                                            GlobalProgressLabel = label
                                                        End Sub,
                                                        mergeDateColumn,
                                                        mergeRowsViaLlm,
-                                                       mergeInstruction)
+                                                       mergeInstruction,
+                                                       cancellationRequested:=cancelFunc)
                 Catch ex As Exception
                     ProgressBarModule.CancelOperation = True
                     ShowCustomMessageBox("Single-file extraction failed: " & ex.Message)
                     Return
                 Finally
-                    ' Ensure the progress bar is closed even if parsing/merge errors occurred
                     ProgressBarModule.CancelOperation = True
                 End Try
 
@@ -591,6 +595,8 @@ Partial Public Class ThisAddIn
                 GlobalProgressValue = 0
                 GlobalProgressLabel = "Starting..."
 
+                Dim cancelFunc As Func(Of Boolean) = Function() ProgressBarModule.CancelOperation
+
                 Dim res = Await RunFactExtractionAsync(New System.Collections.Generic.List(Of String)(files),
                                                        effectiveInstruction,
                                                        dateCols,
@@ -608,12 +614,21 @@ Partial Public Class ThisAddIn
                                                        clampTo,
                                                        Sub(cur, total, label)
                                                            GlobalProgressValue = cur
+                                                           GlobalProgressMax = total
                                                            GlobalProgressLabel = label
                                                        End Sub,
                                                        mergeDateColumn,
                                                        mergeRowsViaLlm,
-                                                       mergeInstruction)
+                                                       mergeInstruction,
+                                                       cancellationRequested:=cancelFunc)
+
                 ProgressBarModule.CancelOperation = True
+
+                If ProgressBarModule.CancelOperation AndAlso res.Rows.Count = 0 AndAlso res.ProcessedFiles = 0 Then
+                    ShowCustomMessageBox("Operation cancelled.")
+                    Return
+                End If
+
                 If res.Rows.Count = 0 Then
                     Dim msg = "No data extracted."
                     If res.FailedFiles > 0 Then msg &= vbCrLf & "Failed files: " & String.Join(", ", res.FailedFileNames)

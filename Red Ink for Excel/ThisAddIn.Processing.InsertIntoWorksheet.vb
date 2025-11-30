@@ -244,6 +244,9 @@ Partial Public Class ThisAddIn
                                         Else
                                             ' Remove unwanted apostrophes
                                             cleanedValue = CStr(formulaOrValue).Trim("'"c)
+                                            ' Unescape doubled single quotes produced by LLMs when inside '...'
+                                            cleanedValue = cleanedValue.Replace("''", "'")
+
                                             cleanedValue = DecodeTextLiterals(cleanedValue)
                                             targetRange.NumberFormat = "@"
                                             Debug.WriteLine($"Set cleaned text value in {cellAddress}: '{cleanedValue}'")

@@ -259,7 +259,7 @@ Partial Class Ribbon1
         '
         'RI_BalloonMergePart
         '
-        Me.RI_BalloonMergePart.Label = "Apply comment"
+        Me.RI_BalloonMergePart.Label = "Apply Comment"
         Me.RI_BalloonMergePart.Name = "RI_BalloonMergePart"
         Me.RI_BalloonMergePart.OfficeImageId = "ReviewPreviousComment"
         Me.RI_BalloonMergePart.ScreenTip = "Apply the text (selected) in your comment balloon to the text in the commented pa" &
@@ -268,7 +268,7 @@ Partial Class Ribbon1
         '
         'RI_BalloonMergeFull
         '
-        Me.RI_BalloonMergeFull.Label = "Apply comment to para"
+        Me.RI_BalloonMergeFull.Label = "Apply Comment To Para"
         Me.RI_BalloonMergeFull.Name = "RI_BalloonMergeFull"
         Me.RI_BalloonMergeFull.OfficeImageId = "ReviewPreviousComment"
         Me.RI_BalloonMergeFull.ScreenTip = "Apply the text (selected) in your comment balloon to the text in the commented pa" &
@@ -277,7 +277,7 @@ Partial Class Ribbon1
         '
         'RI_BalloonMergePartPrompt
         '
-        Me.RI_BalloonMergePartPrompt.Label = "Apply comment (edit)"
+        Me.RI_BalloonMergePartPrompt.Label = "Apply Comment (Edit)"
         Me.RI_BalloonMergePartPrompt.Name = "RI_BalloonMergePartPrompt"
         Me.RI_BalloonMergePartPrompt.OfficeImageId = "ReviewEditComment"
         Me.RI_BalloonMergePartPrompt.ScreenTip = "Apply the text (selected) in your comment balloon to the text in the commented pa" &
@@ -286,7 +286,7 @@ Partial Class Ribbon1
         '
         'RI_BalloonMergeFullPrompt
         '
-        Me.RI_BalloonMergeFullPrompt.Label = "Apply comment to para (edit)"
+        Me.RI_BalloonMergeFullPrompt.Label = "Apply Comment To Para (Edit)"
         Me.RI_BalloonMergeFullPrompt.Name = "RI_BalloonMergeFullPrompt"
         Me.RI_BalloonMergeFullPrompt.OfficeImageId = "ReviewEditComment"
         Me.RI_BalloonMergeFullPrompt.ScreenTip = "Apply the text (selected) in your comment balloon to the text in the commented pa" &
@@ -358,7 +358,7 @@ Partial Class Ribbon1
         '
         'RI_CheckDocumentsII
         '
-        Me.RI_CheckDocumentsII.Label = "Check Document"
+        Me.RI_CheckDocumentsII.Label = "Check Document for II"
         Me.RI_CheckDocumentsII.Name = "RI_CheckDocumentsII"
         Me.RI_CheckDocumentsII.OfficeImageId = "MenuTentativeInvitation"
         Me.RI_CheckDocumentsII.ScreenTip = "Will check your document for identifiable content"

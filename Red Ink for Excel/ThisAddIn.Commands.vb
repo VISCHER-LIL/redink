@@ -157,7 +157,7 @@ Partial Public Class ThisAddIn
             If Not CellProtected(cell) AndAlso Not CBool(cell.HasFormula) Then
                 Dim cellText As String = CStr(cell.Value)
                 If Not String.IsNullOrEmpty(cellText) Then
-                    Dim textLength As Integer = cellText.Length
+                    Dim textLength As Integer = getnumberofwords(cellText)
                     totalLength += textLength
                     If textLength > maxLength Then
                         maxLength = textLength
@@ -185,7 +185,7 @@ Partial Public Class ThisAddIn
         If selectedRange IsNot Nothing Then
             selectedRange.Select()
         End If
-        Dim result As Boolean = Await ProcessSelectedRange(SP_Shorten, True, False, False, True, True, False, ShortenPercentValue)
+        Dim result As Boolean = Await ProcessSelectedRange(SP_Shorten, True, False, False, False, True, False, ShortenPercentValue, False)
     End Function
 
     ''' <summary>

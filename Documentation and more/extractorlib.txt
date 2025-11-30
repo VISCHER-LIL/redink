@@ -1,7 +1,7 @@
 ; RED INK FACT EXTRACTION LIBRARY
 ;
 ; FILE FORMAT (PIPE-SEPARATED FIELDS):
-;   Title | Instruction | SchemaSpec | MergeEnabled | MergeDateColumn | MergeInstruction
+;   Title | Instruction | SchemaSpec | MergeEnabled | MergeColumn | MergeInstruction
 ;
 ; REQUIRED:
 ;   Title            : Display name in dropdown.
@@ -12,16 +12,16 @@
 ;   SchemaSpec       : Semicolon list: Name[:type][*]; Name[:type][*]; ...
 ;                      Types (case-insensitive): text, number, integer, decimal, date, datetime, other.
 ;                      Asterisk marks preferred sort column if user selects "auto".
-;   MergeEnabled     : True / False (case-insensitive). If True, rows sharing the same date
-;                      (in MergeDateColumn) will be merged via LLM.
-;   MergeDateColumn  : 1-based index of the date column to group on (refers to schema columns only;
+;   MergeEnabled     : True / False (case-insensitive). If True, rows sharing the same date or other content
+;                      (in MergeColumn) will be merged via LLM.
+;   MergeColumn      : 1-based index of the column to group on (refers to schema columns only;
 ;                      the automatically added "File" column is not counted).
 ;   MergeInstruction : Extra guidance for the LLM when merging grouped rows (e.g., summarize,
 ;                      list distinct sources, avoid legal interpretations). If blank, only the
 ;                      default merge rules are applied.
 ;
 ; BEHAVIOR:
-;   - If MergeEnabled=False or MergeDateColumn <= 0 => no merging performed.
+;   - If MergeEnabled=False or MergeColumn <= 0 => no merging performed.
 ;   - Dates are normalized before grouping.
 ;   - You can embed advanced hints (word limits, strategy) directly into MergeInstruction text.
 ;   - Lines starting with ";" are comments and skipped.
@@ -34,6 +34,10 @@
 ;
 
 Legal Timeline | Extract chronological factual legal case events: event type, parties, description, source. | Event Date:date*; Event Type:text; Parties:text; Description:text; Source:text | True | 1 | Produce one fact-focused narrative for the date; avoid legal conclusions; include distinct sources.
+
+Relationships | You need to provide an overview of the relations of the various parties with each other. Extract: name, function/company, an in-depth analysis (in keywords) of their distinct role they play in the present case, an in-depth analysis (in keywords) of the relationships they have with the various other parties (for each person one bullet point covering topics, emotions, familiarity, formal aspects, language etc.) | Person:text*; Function/Company:text; Role:text; Relationship:text | True | 1 | Produce one fact-focused, short narrative for the person.
+
+including any distinct aspects, how close it is, etc.). | Person:text*; Function/Company:text; Relevance:text; Relationships:text | True | 1 | Produce one fact-focused, short narrative for the person.
 
 Email Communications | Extract email metadata and salient points. | Sent Date:date*; Sender:text; Recipients:text; Subject:text; Key Points:text | True | 1 | Merge key points into distilled summary; list distinct subjects; aggregate unique senders and recipients.
 

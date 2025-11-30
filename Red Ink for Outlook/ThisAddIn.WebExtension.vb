@@ -29,6 +29,7 @@ Option Strict Off
 
 Imports System.Threading
 Imports System.Threading.Tasks
+Imports System.Windows.Forms
 Imports Markdig
 Imports Microsoft.Office.Interop.Word
 Imports SharedLibrary.SharedLibrary
@@ -1929,7 +1930,16 @@ Partial Public Class ThisAddIn
                 If Not String.IsNullOrWhiteSpace(finalTxt) Then
                     Await SwitchToUi(Sub() SLib.PutInClipboard(finalTxt))
                 End If
-                Return ""
+
+                Dim plainText As String
+
+                ' Convert RTF to plain text using RichTextBox
+                Using rtb As New RichTextBox()
+                    rtb.Rtf = finalTxt
+                    plainText = rtb.Text
+                End Using
+
+                Return plainText
         End Select
 
         Return ""

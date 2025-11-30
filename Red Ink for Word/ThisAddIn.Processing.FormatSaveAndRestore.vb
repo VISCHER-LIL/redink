@@ -735,7 +735,7 @@ Partial Public Class ThisAddIn
             replacementText = replacementText & "^&"
         End If
 
-        ' Safety/Cancel/Progress guards (minimal-invasive)
+        ' Safety/Cancel/Progress guards  (minimal-invasive)
         Dim prevPosition As System.Int32 = -1
         Dim iterations As System.Int32 = 0
         Dim maxIterations As System.Int32 = System.Math.Max(100000, System.Math.Max(1, allowedEnd - originalStart) * 8)
@@ -788,8 +788,18 @@ Partial Public Class ThisAddIn
                 If endsWithCellMark Then
                     groupEnd = foundEnd - 2 ' strip vbCr + cell mark from the group
                 ElseIf foundText.EndsWith(vbCr, System.StringComparison.Ordinal) Then
-                    groupEnd = foundEnd - 1
+                    groupEnd = foundEnd - 1   ' strip vbCr from the group
                 End If
+
+                ' Trim trailing spaces/tabs from the group so tokens hug content
+                While groupEnd > foundStart
+                    Dim ch As Char = doc.Range(Start:=groupEnd - 1, [End]:=groupEnd).Text(0)
+                    If ch = " "c OrElse ch = vbTab Then
+                        groupEnd -= 1
+                    Else
+                        Exit While
+                    End If
+                End While
 
                 Dim projectedEnd As System.Int32 = foundEnd + prefixLen + suffixLen
                 If projectedEnd > allowedEnd Then Exit Do
@@ -806,7 +816,7 @@ Partial Public Class ThisAddIn
                     tweakReplacement(paraRange.Font)
                 End If
 
-                ' 3) Insert tokens around the group only (before trailing marks)
+                ' 3) Insert tokens around the trimmed group only
                 If prefixLen > 0 AndAlso groupEnd >= foundStart Then
                     Dim groupRange As Microsoft.Office.Interop.Word.Range = doc.Range(Start:=foundStart, [End]:=groupEnd)
                     groupRange.InsertBefore(prefix)
@@ -847,29 +857,85 @@ Partial Public Class ThisAddIn
                 Dim prefixLen As System.Int32 = prefix.Length
                 Dim suffixLen As System.Int32 = suffix.Length
 
+                ' Trim leading/trailing whitespace and cell-mark from the matched range
+                Dim contentStart As System.Int32 = foundStart
+                Dim contentEnd As System.Int32 = foundEnd
+                Dim ft As System.String = foundText
+
+                ' Handle end-of-cell marker pair (vbCr + Chr(7)) at the end
+                If ft.EndsWith(vbCr & ChrW(7), System.StringComparison.Ordinal) Then
+                    contentEnd -= 2
+                    ft = ft.Substring(0, ft.Length - 2)
+                End If
+                ' Trim trailing paragraph mark
+                If ft.EndsWith(vbCr, System.StringComparison.Ordinal) Then
+                    contentEnd -= 1
+                    ft = ft.Substring(0, ft.Length - 1)
+                End If
+                ' Trim trailing spaces/tabs
+                While contentEnd > contentStart
+                    Dim ch As Char = doc.Range(Start:=contentEnd - 1, [End]:=contentEnd).Text(0)
+                    If ch = " "c OrElse ch = vbTab Then
+                        contentEnd -= 1
+                    Else
+                        Exit While
+                    End If
+                End While
+                ' Trim leading spaces/tabs
+                While contentStart < contentEnd
+                    Dim ch As Char = doc.Range(Start:=contentStart, [End]:=contentStart + 1).Text(0)
+                    If ch = " "c OrElse ch = vbTab Then
+                        contentStart += 1
+                    Else
+                        Exit While
+                    End If
+                End While
+
+                ' If nothing remains after trimming, just advance
+                If contentEnd <= contentStart Then
+                    If tweakReplacement IsNot Nothing Then tweakReplacement(searchRange.Font)
+                    currentPosition = foundEnd
+                    allowedEnd = rng.End
+                    GoTo ContinueLoop
+                End If
+
                 Dim projectedEnd As System.Int32 = foundEnd + prefixLen + suffixLen
                 If projectedEnd > allowedEnd Then Exit Do
 
-                ' 1) Unformat the matched content
-                If tweakReplacement IsNot Nothing Then tweakReplacement(searchRange.Font)
+                ' 1) Unformat the matched content (only the trimmed content)
+                If tweakReplacement IsNot Nothing Then
+                    Dim contentRangeUF As Microsoft.Office.Interop.Word.Range = doc.Range(Start:=contentStart, [End]:=contentEnd)
+                    tweakReplacement(contentRangeUF.Font)
+                End If
 
-                ' 2) Insert tokens
-                If prefixLen > 0 Then searchRange.InsertBefore(prefix)
-                If suffixLen > 0 Then searchRange.InsertAfter(suffix)
+                ' 2) Insert opening token at contentStart, then adjust indices
+                If prefixLen > 0 Then
+                    Dim openTokPos As Microsoft.Office.Interop.Word.Range = doc.Range(Start:=contentStart, [End]:=contentStart)
+                    openTokPos.InsertBefore(prefix)
+                    ' After inserting prefix, the content shifts right
+                    contentStart += prefixLen
+                    contentEnd += prefixLen
+                End If
 
-                ' 3) Unformat tokens too
+                ' 3) Insert closing token at the updated contentEnd
+                If suffixLen > 0 Then
+                    Dim closeTokPos As Microsoft.Office.Interop.Word.Range = doc.Range(Start:=contentEnd, [End]:=contentEnd)
+                    closeTokPos.InsertAfter(suffix)
+                End If
+
+                ' 4) Unformat tokens too, using their actual positions
                 If tweakReplacement IsNot Nothing Then
                     If prefixLen > 0 Then
-                        Dim leadingTok As Microsoft.Office.Interop.Word.Range = doc.Range(Start:=foundStart, [End]:=foundStart + prefixLen)
+                        Dim leadingTok As Microsoft.Office.Interop.Word.Range = doc.Range(Start:=contentStart - prefixLen, [End]:=contentStart)
                         tweakReplacement(leadingTok.Font)
                     End If
                     If suffixLen > 0 Then
-                        Dim trailingStart As System.Int32 = foundEnd + prefixLen
-                        Dim trailingTok As Microsoft.Office.Interop.Word.Range = doc.Range(Start:=trailingStart, [End]:=trailingStart + suffixLen)
+                        Dim trailingTok As Microsoft.Office.Interop.Word.Range = doc.Range(Start:=contentEnd, [End]:=contentEnd + suffixLen)
                         tweakReplacement(trailingTok.Font)
                     End If
                 End If
 
+                ' Advance past the original found end plus tokens
                 currentPosition = foundEnd + prefixLen + suffixLen
             End If
 
@@ -894,7 +960,6 @@ ContinueLoop:
     ' Options:
     '  - keepParagraphBreakOutside: keep trailing ^13 outside the tag (paragraph-like behavior)
     '  - includeColorInTag: for non-yellow highlights, emit <mark:color>…</mark>
-
     Private Sub ReplaceWithinRange_Highlight(
     ByVal rng As Microsoft.Office.Interop.Word.Range,
     Optional ByVal keepParagraphBreakOutside As Boolean = False,
@@ -937,6 +1002,20 @@ ContinueLoop:
                 End If
             End If
 
+            ' Trim leading/trailing spaces/tabs so <mark> hugs the content
+            ' (do this after removing the trailing paragraph/cell marker above)
+            Dim startIdx As Integer = 0
+            Dim endIdx As Integer = txt.Length
+            While startIdx < endIdx AndAlso (txt(startIdx) = " "c OrElse txt(startIdx) = vbTab)
+                startIdx += 1
+            End While
+            While endIdx > startIdx AndAlso (txt(endIdx - 1) = " "c OrElse txt(endIdx - 1) = vbTab)
+                endIdx -= 1
+            End While
+            If startIdx > 0 OrElse endIdx < txt.Length Then
+                txt = If(endIdx > startIdx, txt.Substring(startIdx, endIdx - startIdx), String.Empty)
+            End If
+
             ' Capture color before clearing
             Dim hi As Microsoft.Office.Interop.Word.WdColorIndex = found.HighlightColorIndex
 
@@ -958,7 +1037,6 @@ ContinueLoop:
             If searchRng.Start >= rng.End Then Exit While
         End While
     End Sub
-
 
     Private Shared Function HighlightIndexToMarkSuffix(idx As Word.WdColorIndex) As String
         ' Return a valid-HTML attribute suffix for use on the opening <mark ...> tag.

@@ -143,8 +143,8 @@ Partial Public Class ThisAddIn
                                 SelectedText = CStr(cell.Formula)
 
                                 If DoShorten Then
-                                    Dim Textlength As Integer = SelectedText.Length
-                                    ShortenLength = (Textlength - (Textlength * (100 - ShortenPercentValue) / 100))
+                                    Dim Textlength As Integer = getnumberofwords(SelectedText)
+                                    ShortenLength = Textlength * (100 - ShortenPercentValue) / 100
                                     SysCommand = InterpolateAtRuntime(SysCommand)
                                 End If
 

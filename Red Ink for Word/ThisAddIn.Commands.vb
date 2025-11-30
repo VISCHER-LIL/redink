@@ -371,9 +371,10 @@ Partial Public Class ThisAddIn
             End If
         Loop
         If ShortenPercentValue = 0 Then Return
-        ShortenLength = (Textlength - (Textlength * (100 - ShortenPercentValue) / 100))
-        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Improve), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
+        ShortenLength = Textlength * (100 - ShortenPercentValue) / 100
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Shorten), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
+
     Public Async Sub SwitchParty()
         If INILoadFail() Then Return
         Dim UserInput As String

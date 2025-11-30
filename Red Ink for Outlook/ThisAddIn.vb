@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 23.11.2025
+' 30.11.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -49,7 +49,7 @@ Partial Public Class ThisAddIn
     Public Const AN2 As String = "red_ink"
     Public Const AN6 As String = "Inky"
 
-    Public Const Version As String = "V.231125 Gen2 Beta Test"
+    Public Const Version As String = "V.301125 Gen2 Beta Test"
 
     Public Const ShortenPercent As Integer = 20
     Public Const SummaryPercent As Integer = 20
@@ -136,6 +136,16 @@ Partial Public Class ThisAddIn
     ''' <summary>
     ''' Outlook add-in startup handler. Captures UI context, initializes UpdateHandler handles, obtains host HWND, sets explorer activation path, and restores last chat id.
     ''' </summary>
+    Private explorers As Outlook.Explorers
+
+    ''' <summary>
+    ''' Fallback timer to trigger delayed startup if no Activate event occurs.
+    ''' </summary>
+    Private startupFallbackTimer As System.Windows.Forms.Timer
+
+    ''' <summary>
+    ''' Handles add-in startup. Initializes UI synchronization, UpdateHandler targets, host window handle, Explorer hooks, fallback timer, and restores last chat id.
+    ''' </summary>
     Private Sub ThisAddIn_Startup() Handles Me.Startup
         Try
             RemoveHandler Microsoft.Win32.SystemEvents.PowerModeChanged, AddressOf OnPowerModeChanged
@@ -145,7 +155,6 @@ Partial Public Class ThisAddIn
         StartPowerWatch()
 
         ' Necessary for Update Handler to work correctly
-
         ' 1) Force the creation of the Control's handle on the Office UI thread
         Dim dummy = mainThreadControl.Handle
 
@@ -173,12 +182,23 @@ Partial Public Class ThisAddIn
         ' Other tasks that need to be done at startup
         mainThreadControl.CreateControl()
 
+        ' Hook Explorers collection early (fires before Activate if window created but not focused)
+        Try
+            explorers = Application.Explorers
+            If explorers IsNot Nothing Then
+                AddHandler explorers.NewExplorer, AddressOf Explorers_NewExplorer
+            End If
+        Catch
+        End Try
+
         outlookExplorer = ComRetry(Function() Application.ActiveExplorer())
         If outlookExplorer IsNot Nothing Then
+            ' If already available, keep existing Activate path but also start fallback timer in case Activate never fires
             AddHandler outlookExplorer.Activate, AddressOf Explorer_Activate
+            StartStartupFallbackTimer()
         Else
-            mainThreadControl.BeginInvoke(CType(AddressOf DelayedStartupTasks, MethodInvoker))
-            StartupInitialized = True
+            ' No explorer yet – start fallback timer + rely on NewExplorer event
+            StartStartupFallbackTimer()
         End If
 
         Try
@@ -189,12 +209,90 @@ Partial Public Class ThisAddIn
     End Sub
 
     ''' <summary>
+    ''' Handles creation of a new Explorer window. Attaches Activate, marks initialized, runs delayed startup, and cleans handlers.
+    ''' </summary>
+    ''' <param name="Explorer">The new Outlook Explorer instance.</param>
+    Private Sub Explorers_NewExplorer(ByVal Explorer As Outlook.Explorer)
+        ' Run delayed tasks ASAP when the first Explorer object is created (before user interaction)
+        Try
+            If Not StartupInitialized Then
+                outlookExplorer = Explorer
+                Try
+                    AddHandler outlookExplorer.Activate, AddressOf Explorer_Activate
+                Catch
+                End Try
+                StartupInitialized = True
+                DelayedStartupTasks()
+                CleanupStartupHandlers()
+            End If
+        Catch
+        End Try
+    End Sub
+
+    ''' <summary>
     ''' Explorer activation callback. Marks startup initialized, removes handler and executes delayed tasks.
     ''' </summary>
     Private Sub Explorer_Activate()
         StartupInitialized = True
-        RemoveHandler outlookExplorer.Activate, AddressOf Explorer_Activate
         DelayedStartupTasks()
+        CleanupStartupHandlers()
+    End Sub
+
+    ''' <summary>
+    ''' Starts a fallback timer to execute delayed startup if activation does not occur.
+    ''' </summary>
+    ''' <param name="ms">Timer interval in milliseconds. Default is 3000.</param>
+    Private Sub StartStartupFallbackTimer(Optional ms As Integer = 3000)
+        If startupFallbackTimer IsNot Nothing Then Return
+        startupFallbackTimer = New System.Windows.Forms.Timer() With {.Interval = ms}
+        AddHandler startupFallbackTimer.Tick,
+        Sub()
+            Try
+                startupFallbackTimer.Stop()
+                startupFallbackTimer.Dispose()
+            Catch
+            End Try
+            startupFallbackTimer = Nothing
+
+            ' IMPORTANT: Do NOT set delayedStartupOnce here.
+            ' Let DelayedStartupTasks() decide single-run via its own Interlocked check.
+            Try
+                StartupInitialized = True
+                DelayedStartupTasks()
+                CleanupStartupHandlers()
+            Catch
+            End Try
+        End Sub
+        Try
+            startupFallbackTimer.Start()
+        Catch
+        End Try
+    End Sub
+
+    ''' <summary>
+    ''' Removes activation and NewExplorer handlers and disposes the fallback timer.
+    ''' </summary>
+    Private Sub CleanupStartupHandlers()
+        Try
+            If outlookExplorer IsNot Nothing Then
+                RemoveHandler outlookExplorer.Activate, AddressOf Explorer_Activate
+            End If
+        Catch
+        End Try
+        Try
+            If explorers IsNot Nothing Then
+                RemoveHandler explorers.NewExplorer, AddressOf Explorers_NewExplorer
+            End If
+        Catch
+        End Try
+        Try
+            If startupFallbackTimer IsNot Nothing Then
+                startupFallbackTimer.Stop()
+                startupFallbackTimer.Dispose()
+                startupFallbackTimer = Nothing
+            End If
+        Catch
+        End Try
     End Sub
 
     ''' <summary>

@@ -1,18 +1,26 @@
 {
   "manifest_version": 3,
   "name": "Red Ink Browser Extension",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Sends the selected text to the user's Red Ink Outlook or Word add-in running for being processed and, as the case may be, returned.",
   "permissions": [
     "contextMenus",
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs",
+    "windows"
   ],
   "host_permissions": [
-    "*://*/*" 
+    "http://127.0.0.1/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "redink_background.js"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "lil@vischer.com"
+    }
   },
   "icons": {
     "16": "redink_icon16.png",

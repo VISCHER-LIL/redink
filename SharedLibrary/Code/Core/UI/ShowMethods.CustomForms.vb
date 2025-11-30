@@ -1175,17 +1175,18 @@ Namespace SharedLibrary
             If String.IsNullOrWhiteSpace(header) Then header = String.Empty
 
             Dim inputForm As New Form() With {
-        .Text = header,
-        .FormBorderStyle = FormBorderStyle.FixedDialog,
-        .StartPosition = FormStartPosition.CenterScreen,
-        .MaximizeBox = False,
-        .MinimizeBox = False,
-        .Font = New System.Drawing.Font("Segoe UI", 9.0F, FontStyle.Regular, GraphicsUnit.Point),
-        .AutoScaleMode = AutoScaleMode.Font,
-        .AutoScaleDimensions = New SizeF(6.0F, 13.0F),
-        .AutoSize = True,
-        .AutoSizeMode = AutoSizeMode.GrowAndShrink
-    }
+                .Text = header,
+                .FormBorderStyle = FormBorderStyle.FixedDialog,
+                .StartPosition = FormStartPosition.CenterScreen,
+                .MaximizeBox = False,
+                .MinimizeBox = False,
+                .Font = New System.Drawing.Font("Segoe UI", 9.0F, FontStyle.Regular, GraphicsUnit.Point),
+                .AutoScaleMode = AutoScaleMode.Font,
+                .AutoScaleDimensions = New SizeF(6.0F, 13.0F),
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .KeyPreview = True ' allow form to see Ctrl+Enter before controls
+            }
 
             ' Set icon
             Dim bmpIcon As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -1193,42 +1194,42 @@ Namespace SharedLibrary
 
             ' Layout
             Dim mainLayout As New TableLayoutPanel() With {
-        .ColumnCount = 2,
-        .Dock = DockStyle.Fill,
-        .AutoSize = True,
-        .AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        .Padding = New Padding(12),
-        .GrowStyle = TableLayoutPanelGrowStyle.AddRows
-    }
+                .ColumnCount = 2,
+                .Dock = DockStyle.Fill,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .Padding = New Padding(12),
+                .GrowStyle = TableLayoutPanelGrowStyle.AddRows
+            }
             mainLayout.ColumnStyles.Add(New ColumnStyle(SizeType.AutoSize))
             mainLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
 
             ' Prompt label
             Dim promptLabel As New System.Windows.Forms.Label() With {
-        .Text = prompt,
-        .AutoSize = True,
-        .MaximumSize = New Size(600, 0),
-        .Margin = New Padding(0, 0, 0, 12)
-    }
+                .Text = prompt,
+                .AutoSize = True,
+                .MaximumSize = New Size(600, 0),
+                .Margin = New Padding(0, 0, 0, 12)
+            }
             mainLayout.Controls.Add(promptLabel, 0, 0)
             mainLayout.SetColumnSpan(promptLabel, 2)
 
             ' Component container + tooltip
             Dim components As New System.ComponentModel.Container()
             Dim toolTip As New System.Windows.Forms.ToolTip(components) With {
-        .ShowAlways = True
-    }
+                .ShowAlways = True
+            }
 
             For i As Integer = 0 To params.Length - 1
                 Dim param = params(i)
                 Dim rawValue As Object = param.Value
 
                 Dim lbl As New System.Windows.Forms.Label() With {
-            .Text = param.Name & ":",
-            .AutoSize = True,
-            .Anchor = AnchorStyles.Left,
-            .Margin = New Padding(0, 0, 8, 8)
-        }
+                    .Text = param.Name & ":",
+                    .AutoSize = True,
+                    .Anchor = AnchorStyles.Left,
+                    .Margin = New Padding(0, 0, 8, 8)
+                }
                 mainLayout.Controls.Add(lbl, 0, i + 1)
 
                 Dim ctrl As Control
@@ -1243,20 +1244,20 @@ Namespace SharedLibrary
 
                 Dim sentinelDisabled As String = "<<disabled>>"
                 Dim disableForSentinel As Boolean =
-            (TypeOf rawValue Is String AndAlso
-             String.Equals(CStr(rawValue), sentinelDisabled, System.StringComparison.Ordinal))
+                    (TypeOf rawValue Is String AndAlso
+                     String.Equals(CStr(rawValue), sentinelDisabled, System.StringComparison.Ordinal))
 
                 If disableForSentinel Then rawValue = ""
 
                 If isNothing OrElse isBool Then
                     Dim initial As Boolean = If(isBool, CBool(rawValue), False)
                     Dim chk As New System.Windows.Forms.CheckBox() With {
-                .Checked = initial,
-                .AutoSize = True,
-                .Anchor = AnchorStyles.Left,
-                .Margin = New Padding(0, 0, 0, 8),
-                .Enabled = Not isNothing
-            }
+                        .Checked = initial,
+                        .AutoSize = True,
+                        .Anchor = AnchorStyles.Left,
+                        .Margin = New Padding(0, 0, 0, 8),
+                        .Enabled = Not isNothing
+                    }
                     If isNothing Then
                         chk.BackColor = SystemColors.Control
                         toolTip.SetToolTip(chk, "Not available")
@@ -1265,13 +1266,13 @@ Namespace SharedLibrary
 
                 ElseIf param.Options IsNot Nothing AndAlso param.Options.Count > 0 AndAlso TypeOf rawValue Is String Then
                     Dim cb As New System.Windows.Forms.ComboBox() With {
-                .DropDownStyle = ComboBoxStyle.DropDownList,
-                .MaxDropDownItems = 5,
-                .IntegralHeight = False,
-                .Anchor = AnchorStyles.Left Or AnchorStyles.Right,
-                .Margin = New Padding(0, 0, 0, 12),
-                .MinimumSize = New Size(400, 0)
-            }
+                        .DropDownStyle = ComboBoxStyle.DropDownList,
+                        .MaxDropDownItems = 5,
+                        .IntegralHeight = False,
+                        .Anchor = AnchorStyles.Left Or AnchorStyles.Right,
+                        .Margin = New Padding(0, 0, 0, 12),
+                        .MinimumSize = New Size(400, 0)
+                    }
                     cb.Items.AddRange(param.Options.ToArray())
                     If param.Options.Contains(CStr(rawValue)) Then cb.SelectedItem = rawValue
 
@@ -1287,17 +1288,17 @@ Namespace SharedLibrary
 
                     ' Tooltip if truncated
                     Dim updateToolTip As EventHandler =
-                Sub(sender As Object, eArgs As EventArgs)
-                    Dim combo = DirectCast(sender, ComboBox)
-                    Dim t = combo.Text
-                    Dim tw = TextRenderer.MeasureText(t, combo.Font).Width
-                    Dim usable = Math.Max(0, combo.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 6)
-                    If tw > usable Then
-                        toolTip.SetToolTip(combo, t)
-                    Else
-                        toolTip.SetToolTip(combo, Nothing)
-                    End If
-                End Sub
+                        Sub(sender As Object, eArgs As EventArgs)
+                            Dim combo = DirectCast(sender, ComboBox)
+                            Dim t = combo.Text
+                            Dim tw = TextRenderer.MeasureText(t, combo.Font).Width
+                            Dim usable = Math.Max(0, combo.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 6)
+                            If tw > usable Then
+                                toolTip.SetToolTip(combo, t)
+                            Else
+                                toolTip.SetToolTip(combo, Nothing)
+                            End If
+                        End Sub
                     AddHandler cb.SelectedIndexChanged, updateToolTip
                     AddHandler cb.TextChanged, updateToolTip
                     AddHandler cb.Resize, updateToolTip
@@ -1308,10 +1309,10 @@ Namespace SharedLibrary
 
                 Else
                     Dim txt As New TextBox() With {
-                .Text = rawValue.ToString(),
-                .Anchor = AnchorStyles.Left Or AnchorStyles.Right,
-                .Margin = New Padding(0, 0, 0, 8)
-            }
+                        .Text = rawValue.ToString(),
+                        .Anchor = AnchorStyles.Left Or AnchorStyles.Right,
+                        .Margin = New Padding(0, 0, 0, 8)
+                    }
                     If TypeOf rawValue Is String Then
                         txt.MinimumSize = New Size(400, 0)
                     Else
@@ -1331,20 +1332,27 @@ Namespace SharedLibrary
 
             ' Buttons
             Dim buttonFlow As New FlowLayoutPanel() With {
-        .FlowDirection = FlowDirection.RightToLeft,
-        .Dock = DockStyle.Bottom,
-        .AutoSize = True,
-        .AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        .Padding = New Padding(12, 8, 12, 12)
-    }
+                .FlowDirection = FlowDirection.RightToLeft,
+                .Dock = DockStyle.Bottom,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .Padding = New Padding(12, 8, 12, 12)
+            }
             Dim btnOK As New Button() With {.Text = "OK", .AutoSize = True, .DialogResult = DialogResult.OK}
             Dim btnCancel As New Button() With {.Text = "Cancel", .AutoSize = True, .DialogResult = DialogResult.Cancel}
+
+            ' Add in this order so visual order is [OK][Cancel] with RightToLeft
             buttonFlow.Controls.Add(btnCancel)
             buttonFlow.Controls.Add(btnOK)
 
+            ' Ensure Tab order prefers OK when tabbing out of the last field
+            btnOK.TabIndex = 0
+            btnCancel.TabIndex = 2 ' will move to 1 if no extra button is added
+
             ' Optional extra button: same behavior as ShowCustomMessageBox
+            Dim extraButton As System.Windows.Forms.Button = Nothing
             If (Not System.String.IsNullOrEmpty(extraButtonText)) AndAlso (extraButtonAction IsNot Nothing) Then
-                Dim extraButton As New System.Windows.Forms.Button() With {
+                extraButton = New System.Windows.Forms.Button() With {
                     .Text = extraButtonText,
                     .AutoSize = True,
                     .Margin = New System.Windows.Forms.Padding(8, btnOK.Margin.Top, 0, btnOK.Margin.Bottom)
@@ -1362,12 +1370,28 @@ Namespace SharedLibrary
                         End If
                     End Sub
 
-                ' Place the extra button to the left of OK (i.e., between Cancel and OK in RightToLeft flow)
+                ' Place the extra button to the left of OK (RightToLeft flow)
                 buttonFlow.Controls.Add(extraButton)
+
+                ' Tab order: OK first, then extra, then Cancel
+                extraButton.TabIndex = 1
+            Else
+                ' No extra button: let Cancel be second
+                btnCancel.TabIndex = 1
             End If
 
             inputForm.Controls.Add(mainLayout)
             inputForm.Controls.Add(buttonFlow)
+
+            ' Ctrl+Enter should trigger OK anywhere on the form
+            AddHandler inputForm.KeyDown,
+                Sub(sender As Object, e As KeyEventArgs)
+                    If e.KeyCode = Keys.Enter AndAlso e.Control Then
+                        btnOK.PerformClick()
+                        e.SuppressKeyPress = True
+                        e.Handled = True
+                    End If
+                End Sub
 
             Dim result = inputForm.ShowDialog()
 

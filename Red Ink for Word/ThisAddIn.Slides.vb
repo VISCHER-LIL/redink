@@ -801,9 +801,12 @@ Partial Public Class ThisAddIn
                         Dim tmpEl As System.Text.Json.JsonElement
                         If actElem.TryGetProperty("layoutRelId", tmpEl) Then
                             layoutRelId = tmpEl.GetString()
+                        ElseIf actElem.TryGetProperty("layoutKey", tmpEl) AndAlso tmpEl.ValueKind = JsonValueKind.Object Then
+                            Dim ridEl As JsonElement
+                            If tmpEl.TryGetProperty("relId", ridEl) Then
+                                layoutRelId = ridEl.GetString()
+                            End If
                         End If
-                        ' (optional) if you later support layoutKey { relId|uri|name }, you could read it here when layoutRelId Is Nothing
-
 
                         ' 5.2 Clone slide
                         Dim newSp As DocumentFormat.OpenXml.Packaging.SlidePart =
@@ -815,7 +818,8 @@ Partial Public Class ThisAddIn
                             Dim t As String = el.GetProperty("type").GetString()
                             Select Case t
                                 Case "title"
-                                    SetTitle(newSp, el.GetProperty("text").GetString(), el)
+                                    Dim txt = el.GetProperty("text").GetString()
+                                    SetTitle(newSp, txt, el)
                                 Case "shape"
                                     AddShape(presPart, newSp, el)
                                 Case "svg_icon"
@@ -824,18 +828,15 @@ Partial Public Class ThisAddIn
                                     If el.TryGetProperty("transform", Nothing) Then
                                         CreateFreestandingTextBox(presPart, newSp, el)
                                     Else
-                                        SetText(newSp,
-                                            el.GetProperty("placeholder").GetString(),
-                                            el.GetProperty("text").GetString(),
-                                            el)
+                                        ' Don't read placeholder as string anymore - SetText will handle it
+                                        Dim txt = el.GetProperty("text").GetString()
+                                        SetTextWithPlaceholder(newSp, el.GetProperty("placeholder"), txt, el)
                                     End If
                                 Case "bullet_text"
                                     If el.TryGetProperty("transform", Nothing) Then
-                                        ' freestanding list
                                         CreateFreestandingTextBox(presPart, newSp, el)
                                     Else
-                                        ' keep using your original placeholder routine
-                                        SetBullets(newSp, el)
+                                        SetBulletsWithPlaceholder(newSp, el)
                                     End If
                             End Select
                         Next
@@ -1222,17 +1223,18 @@ Partial Public Class ThisAddIn
             If t Is Nothing _
            OrElse t = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Title _
            OrElse t = DocumentFormat.OpenXml.Presentation.PlaceholderValues.CenteredTitle _
-           OrElse t = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Body Then
+           OrElse t = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Body _
+           OrElse t = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Object Then
 
                 ' wipe existing content
                 shp.TextBody?.Remove()
 
                 ' insert minimal, valid skeleton
                 shp.Append(New DocumentFormat.OpenXml.Presentation.TextBody(
-                New DocumentFormat.OpenXml.Drawing.BodyProperties(),
-                New DocumentFormat.OpenXml.Drawing.ListStyle(),
-                New DocumentFormat.OpenXml.Drawing.Paragraph(
-                    New DocumentFormat.OpenXml.Drawing.EndParagraphRunProperties())))
+                    New DocumentFormat.OpenXml.Drawing.BodyProperties(),
+                    New DocumentFormat.OpenXml.Drawing.ListStyle(),
+                    New DocumentFormat.OpenXml.Drawing.Paragraph(
+                        New DocumentFormat.OpenXml.Drawing.EndParagraphRunProperties())))
             End If
         Next
     End Sub
@@ -1324,18 +1326,17 @@ Partial Public Class ThisAddIn
     text As String,
     el As System.Text.Json.JsonElement
 )
-        ' 1) Alle Shapes auf der Folie ermitteln
+        ' 1) Alle Shapes auf der Folie  ermitteln
         Dim allShapes = sp.Slide.CommonSlideData.ShapeTree.
                     Elements(Of DocumentFormat.OpenXml.Presentation.Shape)()
         Dim targetShape As DocumentFormat.OpenXml.Presentation.Shape = Nothing
 
-        ' 1a) Echte Body-Placeholder-Box finden
+        ' 1a) Prefer Body or Object placeholder boxes (and exclude footer/date/slide number)
         For Each shp In allShapes
             Dim ph = shp.NonVisualShapeProperties?.
-                 ApplicationNonVisualDrawingProperties?.
-                 PlaceholderShape
-            If ph IsNot Nothing AndAlso ph.Type IsNot Nothing AndAlso
-           ph.Type.Value = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Body Then
+             ApplicationNonVisualDrawingProperties?.
+             PlaceholderShape
+            If IsBodyLikePlaceholder(ph) Then
                 targetShape = shp
                 Exit For
             End If
@@ -1354,15 +1355,21 @@ Partial Public Class ThisAddIn
             Next
         End If
 
-        ' 1c) Fallback: erstes Nicht-Title-Shape
+        ' 1c) Fallback: erstes Nicht-Title-Shape (and also not footer/date/slide number)
         If targetShape Is Nothing Then
             For Each shp In allShapes
                 Dim ph = shp.NonVisualShapeProperties?.
-                     ApplicationNonVisualDrawingProperties?.
-                     PlaceholderShape
+                 ApplicationNonVisualDrawingProperties?.
+                 PlaceholderShape
                 Dim typ = If(ph?.Type IsNot Nothing, ph.Type.Value, Nothing)
-                If typ <> DocumentFormat.OpenXml.Presentation.PlaceholderValues.Title AndAlso
-               typ <> DocumentFormat.OpenXml.Presentation.PlaceholderValues.CenteredTitle Then
+
+                Dim isTitle = (typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Title OrElse
+                       typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.CenteredTitle)
+                Dim isFooterLike = (typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Footer OrElse
+                            typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.DateAndTime OrElse
+                            typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.SlideNumber)
+
+                If Not isTitle AndAlso Not isFooterLike Then
                     targetShape = shp
                     Exit For
                 End If
@@ -1496,13 +1503,12 @@ Partial Public Class ThisAddIn
                     Elements(Of DocumentFormat.OpenXml.Presentation.Shape)()
         Dim bodyShape As DocumentFormat.OpenXml.Presentation.Shape = Nothing
 
-        ' 2a) Echte Body-Placeholder-Box finden
+        ' 2a) Prefer Body or Object placeholder boxes (and exclude footer/date/slide number)
         For Each shp In allShapes
-            Dim ph = shp.NonVisualShapeProperties? _
-                 .ApplicationNonVisualDrawingProperties? _
-                 .PlaceholderShape
-            If ph IsNot Nothing AndAlso ph.Type IsNot Nothing AndAlso
-           ph.Type.Value = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Body Then
+            Dim ph = shp.NonVisualShapeProperties?.
+             ApplicationNonVisualDrawingProperties?.
+             PlaceholderShape
+            If IsBodyLikePlaceholder(ph) Then
                 bodyShape = shp
                 Exit For
             End If
@@ -1521,15 +1527,21 @@ Partial Public Class ThisAddIn
             Next
         End If
 
-        ' 2c) Fallback: erstes Nicht-Title-Shape
+        ' 2c) Fallback: erstes Nicht-Title-Shape (and also not footer/date/slide number)
         If bodyShape Is Nothing Then
             For Each shp In allShapes
-                Dim ph = shp.NonVisualShapeProperties? _
-                     .ApplicationNonVisualDrawingProperties? _
-                     .PlaceholderShape
+                Dim ph = shp.NonVisualShapeProperties?.
+                 ApplicationNonVisualDrawingProperties?.
+                 PlaceholderShape
                 Dim typ = If(ph?.Type IsNot Nothing, ph.Type.Value, Nothing)
-                If typ <> DocumentFormat.OpenXml.Presentation.PlaceholderValues.Title AndAlso
-               typ <> DocumentFormat.OpenXml.Presentation.PlaceholderValues.CenteredTitle Then
+
+                Dim isTitle = (typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Title OrElse
+                       typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.CenteredTitle)
+                Dim isFooterLike = (typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Footer OrElse
+                            typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.DateAndTime OrElse
+                            typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.SlideNumber)
+
+                If Not isTitle AndAlso Not isFooterLike Then
                     bodyShape = shp
                     Exit For
                 End If
@@ -2226,6 +2238,186 @@ Partial Public Class ThisAddIn
         End If
     End Sub
 
+    Private Function IsBodyLikePlaceholder(ph As DocumentFormat.OpenXml.Presentation.PlaceholderShape) As Boolean
+        If ph Is Nothing Then Return False
+        If ph.Type Is Nothing Then
+            ' Implicit placeholder: treat as body-like only if index is typical for content (not header/footer indices)
+            ' Common patterns: Title = index 0, Subtitle = index 1; Footer/Date/SlideNumber often have explicit types.
+            ' With no type, be conservative: don't auto-accept implicit unless index >= 2.
+            If ph.Index IsNot Nothing Then
+                Return ph.Index.Value >= 2UI
+            End If
+            Return False
+        End If
+
+        Select Case ph.Type.Value
+            Case DocumentFormat.OpenXml.Presentation.PlaceholderValues.Body,
+                 DocumentFormat.OpenXml.Presentation.PlaceholderValues.Object
+                Return True
+            Case DocumentFormat.OpenXml.Presentation.PlaceholderValues.Footer,
+                 DocumentFormat.OpenXml.Presentation.PlaceholderValues.DateAndTime,
+                 DocumentFormat.OpenXml.Presentation.PlaceholderValues.SlideNumber,
+                 DocumentFormat.OpenXml.Presentation.PlaceholderValues.Title,
+                 DocumentFormat.OpenXml.Presentation.PlaceholderValues.CenteredTitle,
+                 DocumentFormat.OpenXml.Presentation.PlaceholderValues.SubTitle
+                Return False
+            Case Else
+                Return False
+        End Select
+    End Function
+
+    Private Sub SetTextWithPlaceholder(
+    sp As SlidePart,
+    placeholderEl As JsonElement,
+    text As String,
+    el As JsonElement)
+
+        Dim targetShape = FindShapeByPlaceholderElement(sp, placeholderEl)
+        If targetShape Is Nothing Then Return
+
+        ' Build TextBody without bullets
+        Dim tb As New DocumentFormat.OpenXml.Presentation.TextBody()
+        tb.Append(New DocumentFormat.OpenXml.Drawing.BodyProperties())
+
+        ' Build paragraph with styles from el
+        Dim para = BuildParagraph(text, el)
+        Dim pPr As New DocumentFormat.OpenXml.Drawing.ParagraphProperties()
+        pPr.Append(New DocumentFormat.OpenXml.Drawing.NoBullet())
+        para.ParagraphProperties = pPr
+
+        tb.Append(para)
+        targetShape.TextBody = tb
+        sp.Slide.Save()
+    End Sub
+
+    Private Sub SetBulletsWithPlaceholder(
+    sp As SlidePart,
+    el As JsonElement)
+
+        Dim placeholderEl As JsonElement
+        If el.TryGetProperty("placeholder", placeholderEl) Then
+            Dim targetShape = FindShapeByPlaceholderElement(sp, placeholderEl)
+            If targetShape Is Nothing Then Return
+
+            ' Create TextBody with proper structure
+            Dim tb As New DocumentFormat.OpenXml.Presentation.TextBody()
+            tb.Append(New DocumentFormat.OpenXml.Drawing.BodyProperties())
+            tb.Append(New DocumentFormat.OpenXml.Drawing.ListStyle())
+
+            ' Process bullets - this is the missing part!
+            Dim tmpEl As JsonElement
+            For Each bElem In el.GetProperty("bullets").EnumerateArray()
+                ' Extract text and level
+                Dim text As String
+                Dim level As Integer = 0
+
+                If bElem.ValueKind = JsonValueKind.Object Then
+                    If bElem.TryGetProperty("text", tmpEl) Then
+                        text = tmpEl.GetString()
+                    Else
+                        Continue For
+                    End If
+                    If bElem.TryGetProperty("level", tmpEl) Then
+                        level = tmpEl.GetInt32()
+                    End If
+                Else
+                    text = bElem.GetString()
+                End If
+
+                ' Build RunProperties from style
+                Dim rp As New DocumentFormat.OpenXml.Drawing.RunProperties()
+                Dim styleEl As JsonElement
+                If el.TryGetProperty("style", styleEl) Then
+                    Dim tmp As JsonElement
+                    If styleEl.TryGetProperty("fontFamily", tmp) Then
+                        rp.Append(New DocumentFormat.OpenXml.Drawing.LatinFont() With {.Typeface = tmp.GetString()})
+                    End If
+                    If styleEl.TryGetProperty("fontSize", tmp) Then
+                        rp.FontSize = CUInt(tmp.GetInt32() * 100)
+                    End If
+                    If styleEl.TryGetProperty("bold", tmp) AndAlso tmp.GetBoolean() Then rp.Bold = True
+                    If styleEl.TryGetProperty("italic", tmp) AndAlso tmp.GetBoolean() Then rp.Italic = True
+                End If
+
+                ' Create ParagraphProperties with level
+                Dim actualLevel = System.Math.Max(0, System.Math.Min(8, level))
+                Dim pPr As New DocumentFormat.OpenXml.Drawing.ParagraphProperties() With {
+                .Level = CByte(actualLevel)
+            }
+
+                ' Build Run and Paragraph
+                Dim runElem = New DocumentFormat.OpenXml.Drawing.Run(rp, New DocumentFormat.OpenXml.Drawing.Text(text))
+                Dim para As New DocumentFormat.OpenXml.Drawing.Paragraph()
+                para.Append(pPr)
+                para.Append(runElem)
+
+                tb.Append(para)
+            Next
+
+            ' If no bullets were added, add an empty paragraph to keep valid structure
+            If Not tb.Elements(Of DocumentFormat.OpenXml.Drawing.Paragraph)().Any() Then
+                tb.Append(New DocumentFormat.OpenXml.Drawing.Paragraph(
+                New DocumentFormat.OpenXml.Drawing.EndParagraphRunProperties()))
+            End If
+
+            targetShape.TextBody = tb
+            sp.Slide.Save()
+        Else
+            ' Fallback to original SetBullets
+            SetBullets(sp, el)
+        End If
+    End Sub
+
+    Private Function FindShapeByPlaceholderElement(
+        sp As SlidePart,
+        placeholderEl As JsonElement) As DocumentFormat.OpenXml.Presentation.Shape
+
+        Dim allShapes = sp.Slide.CommonSlideData.ShapeTree.Elements(Of DocumentFormat.OpenXml.Presentation.Shape)()
+
+        ' Handle object placeholder like { "type": "Body" }
+        If placeholderEl.ValueKind = JsonValueKind.Object Then
+            Dim typeEl As JsonElement
+            If placeholderEl.TryGetProperty("type", typeEl) Then
+                Dim typeStr = typeEl.GetString()
+
+                For Each shp In allShapes
+                    Dim ph = shp.NonVisualShapeProperties?.ApplicationNonVisualDrawingProperties?.PlaceholderShape
+                    If ph Is Nothing Then Continue For
+
+                    Select Case typeStr.ToLower()
+                        Case "body"
+                            If ph.Type IsNot Nothing AndAlso ph.Type.Value = PlaceholderValues.Body Then Return shp
+                        Case "object"
+                            If ph.Type IsNot Nothing AndAlso ph.Type.Value = PlaceholderValues.Object Then Return shp
+                        Case "subtitle"
+                            If ph.Type IsNot Nothing AndAlso ph.Type.Value = PlaceholderValues.SubTitle Then Return shp
+                            If ph.Type Is Nothing AndAlso ph.Index IsNot Nothing AndAlso ph.Index.Value = 1UI Then Return shp
+                        Case "title"
+                            If ph.Type IsNot Nothing AndAlso ph.Type.Value = PlaceholderValues.Title Then Return shp
+                        Case "centeredtitle"
+                            If ph.Type IsNot Nothing AndAlso ph.Type.Value = PlaceholderValues.CenteredTitle Then Return shp
+                    End Select
+                Next
+            End If
+        ElseIf placeholderEl.ValueKind = JsonValueKind.String Then
+            ' Handle string placeholder (shape name match)
+            Dim nameToFind = placeholderEl.GetString()
+            For Each shp In allShapes
+                Dim nm = shp.NonVisualShapeProperties?.NonVisualDrawingProperties?.Name?.Value
+                If Not String.IsNullOrEmpty(nm) AndAlso nm.IndexOf(nameToFind, StringComparison.OrdinalIgnoreCase) >= 0 Then
+                    Return shp
+                End If
+            Next
+        End If
+
+        ' Fallback to body-like placeholder
+        For Each shp In allShapes
+            Dim ph = shp.NonVisualShapeProperties?.ApplicationNonVisualDrawingProperties?.PlaceholderShape
+            If IsBodyLikePlaceholder(ph) Then Return shp
+        Next
+
+        Return Nothing
+    End Function
 
 
 End Class
