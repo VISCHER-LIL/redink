@@ -2077,7 +2077,6 @@ Public Class frmAIChat
     End Function
 
 
-
     Private Function ExecuteInsertBeforeAfterCommand(searchText As String, newText As String, Optional OnlySelection As Boolean = False, Optional InsertBefore As Boolean = False) As Boolean
         Dim doc As Word.Document = Globals.ThisAddIn.Application.ActiveDocument
 
@@ -2116,127 +2115,183 @@ Public Class frmAIChat
             Dim selectionStart As Integer = doc.Application.Selection.Start
             Dim selectionEnd As Integer = doc.Application.Selection.End
 
-            doc.Application.Selection.SetRange(workrange.Start, workrange.End)
+            ' Try to find matches with the original search text
+            Dim searchAttempts As New List(Of String)
+            searchAttempts.Add(searchText)
 
-            ' Add safety measures
-            Dim maxIterations As Integer = 1000
-            Dim iterationCount As Integer = 0
-            Dim lastProcessedPosition As Integer = -1
+            ' If search text has trailing spaces, also try without them
+            If searchText.EndsWith(" ") Then
+                searchAttempts.Add(searchText.TrimEnd())
+            End If
 
-            ' Loop through the content to find and insert at all instances
-            Do While Globals.ThisAddIn.FindLongTextInChunks(searchText, doc.Application.Selection, True) = True
+            ' If search text has leading spaces, also try without them
+            If searchText.StartsWith(" ") Then
+                searchAttempts.Add(searchText.TrimStart())
+            End If
 
-                If doc.Application.Selection Is Nothing Then Exit Do
+            ' If it has both, try fully trimmed
+            If searchText.StartsWith(" ") OrElse searchText.EndsWith(" ") Then
+                searchAttempts.Add(searchText.Trim())
+            End If
 
-                System.Windows.Forms.Application.DoEvents()
-                If (GetAsyncKeyState(System.Windows.Forms.Keys.Escape) And &H8000) <> 0 Then
-                    CommandsList = $"Operation cancelled by user (ESC)." & Environment.NewLine & CommandsList
-                    Exit Do
-                End If
+            ' Remove duplicates
+            searchAttempts = searchAttempts.Distinct().ToList()
 
-                ' Safety check for infinite loop
-                iterationCount += 1
-                If iterationCount > maxIterations Then
-                    Debug.WriteLine($"ExecuteInsertBeforeAfterCommand: Max iterations ({maxIterations}) reached, breaking loop")
-                    Exit Do
-                End If
+            For Each currentSearchText In searchAttempts
+                If found Then Exit For ' If we already found matches, don't try other variants
 
-                ' Check if we're processing the same position again
-                If doc.Application.Selection.Start = lastProcessedPosition Then
-                    Debug.WriteLine("ExecuteInsertBeforeAfterCommand: Stuck at same position, advancing")
-                    doc.Application.Selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
-                    doc.Application.Selection.Move(Word.WdUnits.wdCharacter, 1)
-                    Continue Do
-                End If
-                lastProcessedPosition = doc.Application.Selection.Start
+                Debug.WriteLine($"Trying search variant: '{currentSearchText}'")
 
-                ' Store the found range
-                Dim foundRange As Word.Range = doc.Application.Selection.Range.Duplicate
+                doc.Application.Selection.SetRange(workrange.Start, workrange.End)
 
-                ' Inside ExecuteInsertBeforeAfterCommand, replace the TOC check block with this:
-                Dim tocEnd As Integer = TocEndIfInside(foundRange, doc)
-                If tocEnd > 0 Then
-                    Debug.WriteLine("ExecuteInsertBeforeAfterCommand: Match in TOC -> skipping to end of TOC")
-                    Dim searchLimit As Integer = If(OnlySelection, selectionEnd, doc.Content.End)
-                    Dim continuePos As Integer = Math.Min(tocEnd, searchLimit)
+                ' Add safety measures
+                Dim maxIterations As Integer = 1000
+                Dim iterationCount As Integer = 0
+                Dim lastProcessedPosition As Integer = -1
 
-                    If continuePos >= searchLimit Then
+                ' Loop through the content to find and insert at all instances
+                Do While Globals.ThisAddIn.FindLongTextInChunks(currentSearchText, doc.Application.Selection, True) = True
+
+                    If doc.Application.Selection Is Nothing Then Exit Do
+
+                    System.Windows.Forms.Application.DoEvents()
+                    If (GetAsyncKeyState(System.Windows.Forms.Keys.Escape) And &H8000) <> 0 Then
+                        CommandsList = $"Operation cancelled by user (ESC)." & Environment.NewLine & CommandsList
                         Exit Do
-                    Else
-                        doc.Application.Selection.SetRange(continuePos, searchLimit)
+                    End If
+
+                    ' Safety check for infinite loop
+                    iterationCount += 1
+                    If iterationCount > maxIterations Then
+                        Debug.WriteLine($"ExecuteInsertBeforeAfterCommand: Max iterations ({maxIterations}) reached, breaking loop")
+                        Exit Do
+                    End If
+
+                    ' Check if we're processing the same position again
+                    If doc.Application.Selection.Start = lastProcessedPosition Then
+                        Debug.WriteLine("ExecuteInsertBeforeAfterCommand: Stuck at same position, advancing")
+                        doc.Application.Selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                        doc.Application.Selection.Move(Word.WdUnits.wdCharacter, 1)
                         Continue Do
                     End If
-                End If
+                    lastProcessedPosition = doc.Application.Selection.Start
 
-                found = True
+                    ' Store the found range
+                    Dim foundRange As Word.Range = doc.Application.Selection.Range.Duplicate
 
-                Dim foundStart As Integer = foundRange.Start
-                Dim foundEnd As Integer = foundRange.End
-                Dim insertPosition As Integer
+                    ' Check if in TOC
+                    Dim tocEnd As Integer = TocEndIfInside(foundRange, doc)
+                    If tocEnd > 0 Then
+                        Debug.WriteLine("ExecuteInsertBeforeAfterCommand: Match in TOC -> skipping to end of TOC")
+                        Dim searchLimit As Integer = If(OnlySelection, selectionEnd, doc.Content.End)
+                        Dim continuePos As Integer = Math.Min(tocEnd, searchLimit)
 
-                If InsertBefore Then
-                    insertPosition = foundStart
-                Else
-                    insertPosition = foundEnd
-                End If
+                        If continuePos >= searchLimit Then
+                            Exit Do
+                        Else
+                            doc.Application.Selection.SetRange(continuePos, searchLimit)
+                            Continue Do
+                        End If
+                    End If
 
-                ' Guard against inserting beyond document boundaries
-                Dim docContentEnd As Integer = doc.Content.End
-                If insertPosition > docContentEnd Then
-                    ' If we're at the absolute end, back up one position (typically the final paragraph mark)
-                    insertPosition = docContentEnd
-                End If
+                    found = True
+                    Debug.WriteLine($"Found match at position {foundRange.Start} with search text: '{currentSearchText}'")
 
-                ' Create a new range at the exact insertion point
-                Dim insertRange As Word.Range = doc.Range(insertPosition, insertPosition)
+                    Dim foundStart As Integer = foundRange.Start
+                    Dim foundEnd As Integer = foundRange.End
+                    Dim insertPosition As Integer
 
-                ' Insert the new text at the precise position
-                insertRange.Text = newText
+                    If InsertBefore Then
+                        insertPosition = foundStart
+                    Else
+                        insertPosition = foundEnd
+                    End If
 
-                ' Apply markdown conversion if needed
-                If chkConvertMarkdown.Checked AndAlso newText.Length > 0 Then
+                    ' Check and adjust position BEFORE creating the range
+                    Dim docContentEnd As Integer = doc.Content.End
+
+                    ' In Word, the last valid position is actually End-1 for insertion
+                    ' The End position includes the final paragraph mark which can't be "after"
+                    If insertPosition >= docContentEnd Then
+                        ' For insertAfter at document end, we need special handling
+                        If Not InsertBefore Then
+                            ' Move to just before the final paragraph mark
+                            insertPosition = docContentEnd - 1
+                        End If
+                    End If
+
+                    ' Additional safety: ensure we're within bounds
+                    insertPosition = Math.Max(doc.Content.Start, Math.Min(insertPosition, docContentEnd - 1))
+
                     Try
-                        ' Guard the markdown conversion range as well
-                        Dim conversionStart As Integer = insertPosition
-                        Dim conversionEnd As Integer = Math.Min(insertPosition + Len(newText), doc.Content.End)
-                        doc.Range(conversionStart, conversionEnd).Select()
-                        Globals.ThisAddIn.ConvertMarkdownToWord()
-                    Catch
-                        ' Best effort - continue if conversion fails
+                        ' Create a new range at the exact insertion point
+                        Dim insertRange As Word.Range = doc.Range(insertPosition, insertPosition)
+
+                        ' Insert the new text at the precise position
+                        insertRange.Text = newText
+
+                        ' Apply markdown conversion if needed
+                        If chkConvertMarkdown.Checked AndAlso newText.Length > 0 Then
+                            Try
+                                ' Guard the markdown conversion range as well
+                                Dim conversionStart As Integer = insertPosition
+                                Dim conversionEnd As Integer = Math.Min(insertPosition + Len(newText), doc.Content.End)
+                                doc.Range(conversionStart, conversionEnd).Select()
+                                Globals.ThisAddIn.ConvertMarkdownToWord()
+                            Catch
+                                ' Best effort - continue if conversion fails
+                            End Try
+                        End If
+                    Catch rangeEx As Exception
+                        ' If we still get a range error, try alternative approach
+                        Debug.WriteLine($"Range creation failed at position {insertPosition}, trying alternative")
+                        Try
+                            ' Alternative: use Selection to insert
+                            doc.Application.Selection.SetRange(insertPosition, insertPosition)
+                            doc.Application.Selection.Text = newText
+
+                            If chkConvertMarkdown.Checked AndAlso newText.Length > 0 Then
+                                Globals.ThisAddIn.ConvertMarkdownToWord()
+                            End If
+                        Catch altEx As Exception
+                            Debug.WriteLine($"Alternative insertion also failed: {altEx.Message}")
+                            ' Continue to next match
+                            Continue Do
+                        End Try
                     End Try
-                End If
 
-                ' Calculate where to continue searching from
-                Dim continuePosition As Integer
-                If InsertBefore Then
-                    ' Move past both inserted text and original found text
-                    continuePosition = insertPosition + Len(newText) + (foundEnd - foundStart)
-                Else
-                    ' Move past the insertion point plus the new text
-                    continuePosition = insertPosition + Len(newText)
-                End If
+                    ' Calculate where to continue searching from
+                    Dim continuePosition As Integer
+                    If InsertBefore Then
+                        ' Move past both inserted text and original found text
+                        continuePosition = insertPosition + Len(newText) + (foundEnd - foundStart)
+                    Else
+                        ' Move past the insertion point plus the new text
+                        continuePosition = insertPosition + Len(newText)
+                    End If
 
-                ' Make sure we're moving forward
-                If continuePosition <= lastProcessedPosition Then
-                    continuePosition = lastProcessedPosition + 1
-                End If
+                    ' Make sure we're moving forward
+                    If continuePosition <= lastProcessedPosition Then
+                        continuePosition = lastProcessedPosition + 1
+                    End If
 
-                ' Adjust the working end if text was inserted
-                If OnlySelection Then
-                    selectionEnd = selectionEnd + Len(newText)
-                End If
+                    ' Adjust the working end if text was inserted
+                    If OnlySelection Then
+                        selectionEnd = selectionEnd + Len(newText)
+                    End If
 
-                ' Check if we've reached the end of the search range
-                If OnlySelection Then
-                    If continuePosition >= selectionEnd Then Exit Do
-                    ' Guard against setting range beyond document end
-                    Dim safeEnd As Integer = Math.Min(selectionEnd, doc.Content.End)
-                    doc.Application.Selection.SetRange(continuePosition, safeEnd)
-                Else
-                    If continuePosition >= doc.Content.End Then Exit Do
-                    doc.Application.Selection.SetRange(continuePosition, doc.Content.End)
-                End If
-            Loop
+                    ' Check if we've reached the end of the search range
+                    If OnlySelection Then
+                        If continuePosition >= selectionEnd Then Exit Do
+                        ' Guard against setting range beyond document end
+                        Dim safeEnd As Integer = Math.Min(selectionEnd, doc.Content.End)
+                        doc.Application.Selection.SetRange(continuePosition, safeEnd)
+                    Else
+                        If continuePosition >= doc.Content.End Then Exit Do
+                        doc.Application.Selection.SetRange(continuePosition, doc.Content.End)
+                    End If
+                Loop
+            Next
 
             If Not found Then
                 CommandsList = $"Note: The search term was not found." & Environment.NewLine & CommandsList
