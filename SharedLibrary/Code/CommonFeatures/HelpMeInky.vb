@@ -45,7 +45,8 @@ Namespace SharedLibrary
         Private ReadOnly _btnClear As Button = New Button() With {.Text = "Clear", .AutoSize = True}
         Private ReadOnly _btnClose As Button = New Button() With {.Text = "Close", .AutoSize = True}
         Private ReadOnly _btnSend As Button = New Button() With {.Text = $"Ask {AssistantName}", .AutoSize = True}
-        Private ReadOnly _chkNoTopMost As System.Windows.Forms.CheckBox = New System.Windows.Forms.CheckBox() With {.Text = "Do not stay on top", .AutoSize = True} ' New checkbox
+        Private ReadOnly _chkNoTopMost As System.Windows.Forms.CheckBox = New System.Windows.Forms.CheckBox() With {.Text = "Do not stay on top", .AutoSize = True}
+        Private ReadOnly _chkIncludeConfig As System.Windows.Forms.CheckBox = New System.Windows.Forms.CheckBox() With {.Text = "Include configuration files", .AutoSize = True} ' New checkbox for configs
 
         Private _htmlReady As Boolean = False
         Private ReadOnly _htmlQueue As New List(Of String)()
@@ -101,7 +102,8 @@ Namespace SharedLibrary
             pnlButtons.Controls.Add(_btnSend)
             pnlButtons.Controls.Add(_btnClear)
             pnlButtons.Controls.Add(_btnClose)
-            pnlButtons.Controls.Add(_chkNoTopMost) ' Add checkbox to button panel
+            pnlButtons.Controls.Add(_chkNoTopMost)
+            pnlButtons.Controls.Add(_chkIncludeConfig) ' Add config checkbox to button panel
 
             table.Controls.Add(_chat, 0, 0)
             table.Controls.Add(_txtInput, 0, 1)
@@ -125,6 +127,7 @@ Namespace SharedLibrary
             AddHandler _chat.Navigating, AddressOf Chat_Navigating
             AddHandler _chat.NewWindow, AddressOf Chat_NewWindow
             AddHandler _chkNoTopMost.CheckedChanged, AddressOf OnTopMostChanged
+            AddHandler _chkIncludeConfig.CheckedChanged, AddressOf OnIncludeConfigChanged
         End Sub
 
         Private Sub Dbg(msg As String)
@@ -158,11 +161,19 @@ Namespace SharedLibrary
 
         Private Sub OnTopMostChanged(sender As Object, e As EventArgs)
             Try
-                My.Settings.HelpMeNoTopMost = _chkNoTopMost.Checked ' Ensure you add this Boolean setting
+                My.Settings.HelpMeNoTopMost = _chkNoTopMost.Checked
                 My.Settings.Save()
             Catch
             End Try
             ApplyTopMostBehavior()
+        End Sub
+
+        Private Sub OnIncludeConfigChanged(sender As Object, e As EventArgs)
+            Try
+                My.Settings.HelpMeIncludeConfig = _chkIncludeConfig.Checked
+                My.Settings.Save()
+            Catch
+            End Try
         End Sub
 
         Private Sub ApplyTopMostBehavior()
@@ -197,6 +208,14 @@ Namespace SharedLibrary
             Catch
                 _chkNoTopMost.Checked = False
             End Try
+
+            ' Load persisted IncludeConfig choice
+            Try
+                _chkIncludeConfig.Checked = My.Settings.HelpMeIncludeConfig
+            Catch
+                _chkIncludeConfig.Checked = False
+            End Try
+
             ApplyTopMostBehavior()
 
             InitializeChatHtml()
@@ -223,6 +242,7 @@ Namespace SharedLibrary
                     My.Settings.HelpMeFormSize = Me.RestoreBounds.Size
                 End If
                 My.Settings.HelpMeNoTopMost = _chkNoTopMost.Checked
+                My.Settings.HelpMeIncludeConfig = _chkIncludeConfig.Checked
                 My.Settings.Save()
             Catch ex As Exception
                 Dbg("OnFormClosing error: " & ex.Message)
@@ -346,6 +366,15 @@ Namespace SharedLibrary
                 sb.AppendLine("Conversation so far:")
                 sb.AppendLine(convo)
 
+                ' Include configuration files if checkbox is checked
+                If _chkIncludeConfig.Checked Then
+                    Dim configContent = GetConfigurationContent()
+                    If Not String.IsNullOrEmpty(configContent) Then
+                        sb.AppendLine()
+                        sb.AppendLine(configContent)
+                    End If
+                End If
+
                 Dim sw = Stopwatch.StartNew()
                 Dim answer As String = Await CallHelpMeLlmAsync(systemPrompt, sb.ToString())
                 sw.Stop()
@@ -362,6 +391,126 @@ Namespace SharedLibrary
                 RemoveAssistantThinking()
                 AppendAssistantMarkdown("*(Error: " & System.Security.SecurityElement.Escape(ex.Message) & ")*")
             End Try
+        End Function
+
+        Private Function GetConfigurationContent() As String
+            Try
+                Dim sb As New StringBuilder()
+                sb.AppendLine("<Configuration Files>")
+
+                ' Get main config file
+                Dim mainPath As String = Nothing
+                Try
+                    mainPath = GetActiveConfigFilePath(_context)
+                Catch
+                End Try
+
+                If Not String.IsNullOrWhiteSpace(mainPath) AndAlso File.Exists(mainPath) Then
+                    sb.AppendLine($"<Main Configuration ({AN2}.ini)>")
+                    sb.AppendLine($"Path: {mainPath}")
+                    Try
+                        Dim content = File.ReadAllText(mainPath)
+                        sb.AppendLine(SanitizeConfigContent(content))
+                    Catch ex As Exception
+                        sb.AppendLine($"Error reading file: {ex.Message}")
+                    End Try
+                    sb.AppendLine($"</Main Configuration>")
+                End If
+
+                ' Get default INI paths if available (assuming DefaultINIPaths exists in SharedMethods)
+                Try
+                    Dim defaultPaths = SharedMethods.DefaultINIPaths
+                    For Each kvp In defaultPaths
+                        Dim p = Environment.ExpandEnvironmentVariables(kvp.Value)
+                        If File.Exists(p) AndAlso Not String.Equals(p, mainPath, StringComparison.OrdinalIgnoreCase) Then
+                            sb.AppendLine($"<{kvp.Key} Configuration>")
+                            sb.AppendLine($"Path: {p}")
+                            Try
+                                Dim content = File.ReadAllText(p)
+                                sb.AppendLine(SanitizeConfigContent(content))
+                            Catch ex As Exception
+                                sb.AppendLine($"Error reading file: {ex.Message}")
+                            End Try
+                            sb.AppendLine($"</{kvp.Key} Configuration>")
+                        End If
+                    Next
+                Catch
+                    ' DefaultINIPaths might not be accessible
+                End Try
+
+                ' Alternate model path
+                If Not String.IsNullOrWhiteSpace(_context.INI_AlternateModelPath) Then
+                    Dim alt = Environment.ExpandEnvironmentVariables(_context.INI_AlternateModelPath)
+                    If File.Exists(alt) AndAlso Not String.Equals(alt, mainPath, StringComparison.OrdinalIgnoreCase) Then
+                        sb.AppendLine("<Alternate Model Configuration>")
+                        sb.AppendLine($"Path: {alt}")
+                        Try
+                            Dim content = File.ReadAllText(alt)
+                            sb.AppendLine(SanitizeConfigContent(content))
+                        Catch ex As Exception
+                            sb.AppendLine($"Error reading file: {ex.Message}")
+                        End Try
+                        sb.AppendLine("</Alternate Model Configuration>")
+                    End If
+                End If
+
+                ' Special service path
+                If Not String.IsNullOrWhiteSpace(_context.INI_SpecialServicePath) Then
+                    Dim sp = Environment.ExpandEnvironmentVariables(_context.INI_SpecialServicePath)
+                    If File.Exists(sp) AndAlso Not String.Equals(sp, mainPath, StringComparison.OrdinalIgnoreCase) Then
+                        sb.AppendLine("<Special Service Configuration>")
+                        sb.AppendLine($"Path: {sp}")
+                        Try
+                            Dim content = File.ReadAllText(sp)
+                            sb.AppendLine(SanitizeConfigContent(content))
+                        Catch ex As Exception
+                            sb.AppendLine($"Error reading file: {ex.Message}")
+                        End Try
+                        sb.AppendLine("</Special Service Configuration>")
+                    End If
+                End If
+
+                sb.AppendLine("</Configuration Files>")
+                Return sb.ToString()
+            Catch ex As Exception
+                Dbg($"GetConfigurationContent error: {ex.Message}")
+                Return $"<Configuration Files>Error retrieving configuration: {ex.Message}</Configuration Files>"
+            End Try
+        End Function
+
+        Private Function SanitizeConfigContent(content As String) As String
+            If String.IsNullOrEmpty(content) Then Return content
+
+            Dim lines = content.Split({vbCrLf, vbLf, vbCr}, StringSplitOptions.None)
+            Dim result As New StringBuilder()
+
+            For Each line In lines
+                Dim trimmedLine = line.TrimStart()
+
+                ' Skip comment lines (starting with ;)
+                If trimmedLine.StartsWith(";") Then
+                    Continue For
+                End If
+
+                ' Check if this line contains an API key
+                Dim apiKeyMatch = Regex.Match(line, "^(\s*APIKey(?:_2)?)\s*=\s*(.*)$", RegexOptions.IgnoreCase)
+                If apiKeyMatch.Success Then
+                    Dim key = apiKeyMatch.Groups(1).Value
+                    Dim value = apiKeyMatch.Groups(2).Value.Trim()
+                    If String.IsNullOrWhiteSpace(value) Then
+                        ' Keep blank API keys as is
+                        result.AppendLine(line)
+                    Else
+                        ' Replace non-blank API keys with placeholder
+                        result.AppendLine($"{key}=[for security reasons, you are not provided with the real API key contained in this file]")
+                    End If
+                Else
+                    ' Keep non-API key lines as is
+                    result.AppendLine(line)
+                End If
+            Next
+
+            Return result.ToString().TrimEnd()
         End Function
 
         Private Async Function CallHelpMeLlmAsync(systemPrompt As String, userPrompt As String) As Task(Of String)

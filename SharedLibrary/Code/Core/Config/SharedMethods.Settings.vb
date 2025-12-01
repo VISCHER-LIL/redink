@@ -1675,7 +1675,7 @@ Namespace SharedLibrary
         End Sub
 
 
-        Private Shared Function GetActiveConfigFilePath(context As ISharedContext) As String
+        Public Shared Function GetActiveConfigFilePath(context As ISharedContext) As String
             Dim regPath As String = GetFromRegistry(RegPath_Base, RegPath_IniPath, True)
             Dim defaultPathApp As String = GetDefaultINIPath(context.RDV)
             Dim defaultPathWord As String = GetDefaultINIPath("Word")

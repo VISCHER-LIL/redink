@@ -37,7 +37,7 @@ Legal Timeline | Extract chronological factual legal case events: event type, pa
 
 Relationships | You need to provide an overview of the relations of the various parties with each other. Extract: name, function/company, an in-depth analysis (in keywords) of their distinct role they play in the present case, an in-depth analysis (in keywords) of the relationships they have with the various other parties (for each person one bullet point covering topics, emotions, familiarity, formal aspects, language etc.) | Person:text*; Function/Company:text; Role:text; Relationship:text | True | 1 | Produce one fact-focused, short narrative for the person.
 
-including any distinct aspects, how close it is, etc.). | Person:text*; Function/Company:text; Relevance:text; Relationships:text | True | 1 | Produce one fact-focused, short narrative for the person.
+Document Overview | You need to provide an overview of the key contents of documents. Extract: Type of document (mail, agreement, letter, memo, minutes etc.), date (if not contained in the document, leave empty), parties involved, key content, relevance | Type:text; Date:date*; Parties:text; Content:text; Relevance:text | False 
 
 Email Communications | Extract email metadata and salient points. | Sent Date:date*; Sender:text; Recipients:text; Subject:text; Key Points:text | True | 1 | Merge key points into distilled summary; list distinct subjects; aggregate unique senders and recipients.
 

@@ -40,7 +40,7 @@
     <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\redink_prerelease\word\</PublishUrl>
     <InstallUrl>https://apps.vischer.com/redink/word/</InstallUrl>
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.1.1.100</ApplicationVersion>
+    <ApplicationVersion>0.1.1.101</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>

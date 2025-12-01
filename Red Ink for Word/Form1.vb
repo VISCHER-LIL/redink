@@ -1820,6 +1820,12 @@ Public Class frmAIChat
 
                 If doc.Application.Selection Is Nothing Then Exit Do
 
+                System.Windows.Forms.Application.DoEvents()
+                If (GetAsyncKeyState(System.Windows.Forms.Keys.Escape) And &H8000) <> 0 Then
+                    CommandsList = $"Operation cancelled by user (ESC)." & Environment.NewLine & CommandsList
+                    Exit Do
+                End If
+
                 found = True
 
                 ' Highlight the found text
@@ -1917,6 +1923,13 @@ Public Class frmAIChat
                 Return False
             End If
 
+            ' CRITICAL CHECK: Prevent infinite loop when oldText is contained in newText
+            If Not String.IsNullOrEmpty(newText) AndAlso newText.Contains(oldText) Then
+                ' Log warning but still proceed with a safer approach
+                Debug.WriteLine($"WARNING: Replacement text contains search text. Using safe replacement mode.")
+                CommandsList = $"Note: Replacement text contains search text (using safe mode)." & Environment.NewLine & CommandsList
+            End If
+
             doc.Application.Activate()
             doc.Activate()
 
@@ -1944,9 +1957,9 @@ Public Class frmAIChat
             Dim newTextWithMarker As String
             If newText.Length > 2 Then
                 newTextWithMarker =
-                    newText.Substring(0, newText.Length - 2) &
-                    Marker &
-                    newText.Substring(newText.Length - 2)
+                newText.Substring(0, newText.Length - 2) &
+                Marker &
+                newText.Substring(newText.Length - 2)
             Else
                 newTextWithMarker = newText
             End If
@@ -1957,41 +1970,72 @@ Public Class frmAIChat
 
             Dim found As Boolean = False
 
+            ' Track processed positions to prevent re-processing the same location
+            Dim processedPositions As New HashSet(Of Integer)
+            Dim maxIterations As Integer = 1000
+            Dim iterationCount As Integer = 0
+
             ' Loop through the content to find and replace all instances
             Do While Globals.ThisAddIn.FindLongTextInChunks(oldText, doc.Application.Selection, True) = True
                 If doc.Application.Selection Is Nothing Then Exit Do
-                If (GetAsyncKeyState(System.Windows.Forms.Keys.Escape) And 1) <> 0 Then Exit Do
 
+                System.Windows.Forms.Application.DoEvents()
+                If (GetAsyncKeyState(System.Windows.Forms.Keys.Escape) And &H8000) <> 0 Then
+                    CommandsList = $"Operation cancelled by user (ESC)." & Environment.NewLine & CommandsList
+                    Exit Do
+                End If
+
+                ' Safety check for infinite loop
+                iterationCount += 1
+                If iterationCount > maxIterations Then
+                    CommandsList = $"Warning: Max iterations reached, stopping to prevent infinite loop." & Environment.NewLine & CommandsList
+                    Exit Do
+                End If
+
+                Dim matchStart As Integer = doc.Application.Selection.Start
+
+                ' Check if we've already processed this position
+                If processedPositions.Contains(matchStart) Then
+                    ' Skip this position and move forward
+                    doc.Application.Selection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                    doc.Application.Selection.Move(Word.WdUnits.wdCharacter, 1)
+                    Continue Do
+                End If
+
+                processedPositions.Add(matchStart)
                 found = True
 
                 Dim currentEnd As Integer
 
-                ' Remember where the match starts; Selection will move after assignment
-                Dim matchStart As Integer = doc.Application.Selection.Start
+                ' Replace the text
+                doc.Application.Selection.Text = newTextWithMarker
 
-                    ' Replace the text
-                    doc.Application.Selection.Text = newTextWithMarker
+                ' Select exactly the inserted span for conversion, if any
+                If chkConvertMarkdown.Checked AndAlso newTextWithMarker.Length > 0 Then
+                    Try
+                        Dim insStart As Integer = matchStart
+                        Dim insEnd As Integer = matchStart + Len(newTextWithMarker)
+                        doc.Range(insStart, insEnd).Select()
+                        Globals.ThisAddIn.ConvertMarkdownToWord()
+                    Catch
+                        ' Best effort
+                    End Try
+                End If
 
-                    ' Select exactly the inserted span for conversion, if any
-                    If chkConvertMarkdown.Checked AndAlso newTextWithMarker.Length > 0 Then
-                        Try
-                            Dim insStart As Integer = matchStart
-                            Dim insEnd As Integer = matchStart + Len(newTextWithMarker)
-                            doc.Range(insStart, insEnd).Select()
-                            Globals.ThisAddIn.ConvertMarkdownToWord()
-                        Catch
-                            ' Best effort
-                        End Try
-                    End If
+                ' Maintain selection bounds when constrained
+                If OnlySelection Then
+                    selectionEnd = selectionEnd - Len(oldText) + Len(newTextWithMarker)
+                End If
 
-                    ' Maintain selection bounds when constrained
-                    If OnlySelection Then
-                        selectionEnd = selectionEnd - Len(oldText) + Len(newTextWithMarker)
-                    End If
-
-                    ' Continue after the inserted text
+                ' Skip past the entire replacement to avoid re-finding it
+                ' If newText contains oldText, we must skip the entire replacement
+                If Not String.IsNullOrEmpty(newText) AndAlso newText.Contains(oldText) Then
+                    ' Skip the entire replacement text
                     currentEnd = matchStart + Len(newTextWithMarker)
-
+                Else
+                    ' Original behavior: continue from where the old text ended in the new position
+                    currentEnd = matchStart + Math.Max(Len(newTextWithMarker), Len(oldText))
+                End If
 
                 ' Continue searching within the allowed range
                 If OnlySelection Then
@@ -2015,9 +2059,9 @@ Public Class frmAIChat
 
         Catch ex As System.Exception
 #If DEBUG Then
-            Debug.WriteLine("Error: " & ex.Message)
-            Debug.WriteLine("Stacktrace: " & ex.StackTrace)
-            System.Diagnostics.Debugger.Break()
+        Debug.WriteLine("Error: " & ex.Message)
+        Debug.WriteLine("Stacktrace: " & ex.StackTrace)
+        System.Diagnostics.Debugger.Break()
 #End If
             MsgBox("Error in ExecuteReplaceCommand: " & ex.Message, MsgBoxStyle.Critical)
             Return False
@@ -2084,6 +2128,12 @@ Public Class frmAIChat
 
                 If doc.Application.Selection Is Nothing Then Exit Do
 
+                System.Windows.Forms.Application.DoEvents()
+                If (GetAsyncKeyState(System.Windows.Forms.Keys.Escape) And &H8000) <> 0 Then
+                    CommandsList = $"Operation cancelled by user (ESC)." & Environment.NewLine & CommandsList
+                    Exit Do
+                End If
+
                 ' Safety check for infinite loop
                 iterationCount += 1
                 If iterationCount > maxIterations Then
@@ -2130,6 +2180,13 @@ Public Class frmAIChat
                     insertPosition = foundEnd
                 End If
 
+                ' Guard against inserting beyond document boundaries
+                Dim docContentEnd As Integer = doc.Content.End
+                If insertPosition > docContentEnd Then
+                    ' If we're at the absolute end, back up one position (typically the final paragraph mark)
+                    insertPosition = docContentEnd
+                End If
+
                 ' Create a new range at the exact insertion point
                 Dim insertRange As Word.Range = doc.Range(insertPosition, insertPosition)
 
@@ -2139,7 +2196,10 @@ Public Class frmAIChat
                 ' Apply markdown conversion if needed
                 If chkConvertMarkdown.Checked AndAlso newText.Length > 0 Then
                     Try
-                        doc.Range(insertPosition, insertPosition + Len(newText)).Select()
+                        ' Guard the markdown conversion range as well
+                        Dim conversionStart As Integer = insertPosition
+                        Dim conversionEnd As Integer = Math.Min(insertPosition + Len(newText), doc.Content.End)
+                        doc.Range(conversionStart, conversionEnd).Select()
                         Globals.ThisAddIn.ConvertMarkdownToWord()
                     Catch
                         ' Best effort - continue if conversion fails
@@ -2169,7 +2229,9 @@ Public Class frmAIChat
                 ' Check if we've reached the end of the search range
                 If OnlySelection Then
                     If continuePosition >= selectionEnd Then Exit Do
-                    doc.Application.Selection.SetRange(continuePosition, selectionEnd)
+                    ' Guard against setting range beyond document end
+                    Dim safeEnd As Integer = Math.Min(selectionEnd, doc.Content.End)
+                    doc.Application.Selection.SetRange(continuePosition, safeEnd)
                 Else
                     If continuePosition >= doc.Content.End Then Exit Do
                     doc.Application.Selection.SetRange(continuePosition, doc.Content.End)
@@ -2180,9 +2242,11 @@ Public Class frmAIChat
                 CommandsList = $"Note: The search term was not found." & Environment.NewLine & CommandsList
             End If
 
-            ' Restore original selection
+            ' Restore original selection with boundary guards
             Try
-                doc.Application.Selection.SetRange(selectionStart, selectionEnd)
+                Dim safeStart As Integer = Math.Max(doc.Content.Start, Math.Min(selectionStart, doc.Content.End))
+                Dim safeEnd As Integer = Math.Max(doc.Content.Start, Math.Min(selectionEnd, doc.Content.End))
+                doc.Application.Selection.SetRange(safeStart, safeEnd)
                 doc.Application.Selection.Select()
             Catch
                 ' If restoration fails, just collapse to start
@@ -2208,143 +2272,6 @@ Public Class frmAIChat
             'doc.Application.UserName = originalAuthor
         End Try
     End Function
-
-    Private Function oldExecuteInsertBeforeAfterCommand(searchText As String, newText As String, Optional OnlySelection As Boolean = False, Optional InsertBefore As Boolean = False) As Boolean
-        Dim doc As Word.Document = Globals.ThisAddIn.Application.ActiveDocument
-
-        ' Save the current state of Track Changes and Author
-        Dim trackChangesEnabled As Boolean = doc.TrackRevisions
-        Dim originalAuthor As String = doc.Application.UserName
-
-        Try
-            searchText = DecodeParagraphMarks(searchText)
-            newText = DecodeParagraphMarks(newText)
-            If String.IsNullOrWhiteSpace(searchText) Then
-                CommandsList = $"Note: Empty insertion anchor (ignored)." & Environment.NewLine & CommandsList
-                Return False
-            End If
-
-            doc.Application.Activate()
-            doc.Activate()
-
-            ' Enable Track Changes
-            doc.TrackRevisions = True
-
-            ' Determine the range for the search
-            Dim workrange As Word.Range
-            If OnlySelection Then
-                If doc.Application.Selection Is Nothing OrElse doc.Application.Selection.Range.Text = "" Then
-                    OnlySelection = False
-                    workrange = doc.Content
-                Else
-                    workrange = doc.Application.Selection.Range
-                End If
-            Else
-                workrange = doc.Content
-            End If
-
-            Dim found As Boolean = False
-            Dim selectionStart As Integer = doc.Application.Selection.Start
-            Dim selectionEnd As Integer = doc.Application.Selection.End
-
-            doc.Application.Selection.SetRange(workrange.Start, workrange.End)
-
-            ' Add a safety counter to prevent infinite loops
-            Dim maxIterations As Integer = 1000
-            Dim iterationCount As Integer = 0
-
-            ' Loop through the content to find and insert at all instances
-            Do While Globals.ThisAddIn.FindLongTextInChunks(searchText, doc.Application.Selection, True) = True
-
-                If doc.Application.Selection Is Nothing Then Exit Do
-
-                ' Safety check for infinite loop
-                iterationCount += 1
-                If iterationCount > maxIterations Then
-                    Debug.WriteLine($"ExecuteInsertBeforeAfterCommand: Max iterations ({maxIterations}) reached, breaking loop")
-                    Exit Do
-                End If
-
-                found = True
-
-                ' Store the found range boundaries immediately after finding
-                Dim foundRange As Word.Range = doc.Application.Selection.Range.Duplicate
-                Dim foundOriginalEnd As Integer = foundRange.End  ' Store the original end position
-                Dim insertPosition As Integer
-
-                If InsertBefore Then
-                    ' For insert before, use the start of the found range
-                    insertPosition = foundRange.Start
-                Else
-                    ' For insert after, use the end of the found range
-                    insertPosition = foundRange.End
-                End If
-
-                ' Create a new range at the exact insertion point
-                Dim insertRange As Word.Range = doc.Range(insertPosition, insertPosition)
-
-                ' Insert the new text at the precise position
-                insertRange.Text = newText
-
-                ' Apply markdown conversion if needed
-                If chkConvertMarkdown.Checked Then
-                    ' Select the newly inserted text for conversion
-                    doc.Range(insertPosition, insertPosition + Len(newText)).Select()
-                    Globals.ThisAddIn.ConvertMarkdownToWord()
-                End If
-
-                ' Calculate the position to continue searching from
-                ' We need to move past both the found text and (if inserting before) the inserted text
-                Dim continuePosition As Integer
-                If InsertBefore Then
-                    ' Skip past the inserted text AND the original found text
-                    continuePosition = insertPosition + Len(newText) + (foundOriginalEnd - insertPosition)
-                Else
-                    ' We're already past the found text, just account for the inserted text
-                    continuePosition = insertPosition + Len(newText)
-                End If
-
-                ' Adjust the working end if text was inserted
-                selectionEnd = selectionEnd + Len(newText)
-
-                ' Check if we've reached the end of the search range
-                If OnlySelection Then
-                    If continuePosition >= selectionEnd Then Exit Do
-                    doc.Application.Selection.SetRange(continuePosition, selectionEnd)
-                Else
-                    If continuePosition >= doc.Content.End Then Exit Do
-                    doc.Application.Selection.SetRange(continuePosition, doc.Content.End)
-                End If
-            Loop
-
-            If Not found Then
-                CommandsList = $"Note: The search term was not found." & Environment.NewLine & CommandsList
-            End If
-
-            ' Restore original selection
-            doc.Application.Selection.SetRange(selectionStart, selectionEnd)
-            doc.Application.Selection.Select()
-
-            Return found
-
-        Catch ex As System.Exception
-
-#If DEBUG Then
-        Debug.WriteLine("Error: " & ex.Message)
-        Debug.WriteLine("Stacktrace: " & ex.StackTrace)
-        System.Diagnostics.Debugger.Break()
-#End If
-
-            MsgBox("Error in ExecuteInsertBeforeAfterCommand: " & ex.Message, MsgBoxStyle.Critical)
-            Return False
-
-        Finally
-            ' Restore the original state of Track Changes and Author
-            doc.TrackRevisions = trackChangesEnabled
-            'doc.Application.UserName = originalAuthor
-        End Try
-    End Function
-
 
 
     Private Function ExecuteInsertCommand(newText As String) As Boolean
