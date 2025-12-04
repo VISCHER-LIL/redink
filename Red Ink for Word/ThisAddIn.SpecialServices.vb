@@ -149,12 +149,14 @@ Partial Public Class ThisAddIn
                 optsCodeList.Add(codeList)
             Next
 
+            Dim runQueryAssistant As Boolean = False
+
             If Not String.IsNullOrWhiteSpace(SP_QueryPrompt) Then
                 parameterDefs.Add(New SharedLibrary.SharedLibrary.SharedMethods.InputParameter("Run query assistant", False))
+                runQueryAssistant = True
             End If
 
             OtherPrompt = ""
-            Dim runQueryAssistant As Boolean = False
 
             If parameterDefs.Count > 0 Then
                 Dim parameters() As SharedLibrary.SharedLibrary.SharedMethods.InputParameter = parameterDefs.ToArray()
@@ -165,11 +167,13 @@ Partial Public Class ThisAddIn
                     Dim userParamCount As Integer = parameters.Length
 
                     ' Strip optional trailing boolean (query assistant) if present
-                    If userParamCount > 0 Then
+                    If userParamCount > 0 AndAlso runQueryAssistant Then
                         Dim lastParam = parameters(userParamCount - 1)
                         If TypeOf lastParam.Value Is Boolean Then
                             runQueryAssistant = CType(lastParam.Value, Boolean)
                             userParamCount -= 1
+                        Else
+                            runQueryAssistant = False
                         End If
                     End If
 

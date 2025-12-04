@@ -86,12 +86,12 @@ B. Basic functions of Red Ink in Word
 22 The predefined AI functions are:
 * To English, To German, To Other: The selected text is translated and replaced with the translation. To Other can be used for a translation into numerous other languages. It just needs to be specified (in English), e.g. "French" rather than "Français". The two languages "English" and "German" are preconfigured in the menus but can be changed. Two remarks: The AI is instructed not to insert double spaces after punctuation marks (as was previously common in certain languages). It is also instructed to maintain the style of the original text when translating, and to use a formal style in cases of doubt. The English "you" is translated to "Sie" on this basis and not to "Du", unless the text contains indications of informal language such as addressing or greeting by first name only.
 * Correct: The selected text is linguistically corrected, i.e. not only spelling mistakes but also other errors, such as unsuitable words or incorrect punctuation marks.
-* Improve: Here, the text is also proofread and improved in terms of content, but without adding new information. For example, suggestions are made to make it easier to understand. Besides Improve, the same menu also offers the options No Filler Words to remove filler words and redundancies, More Friendly to make the selected text friendlier, and More Convincing to make it more persuasive. Finally, if a MyStyle prompt file has been configured, the Apply MyStyle function can also be selected (see para. 50 et seq.). 
+* Improve: Here, the text is also proofread and improved in terms of content, but without adding new information. For example, suggestions are made to make it easier to understand. Besides Improve, the same menu also offers the options No Filler Words to remove filler words and redundancies, More Friendly to make the selected text friendlier, and More Convincing to make it more persuasive. Those who want to can also have their text artificially "inflated" by the AI with Filibuster. Finally, if a MyStyle prompt file has been configured, the Apply MyStyle function can also be selected (see para. 50 et seq.). 
 A special function is Apply Comment. It can implement the content of a Word comment (i.e. a "bubble" or "balloon") in the document with the help of AI, e.g., make a correction or implement an addition described in the comment. For this, the comment bubble must be selected. All four variants implement the entire comment (or, if selected, the selected text within) either to the location marked by the comment or the entire paragraph (or paragraphs) in which the comment is located ("to para"). The "(edit)" variant allows the user to edit the prompt for insertion beforehand. This function can be combined with the "Bubbles:" prefix of Freestyle, letting the AI comment on your document and then have the comments implemented with this function. 
 * Shorten: This function can be used to shorten a text, with the aim of losing as little information as possible, or only the information that is considered less important. The user can specify the percentage by which the text should be shortened; the AI, however, may not actually adhere strictly to such length specifications.
 * Anonymize: This command leads to a submenu. With the "Anonymize Text (AI)" function, the selected text is anonymized by the AI with regard to natural persons, but also companies. A "[redacted]" is inserted at the relevant places. Red Ink will suggest the regex markup method (see below), which might be more suitable for larger texts if another one is selected. With "Anonymize Text (terms)", the built-in anonymization function can be tested, which can be used for the transparent anonymization of texts that are transmitted to the language models (see para. 155 et seq.). It anonymizes the selected text based on search terms (i.e., without AI) and replaces it with placeholders. This can also be useful for other applications. For the redaction functions of the Anonymize menu, see para. 174 et seq.
 * Switch Parties: This function allows for the "intelligent" replacement of references to specific persons in contracts, legal documents and other texts. For example, "the Provider" can be substituted for "the supplier of goods", whereby the entire formulation is taken into account and adapted. This is not possible with a normal "search and replace". When using this function, it may make sense to try the Regex markup method (see below). Red Ink will propose this method, should it not already be configured.
-* Analyze: Here is a summary of various commands that analyze and process the selected text in one way or another. Summarize summarizes the text. This allows for a quick overview. The summary is inserted at the end of the text. It is possible to specify how many words the summary should have. If Explain is selected, the tool also provides a short summary but goes into more detail about the things to be done according to the text, the arguments and logic of the author, and provides explanations of the technical terms and topics that the model itself knows (the model is also provided with the current date as a reference). Suggest Titles suggests titles for the selected text, three different titles for different use cases (memo, blog, informal text, humorous text, food for thought). In these last two functions, the text is displayed separately, not inserted (but can be edited and thus copied to the clipboard). Podcasts and audio recordings of texts can also be generated via the menu. More on this is in para. 137 et seq. below. Any configured Special Service can also be accessed. More on this is described in para. 86 et seq. below. 
+* Analyze: Here is a summary of various commands that analyze and process the selected text in one way or another. Summarize summarizes the text. This allows for a quick overview. The summary is inserted at the end of the text. It is possible to specify how many words the summary should have. If Explain is selected, the tool also provides a short summary but goes into more detail about the things to be done according to the text, the arguments and logic of the author, and provides explanations of the technical terms and topics that the model itself knows (the model is also provided with the current date as a reference). Argue Against will provide arguments against the selected text in the desired number of words. Suggest Titles suggests titles for the selected text, three different titles for different use cases (memo, blog, informal text, humorous text, food for thought). In these last two functions, the text is displayed separately, not inserted (but can be edited and thus copied to the clipboard). Podcasts and audio recordings of texts can also be generated via the menu. More on this is in para. 137 et seq. below. Any configured Special Service can also be accessed. More on this is described in para. 86 et seq. below. For the other commands in the Analyze menu, see the corresponding chapters in this manual.
 23 If you want to Undo an insertion or change made by Red Ink, you can use the Undo function of Word, but you will have to do multiple Undos because Red Ink replaces and inserts text in several steps. 
 24 How these functions handle the text, i.e. whether they replace it or whether the output is appended, whether a markup (comparison version) is created and with which method, and whether and how an attempt should be made to preserve the existing formatting, can be controlled via the configuration file or the Settings function. It can be accessed via the tile menu and can be used to make the changes temporarily or to save them in the configuration file for future sessions (an explanation of each option is displayed when you move the mouse over the text):
 
@@ -2399,7 +2399,7 @@ Data Extractor (Excel); File Renamer (Excel); minor adjustments (e.g., when inse
 30.11.2025
 
 W=0.1.1.99
-E=0.1.173
+E=0.1.1.73
 O=0.1.1.79
 Various small improvements (e.g., Ctrl-Enter advances in parameter windows, Data Extractor merges not only dates, premature abort possible when using multiple doc-triggers in Freestyle, quicker startup of http server in Outlook, various prompts), Bug fixes (Word, Excel, Outlook, including re Data Extractor, Shorten), Edge extension improved (inserting of AI response in source, compatibility with Firefox), updated various libraries
 1.12.2025
@@ -2407,7 +2407,15 @@ Various small improvements (e.g., Ctrl-Enter advances in parameter windows, Data
 W=0.1.1.100
 E=0.1.1.74
 O=0.1.1.80
-Help Me, Inky can now also see and check the current configuration files; Bug fixes in the chatbot for Word
+Help Me, Inky can now also see and check the current configuration files; Bug fixes (chatbot for Word)
+1.12.2025
+
+W=0.1.1.101
+Bug fix (chatbot for Word)
+4.12.2025
+
+W=0.1.1.102
+"Filibuster", "Argue Against" (Word) feature; Bug Fix (Special Model); additions to allmodels.ini
 
 VII. ROADMAP
 409 Further planned developments:
@@ -3124,10 +3132,10 @@ Practical example
 
 
 
-1. December 2025	1
+4. December 2025	1
 
 
-	1. December 2025 
+	4. December 2025 
 
 
 

@@ -119,6 +119,8 @@ Namespace SharedLibrary
                 context.SP_MyStyle_Outlook = If(configDict.ContainsKey("SP_MyStyle_Outlook"), configDict("SP_MyStyle_Outlook"), Default_SP_MyStyle_Outlook)
                 context.SP_MyStyle_Apply = If(configDict.ContainsKey("SP_MyStyle_Apply"), configDict("SP_MyStyle_Apply"), Default_SP_MyStyle_Apply)
                 context.SP_Shorten = If(configDict.ContainsKey("SP_Shorten"), configDict("SP_Shorten"), Default_SP_Shorten)
+                context.SP_Filibuster = If(configDict.ContainsKey("SP_Filibuster"), configDict("SP_Filibuster"), Default_SP_Filibuster)
+                context.SP_ArgueAgainst = If(configDict.ContainsKey("SP_ArgueAgainst"), configDict("SP_ArgueAgainst"), Default_SP_ArgueAgainst)
                 context.SP_InsertClipboard = If(configDict.ContainsKey("SP_InsertClipboard"), configDict("SP_InsertClipboard"), Default_SP_InsertClipboard)
                 context.SP_Summarize = If(configDict.ContainsKey("SP_Summarize"), configDict("SP_Summarize"), Default_SP_Summarize)
                 context.SP_FreestyleText = If(configDict.ContainsKey("SP_FreestyleText"), configDict("SP_FreestyleText"), Default_SP_FreestyleText)

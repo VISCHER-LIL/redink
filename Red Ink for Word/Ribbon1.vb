@@ -294,4 +294,12 @@ Public Class Ribbon1
     Private Sub RI_EditRedact_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_EditRedact.Click
         Globals.ThisAddIn.EditRedactionInstructions()
     End Sub
+
+    Private Sub Button1_Click_1(sender As Object, e As RibbonControlEventArgs) Handles RI_Filibuster.Click
+        Globals.ThisAddIn.Filibuster()
+    End Sub
+
+    Private Sub Button2_Click_1(sender As Object, e As RibbonControlEventArgs) Handles RI_ArgueAgainst.Click
+        Globals.ThisAddIn.ArgueAgainst()
+    End Sub
 End Class

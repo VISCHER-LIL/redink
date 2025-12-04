@@ -72,6 +72,7 @@ Partial Class Ribbon1
         Me.RI_BalloonMergeFull = Me.Factory.CreateRibbonButton
         Me.RI_BalloonMergePartPrompt = Me.Factory.CreateRibbonButton
         Me.RI_BalloonMergeFullPrompt = Me.Factory.CreateRibbonButton
+        Me.RI_Filibuster = Me.Factory.CreateRibbonButton
         Me.RI_Shorten = Me.Factory.CreateRibbonButton
         Me.Menu5 = Me.Factory.CreateRibbonMenu
         Me.RI_Anonymize = Me.Factory.CreateRibbonButton
@@ -116,6 +117,7 @@ Partial Class Ribbon1
         Me.RI_PrimLang2 = Me.Factory.CreateRibbonButton
         Me.RI_Correct2 = Me.Factory.CreateRibbonButton
         Me.RI_Chat = Me.Factory.CreateRibbonButton
+        Me.RI_ArgueAgainst = Me.Factory.CreateRibbonButton
         Me.Tab1.SuspendLayout()
         Me.Group1.SuspendLayout()
         Me.Group2.SuspendLayout()
@@ -211,6 +213,7 @@ Partial Class Ribbon1
         Me.Menu4.Items.Add(Me.RI_BalloonMergeFull)
         Me.Menu4.Items.Add(Me.RI_BalloonMergePartPrompt)
         Me.Menu4.Items.Add(Me.RI_BalloonMergeFullPrompt)
+        Me.Menu4.Items.Add(Me.RI_Filibuster)
         Me.Menu4.Label = "Improve"
         Me.Menu4.Name = "Menu4"
         Me.Menu4.OfficeImageId = "Drawing1GalleryBrightness"
@@ -292,6 +295,14 @@ Partial Class Ribbon1
         Me.RI_BalloonMergeFullPrompt.ScreenTip = "Apply the text (selected) in your comment balloon to the text in the commented pa" &
     "ragraph of the document (you can edit the prompt)"
         Me.RI_BalloonMergeFullPrompt.ShowImage = True
+        '
+        'RI_Filibuster
+        '
+        Me.RI_Filibuster.Label = "Filibuster (Expand Text)"
+        Me.RI_Filibuster.Name = "RI_Filibuster"
+        Me.RI_Filibuster.OfficeImageId = "AnimationTransitionSpeedGallery"
+        Me.RI_Filibuster.ScreenTip = "Will expand your text to have at least the number of words you specify"
+        Me.RI_Filibuster.ShowImage = True
         '
         'RI_Shorten
         '
@@ -376,6 +387,7 @@ Partial Class Ribbon1
         '
         Me.Menu3.Items.Add(Me.RI_Summarize)
         Me.Menu3.Items.Add(Me.RI_Explain)
+        Me.Menu3.Items.Add(Me.RI_ArgueAgainst)
         Me.Menu3.Items.Add(Me.RI_SuggestTitles)
         Me.Menu3.Items.Add(Me.RI_SpecialModel)
         Me.Menu3.Items.Add(Me.RI_DocCheck)
@@ -684,6 +696,15 @@ Partial Class Ribbon1
         Me.RI_Chat.ScreenTip = "Will open a window where you can chat with the LLM"
         Me.RI_Chat.ShowImage = True
         '
+        'RI_ArgueAgainst
+        '
+        Me.RI_ArgueAgainst.Label = "Argue Against"
+        Me.RI_ArgueAgainst.Name = "RI_ArgueAgainst"
+        Me.RI_ArgueAgainst.OfficeImageId = "SpeakStop"
+        Me.RI_ArgueAgainst.ScreenTip = "This will let the AI argue against the selected text with at least the number of " &
+    "words defined by you"
+        Me.RI_ArgueAgainst.ShowImage = True
+        '
         'Ribbon1
         '
         Me.Name = "Ribbon1"
@@ -931,6 +952,8 @@ Partial Class Ribbon1
     Friend WithEvents RI_CheckDocumentsII As RibbonButton
     Friend WithEvents RI_Anonymization As RibbonButton
     Friend WithEvents RI_EditRedact As RibbonButton
+    Friend WithEvents RI_Filibuster As RibbonButton
+    Friend WithEvents RI_ArgueAgainst As RibbonButton
 End Class
 
 Partial Class ThisRibbonCollection

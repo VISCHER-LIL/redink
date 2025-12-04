@@ -1309,6 +1309,8 @@ Namespace SharedLibrary
                     {"SP_MyStyle_Outlook", context.SP_MyStyle_Outlook},
                     {"SP_MyStyle_Apply", context.SP_MyStyle_Apply},
                     {"SP_Shorten", context.SP_Shorten},
+                    {"SP_Filibuster", context.SP_Filibuster},
+                    {"SP_ArgueAgainst", context.SP_ArgueAgainst},
                     {"SP_InsertClipboard", context.SP_InsertClipboard},
                     {"SP_Summarize", context.SP_Summarize},
                     {"SP_MailReply", context.SP_MailReply},
@@ -1377,6 +1379,8 @@ Namespace SharedLibrary
                     {"SP_MyStyle_Outlook", Default_SP_MyStyle_Outlook},
                     {"SP_MyStyle_Apply", Default_SP_MyStyle_Apply},
                     {"SP_Shorten", Default_SP_Shorten},
+                    {"SP_Filibuster", Default_SP_Filibuster},
+                    {"SP_ArgueAgainst", Default_SP_ArgueAgainst},
                     {"SP_InsertClipboard", Default_SP_InsertClipboard},
                     {"SP_Summarize", Default_SP_Summarize},
                     {"SP_MailReply", Default_SP_MailReply},
@@ -2055,6 +2059,8 @@ Namespace SharedLibrary
             variableValues.Add("SP_MyStyle_Outlook", context.SP_MyStyle_Outlook)
             variableValues.Add("SP_MyStyle_Apply", context.SP_MyStyle_Apply)
             variableValues.Add("SP_Shorten", context.SP_Shorten)
+            variableValues.Add("SP_Filibuster", context.SP_Filibuster)
+            variableValues.Add("SP_ArgueAgainst", context.SP_ArgueAgainst)
             variableValues.Add("SP_InsertClipboard", context.SP_InsertClipboard)
             variableValues.Add("SP_Summarize", context.SP_Summarize)
             variableValues.Add("SP_MailReply", context.SP_MailReply)
@@ -2193,6 +2199,8 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_MyStyle_Outlook") Then context.SP_MyStyle_Outlook = CStr(updatedValues("SP_MyStyle_Outlook"))
                 If updatedValues.ContainsKey("SP_MyStyle_Apply") Then context.SP_MyStyle_Apply = CStr(updatedValues("SP_MyStyle_Apply"))
                 If updatedValues.ContainsKey("SP_Shorten") Then context.SP_Shorten = CStr(updatedValues("SP_Shorten"))
+                If updatedValues.ContainsKey("SP_Filibuster") Then context.SP_Filibuster = CStr(updatedValues("SP_Filibuster"))
+                If updatedValues.ContainsKey("SP_ArgueAgainst") Then context.SP_ArgueAgainst = CStr(updatedValues("SP_ArgueAgainst"))
                 If updatedValues.ContainsKey("SP_InsertClipboard") Then context.SP_InsertClipboard = CStr(updatedValues("SP_InsertClipboard"))
                 If updatedValues.ContainsKey("SP_Summarize") Then context.SP_Summarize = CStr(updatedValues("SP_Summarize"))
                 If updatedValues.ContainsKey("SP_MailReply") Then context.SP_MailReply = CStr(updatedValues("SP_MailReply"))

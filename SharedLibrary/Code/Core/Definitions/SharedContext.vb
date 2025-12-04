@@ -133,6 +133,8 @@ Namespace SharedLibrary
             Property SP_MyStyle_Outlook As String
             Property SP_MyStyle_Apply As String
             Property SP_Shorten As String
+            Property SP_Filibuster As String
+            Property SP_ArgueAgainst As String
             Property SP_InsertClipboard As String
             Property SP_Summarize As String
             Property SP_MailReply As String
@@ -354,6 +356,9 @@ Namespace SharedLibrary
         Public Property SP_MyStyle_Apply As String Implements ISharedContext.SP_MyStyle_Apply
 
         Public Property SP_Shorten As String Implements ISharedContext.SP_Shorten
+
+        Public Property SP_Filibuster As String Implements ISharedContext.SP_Filibuster
+        Public Property SP_ArgueAgainst As String Implements ISharedContext.SP_ArgueAgainst
         Public Property SP_InsertClipboard As String Implements ISharedContext.SP_InsertClipboard
         Public Property SP_Summarize As String Implements ISharedContext.SP_Summarize
         Public Property SP_MailReply As String Implements ISharedContext.SP_MailReply

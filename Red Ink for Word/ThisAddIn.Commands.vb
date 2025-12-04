@@ -375,6 +375,63 @@ Partial Public Class ThisAddIn
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Shorten), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
+    Public Async Sub Filibuster()
+
+        If INILoadFail() Then Return
+        Dim application As Word.Application = Globals.ThisAddIn.Application
+        Dim Selection As Microsoft.Office.Interop.Word.Selection = application.Selection
+
+        If Selection.Type = WdSelectionType.wdSelectionIP Then
+            ShowCustomMessageBox("Please select the text to be processed.")
+            Return
+        End If
+
+        Dim Textlength As Integer = GetSelectedTextLength()
+        Dim UserInput As String
+        FilibusterLength = Textlength * 10
+        Do
+            UserInput = SLib.ShowCustomInputBox("Enter the number of words your filibuster shall have (your base text has " & Textlength & " words)", $"{AN} Filibuster (Expand Text)", True, CStr(Filibusterlength)).Trim()
+            If String.IsNullOrEmpty(UserInput) Then
+                Return
+            End If
+            If Integer.TryParse(UserInput, FilibusterLength) AndAlso FilibusterLength > Textlength AndAlso FilibusterLength <= MaxFilibuster Then
+                Exit Do
+            Else
+                ShowCustomMessageBox($"Please enter a range between {Textlength} and {MaxFilibuster} words.")
+            End If
+        Loop
+        If FilibusterLength = 0 Then Return
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Filibuster), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
+    End Sub
+
+    Public Async Sub ArgueAgainst()
+
+        If INILoadFail() Then Return
+        Dim application As Word.Application = Globals.ThisAddIn.Application
+        Dim Selection As Microsoft.Office.Interop.Word.Selection = application.Selection
+
+        If Selection.Type = WdSelectionType.wdSelectionIP Then
+            ShowCustomMessageBox("Please select the text to be processed.")
+            Return
+        End If
+
+        Dim UserInput As String
+        FilibusterLength = ArgueAgainstDefault
+        Do
+            UserInput = SLib.ShowCustomInputBox("Enter the number of words your argument shall have:", $"{AN} Argue Against", True, CStr(FilibusterLength)).Trim()
+            If String.IsNullOrEmpty(UserInput) Then
+                Return
+            End If
+            If Integer.TryParse(UserInput, FilibusterLength) AndAlso FilibusterLength > 0 AndAlso FilibusterLength <= MaxFilibuster Then
+                Exit Do
+            Else
+                ShowCustomMessageBox($"Please enter a range between 0 and {MaxFilibuster} words.")
+            End If
+        Loop
+        If FilibusterLength = 0 Then Return
+        Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_ArgueAgainst), False, False, False, False, False, 0, True, False, True, False, 0)
+    End Sub
+
     Public Async Sub SwitchParty()
         If INILoadFail() Then Return
         Dim UserInput As String

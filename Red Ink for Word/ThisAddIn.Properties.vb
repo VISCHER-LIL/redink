@@ -817,6 +817,25 @@ Partial Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Filibuster As String
+        Get
+            Return _context.SP_Filibuster
+        End Get
+        Set(value As String)
+            _context.SP_Filibuster = value
+        End Set
+    End Property
+
+    Public Shared Property SP_ArgueAgainst As String
+        Get
+            Return _context.SP_ArgueAgainst
+        End Get
+        Set(value As String)
+            _context.SP_ArgueAgainst = value
+        End Set
+    End Property
+
+
     Public Shared Property SP_InsertClipboard As String
         Get
             Return _context.SP_InsertClipboard

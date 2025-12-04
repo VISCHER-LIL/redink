@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 1.12.2025
+' 4.12.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -41,7 +41,7 @@ Partial Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.011225 Gen2 Beta Test"
+    Public Const Version As String = "V.041225 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -98,6 +98,9 @@ Partial Public Class ThisAddIn
     Private Const ChunkTrigger As String = "(iterate)"
     Private Const EmbedTrigger As String = "(embed)"
     Private Const RefreshTrigger As String = "(refresh)"
+
+    Private Const MaxFilibuster As Integer = 10000 ' Maximum number of words for filibuster mode 
+    Private Const ArgueAgainstDefault As Integer = 50 ' Number of words to propose for Argue Against
 
     Private Const RegexSeparator1 As String = "|||"  ' Set also in SharedLibrary
     Private Const RegexSeparator2 As String = "§§§"  ' Set also in SharedLibrary 
@@ -223,6 +226,7 @@ Partial Public Class ThisAddIn
 
     Public TranslateLanguage As String
     Public ShortenLength As Double
+    Public FilibusterLength As Integer
     Public SummaryLength As Integer
     Public OtherPrompt As String = ""
     Public OutputLanguage As String = ""
