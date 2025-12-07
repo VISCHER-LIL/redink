@@ -96,7 +96,71 @@ Partial Public Class ThisAddIn
                 paramArr = {p0, p1}
             End If
 
-            If ShowCustomVariableInputForm("Please set the Clause Finder parameters:", AN & " FindClause", paramArr) = False Then
+            ' Optional extra button: “Edit Library File…”
+            Dim extraText As String = Nothing
+            Dim extraAction As System.Action = Nothing
+            Dim closeAfterExtra As Boolean = False
+
+            If hasGlobal OrElse hasLocal Then
+                extraText = "Edit Library File…"
+                extraAction =
+                    Sub()
+                        Try
+
+                            ' Build list of available library files, same as in AddClause (global + local)
+                            Dim displayToPath As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+                            Dim editoptions As New List(Of String)
+
+                            Dim dcPaths As New List(Of (p As String, isLocal As Boolean))
+                            If hasGlobal AndAlso Not String.IsNullOrWhiteSpace(pathGlobal) Then
+                                dcPaths.Add((pathGlobal, False))
+                            End If
+                            If hasLocal AndAlso Not String.IsNullOrWhiteSpace(pathLocal) Then
+                                dcPaths.Add((pathLocal, True))
+                            End If
+
+                            For Each tuple In dcPaths
+                                Dim basePath = tuple.p
+                                Dim isLocal = tuple.isLocal
+                                If IO.Directory.Exists(basePath) Then
+                                    Dim files = IO.Directory.GetFiles(basePath, $"{AN2}-lib-*.txt", IO.SearchOption.TopDirectoryOnly)
+                                    For Each f In files
+                                        Dim disp As String = IO.Path.GetFileName(f)
+                                        If isLocal Then disp &= " (local)"
+                                        If Not displayToPath.ContainsKey(disp) Then
+                                            displayToPath.Add(disp, f)
+                                            editoptions.Add(disp)
+                                        End If
+                                    Next
+                                End If
+                            Next
+
+                            If editoptions.Count = 0 Then
+                                SLib.ShowCustomMessageBox($"No FindClause library files ({AN2}-lib-*.txt) found in the configured paths.")
+                                Exit Sub
+                            End If
+
+                            ' Let user pick one (same helper as in AddClause)
+                            Dim selfile As String = SLib.ShowSelectionForm("Select a library file to view or edit:", $"{AN} FindClause library files", editoptions)
+                            If String.IsNullOrWhiteSpace(selfile) Then Exit Sub
+
+                            Dim chosenPath As String = Nothing
+                            If displayToPath.TryGetValue(selfile, chosenPath) AndAlso Not String.IsNullOrWhiteSpace(chosenPath) Then
+                                SLib.ShowTextFileEditor(chosenPath, $"{AN} FindClause library file '{chosenPath}':", True, _context)
+                                SLib.ShowCustomMessageBox("Any changes to the library will only be active the next time this feature is called up.")
+                            End If
+
+                        Catch ex As Exception
+                            SLib.ShowCustomMessageBox("Error while opening a library file:" & vbCrLf & ex.Message)
+                            Exit Sub
+                        End Try
+
+                    End Sub
+            End If
+
+            If ShowCustomVariableInputForm("Please set the Clause Finder parameters:", AN & " FindClause", paramArr, extraButtonText:=extraText,
+                                                                                                                            extraButtonAction:=extraAction,
+                                                                                                                            CloseAfterExtra:=closeAfterExtra) = False Then
                 Return
             End If
 
@@ -126,10 +190,12 @@ Partial Public Class ThisAddIn
                 userPromptBuilder.AppendLine(selectedText)
                 userPromptBuilder.AppendLine("</TEXTFORSEARCH>")
             End If
-            ' Provide search query explicitly
-            userPromptBuilder.AppendLine("<SEARCHQUERY>")
-            userPromptBuilder.AppendLine(OtherPrompt)
-            userPromptBuilder.AppendLine("</SEARCHQUERY>")
+            If Not String.IsNullOrWhiteSpace(OtherPrompt) Then
+                ' Provide search query explicitly
+                userPromptBuilder.AppendLine("<SEARCHQUERY>")
+                userPromptBuilder.AppendLine(OtherPrompt)
+                userPromptBuilder.AppendLine("</SEARCHQUERY>")
+            End If
             ' Provide library JSON (raw) between tags
             userPromptBuilder.AppendLine("<LIBRARY>")
             userPromptBuilder.AppendLine(chosenLib.RawJson.Trim())

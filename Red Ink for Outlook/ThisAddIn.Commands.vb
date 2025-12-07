@@ -1536,7 +1536,7 @@ Partial Public Class ThisAddIn
                     Return
                 End If
                 OtherPrompt = OtherPrompt.Replace(MyStyleTrigger, "").Trim()
-                MyStyleInsert = MyStyleHelpers.SelectPromptFromMyStyle(StylePath, "Word", 0, "Choose the style prompt to apply …", $"{AN} MyStyle", True)
+                MyStyleInsert = MyStyleHelpers.SelectPromptFromMyStyle(StylePath, "Outlook", 0, "Choose the style prompt to apply …", $"{AN} MyStyle", True)
                 If MyStyleInsert = "ERROR" Then Return
                 If MyStyleInsert = "NONE" OrElse String.IsNullOrWhiteSpace(MyStyleInsert) Then Return
                 DoMyStyle = True
