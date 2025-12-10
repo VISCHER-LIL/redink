@@ -290,8 +290,10 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
+            CurrentDate = "(Current Date: " & DateTime.Now.ToString("dd-MMM-yyyy", CultureInfo.GetCultureInfo("en-US")) & ")"
+
             Dim result As System.String = Await ProcessSelectedText(
-            InterpolateAtRuntime(SP_Explain) & " Current Date is: " & DateTime.Now.ToString("dd MMM yyyy", CultureInfo.CurrentCulture),
+            InterpolateAtRuntime(SP_Explain),
             True,
             INI_KeepFormat2,
             INI_KeepParaFormatInline,
@@ -801,6 +803,16 @@ Partial Public Class ThisAddIn
         End If
         ' No owner needed
         _win.ShowRaised()
+    End Sub
+
+    Private _win2 As DiscussInky = Nothing
+
+    Public Sub DiscussInky()
+        If _win2 Is Nothing OrElse _win2.IsDisposed Then
+            _win2 = New DiscussInky(_context)
+        End If
+        ' No owner needed
+        _win2.ShowRaised()
     End Sub
 
     Public Sub ShowSettings()

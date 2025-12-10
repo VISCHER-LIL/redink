@@ -30,6 +30,7 @@
 Option Strict On
 Option Explicit On
 
+Imports System.Globalization
 Imports System.Runtime.InteropServices
 Imports System.Threading
 Imports System.Threading.Tasks
@@ -80,6 +81,7 @@ Partial Public Class ThisAddIn
     Public OutputLanguage As String
     Public FileNameBody As String
     Public FileDate As String
+    Public CurrentDate As String = "(Current Date: " & DateTime.Now.ToString("dd-MMM-yyyy", CultureInfo.GetCultureInfo("en-US")) & ")"
     Public ShortenLength As Double
     Public SummaryLength As Integer
     Public OtherPrompt As String = ""

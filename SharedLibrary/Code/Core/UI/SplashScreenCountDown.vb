@@ -60,6 +60,7 @@ Namespace SharedLibrary
             Me.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen
             Me.BackColor = System.Drawing.ColorTranslator.FromWin32(&H8000000F)
             Me.KeyPreview = True
+            Me.TopMost = True
 
             ' ─── Logo ──────────────────────────────────────────────────
             picLogo = New System.Windows.Forms.PictureBox() With {

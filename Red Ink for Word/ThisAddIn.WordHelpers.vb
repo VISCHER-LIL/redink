@@ -5,13 +5,772 @@
 Option Explicit On
 Option Strict Off
 
+Imports System.IO
 Imports System.Text.RegularExpressions
 Imports System.Windows.Forms
-Imports SharedLibrary.SharedLibrary.SharedMethods
+Imports Markdig
 Imports Microsoft.Office.Interop.Word
+Imports SharedLibrary.SharedLibrary
+Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports Slib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
+
+    ' Shared CSS styling for HTML summary windows
+    Private Const SummaryHtmlStyle As String =
+        "<style>" &
+        "body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 10pt; line-height: 1.5; padding: 20px; margin: 0; }" &
+        "ul, ol { margin-left: 20px; }" &
+        "li { margin-bottom: 6px; }" &
+        "h1, h2, h3 { color: #333; }" &
+        "strong { color: #003366; }" &
+        "code { background: #f6f8fa; padding: 2px 4px; border-radius: 3px; }" &
+        "pre { background: #f6f8fa; padding: 10px; border-radius: 4px; overflow-x: auto; }" &
+        "</style>"
+
+    ' Compares the currently active Word document with another open Word document,
+    ' exports the comparison to filtered HTML, and shows it via ShowHTMLCustomMessageBox().
+    Public Shared Sub CompareActiveDocWithOtherOpenDoc()
+        ' Acquire the running Word instance
+        Dim wordAppObj As Object = Nothing
+        Try
+            wordAppObj = System.Runtime.InteropServices.Marshal.GetActiveObject("Word.Application")
+        Catch
+            ShowCustomMessageBox("Microsoft Word is not running or cannot be accessed.", AN)
+            Exit Sub
+        End Try
+
+        Dim wordApp As Microsoft.Office.Interop.Word.Application = TryCast(wordAppObj, Microsoft.Office.Interop.Word.Application)
+        If wordApp Is Nothing Then
+            ShowCustomMessageBox("Unable to access the Word application.", AN)
+            Exit Sub
+        End If
+
+        ' Ensure there is an active document
+        If wordApp.Documents Is Nothing OrElse wordApp.Documents.Count = 0 Then
+            ShowCustomMessageBox("No document is open in Word.", AN)
+            Exit Sub
+        End If
+
+        Dim activeDoc As Microsoft.Office.Interop.Word.Document = Nothing
+        Try
+            activeDoc = wordApp.ActiveDocument
+        Catch
+        End Try
+        If activeDoc Is Nothing Then
+            ShowCustomMessageBox("No active document detected in Word.", AN)
+            Exit Sub
+        End If
+
+        ' Build the list of other open documents
+        Dim otherDocs As New List(Of Microsoft.Office.Interop.Word.Document)()
+        For Each d As Microsoft.Office.Interop.Word.Document In wordApp.Documents
+            If Not Object.ReferenceEquals(d, activeDoc) Then
+                otherDocs.Add(d)
+            End If
+        Next
+
+        If otherDocs.Count = 0 Then
+            ShowCustomMessageBox("No other open document found to compare against.", AN)
+            Exit Sub
+        End If
+
+        ' Pick the second document (auto if only one; otherwise ask via SLib.SelectValue)
+        Dim docToCompare As Microsoft.Office.Interop.Word.Document = Nothing
+        If otherDocs.Count = 1 Then
+            docToCompare = otherDocs(0)
+        Else
+            Dim items As New List(Of Slib.SelectionItem)()
+            Dim indexToDoc As New Dictionary(Of Integer, Microsoft.Office.Interop.Word.Document)()
+            Dim idx As Integer = 1
+            For Each d In otherDocs
+                Dim disp As String
+                Try
+                    disp = If(String.IsNullOrEmpty(d.Name), "(unnamed document)", d.Name)
+                Catch
+                    disp = "(document)"
+                End Try
+                items.Add(New Slib.SelectionItem(disp, idx))
+                indexToDoc(idx) = d
+                idx += 1
+            Next
+
+            Dim chosenIdx As Integer = Slib.SelectValue(items, 1, "Select the document to compare with:", $"{AN} Compare")
+            If chosenIdx <= 0 OrElse Not indexToDoc.ContainsKey(chosenIdx) Then Exit Sub
+            docToCompare = indexToDoc(chosenIdx)
+        End If
+
+        ' Compare and export -> filtered HTML
+        Dim compareDoc As Microsoft.Office.Interop.Word.Document = Nothing
+        Dim tempHtmlPath As String = Nothing
+        Dim tempFolder As String = Nothing
+
+        ' UI suppression to reduce flicker
+        Dim prevScreenUpdating As Boolean = wordApp.ScreenUpdating
+        Dim prevAlerts As Microsoft.Office.Interop.Word.WdAlertLevel = wordApp.DisplayAlerts
+        Dim prevWindow As Microsoft.Office.Interop.Word.Window = Nothing
+
+        ' Store extracted changes for LLM summarization
+        Dim extractedChangesText As String = Nothing
+
+        Try
+            wordApp.ScreenUpdating = False
+            wordApp.DisplayAlerts = Microsoft.Office.Interop.Word.WdAlertLevel.wdAlertsNone
+            prevWindow = wordApp.ActiveWindow
+
+            ' Create comparison (returns a Document)
+            compareDoc = wordApp.CompareDocuments(
+                OriginalDocument:=activeDoc,
+                RevisedDocument:=docToCompare,
+                Destination:=WdCompareDestination.wdCompareDestinationNew,
+                Granularity:=WdGranularity.wdGranularityWordLevel,
+                CompareFormatting:=True,
+                CompareCaseChanges:=True,
+                CompareWhitespace:=True,
+                CompareTables:=True,
+                CompareHeaders:=True,
+                CompareFootnotes:=True,
+                CompareTextboxes:=True,
+                CompareFields:=True,
+                CompareComments:=True,
+                CompareMoves:=True,
+                RevisedAuthor:=Environment.UserName,
+                IgnoreAllComparisonWarnings:=False
+            )
+            If compareDoc Is Nothing Then
+                ShowCustomMessageBox("Word did not produce a comparison document.", AN)
+                Exit Sub
+            End If
+
+            ' Keep its window hidden (best effort)
+            Try
+                If compareDoc.Windows IsNot Nothing AndAlso compareDoc.Windows.Count > 0 Then
+                    compareDoc.Windows(1).Visible = False
+                End If
+            Catch
+            End Try
+
+            ' Extract changes with markup tags for LLM summarization
+            extractedChangesText = ExtractChangesWithMarkupTags(compareDoc)
+
+            ' Export to filtered HTML
+            tempFolder = Path.Combine(Path.GetTempPath(), $"{AN2}_compare_" & Guid.NewGuid().ToString("N"))
+            Directory.CreateDirectory(tempFolder)
+            tempHtmlPath = Path.Combine(tempFolder, "comparison.htm")
+
+            compareDoc.SaveAs2(FileName:=tempHtmlPath, FileFormat:=WdSaveFormat.wdFormatFilteredHTML)
+
+            ' Restore focus ASAP to reduce flicker
+            Try
+                prevWindow?.Activate()
+            Catch
+            End Try
+
+            ' Close the comparison doc to release file locks
+            Try
+                compareDoc.Close(WdSaveOptions.wdDoNotSaveChanges)
+            Catch
+            End Try
+            compareDoc = Nothing
+
+            ' Read bytes with retry to avoid transient locks
+            Dim raw As Byte() = Nothing
+            Dim maxAttempts As Integer = 10
+            Dim delayMs As Integer = 100
+            For attempt As Integer = 1 To maxAttempts
+                Try
+                    raw = File.ReadAllBytes(tempHtmlPath)
+                    Exit For
+                Catch ex As IOException
+                    Threading.Thread.Sleep(delayMs)
+                End Try
+            Next
+            If raw Is Nothing OrElse raw.Length = 0 Then
+                ShowCustomMessageBox($"Comparison failed: could not read '{tempHtmlPath}'.", AN)
+                Exit Sub
+            End If
+
+            ' Decode using BOM or <meta charset>, else default to Windows-1252
+            Dim enc As System.Text.Encoding = System.Text.Encoding.UTF8
+            If raw.Length >= 3 AndAlso raw(0) = &HEF AndAlso raw(1) = &HBB AndAlso raw(2) = &HBF Then
+                enc = System.Text.Encoding.UTF8
+            Else
+                Dim probe As String = System.Text.Encoding.GetEncoding(28591).GetString(raw) ' ISO-8859-1
+                Dim m As System.Text.RegularExpressions.Match =
+                    System.Text.RegularExpressions.Regex.Match(
+                        probe,
+                        "(?is)<meta[^>]*?(?:charset\s*=\s*[""']?\s*([A-Za-z0-9_\-]+)|http-equiv\s*=\s*[""']?\s*content-type[""'][^>]*?content\s*=\s*[""'][^""']*?;\s*charset\s*=\s*([A-Za-z0-9_\-]+))",
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                Dim charset As String = Nothing
+                If m.Success Then
+                    charset = If(m.Groups(1).Success, m.Groups(1).Value, If(m.Groups(2).Success, m.Groups(2).Value, Nothing))
+                End If
+                If Not String.IsNullOrEmpty(charset) Then
+                    Try
+                        enc = System.Text.Encoding.GetEncoding(charset)
+                    Catch
+                        enc = System.Text.Encoding.GetEncoding(1252)
+                    End Try
+                Else
+                    enc = System.Text.Encoding.GetEncoding(1252)
+                End If
+            End If
+
+            Dim html As String = enc.GetString(raw)
+
+            ' Ensure proper meta charset and inject base for resources
+            Dim hasHead As Boolean = html.IndexOf("<head", StringComparison.OrdinalIgnoreCase) >= 0
+            Dim metaCharset As String = $"<meta http-equiv=""Content-Type"" content=""text/html; charset={enc.WebName}"">"
+            If hasHead Then
+                Dim rxHead As New System.Text.RegularExpressions.Regex("(<head[^>]*>)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                html = rxHead.Replace(html, "$1" & metaCharset, 1)
+            Else
+                html = "<html><head>" & metaCharset & "</head>" & html.Replace("<html>", "").Replace("</html>", "") & "</html>"
+            End If
+
+            Dim baseTag As String = $"<base href=""{tempFolder.Replace("\", "/")}/"">"
+            Dim rxMetaEnd As New System.Text.RegularExpressions.Regex("(<head[^>]*>)(.*?)(</head>)", System.Text.RegularExpressions.RegexOptions.IgnoreCase Or System.Text.RegularExpressions.RegexOptions.Singleline)
+            html = rxMetaEnd.Replace(html,
+                                     Function(mm)
+                                         Return mm.Groups(1).Value & baseTag & mm.Groups(2).Value & mm.Groups(3).Value
+                                     End Function, 1)
+
+            ' Show result with optional "Summarize Changes" button
+            Dim extraAction As System.Action = Nothing
+            If Not String.IsNullOrWhiteSpace(extractedChangesText) Then
+                extraAction = Sub()
+                                  ' This runs on the STA thread of ShowHTMLCustomMessageBox
+                                  SummarizeComparisonChangesAsync(extractedChangesText)
+                              End Sub
+            End If
+
+            ShowHTMLCustomMessageBox(html, $"{AN} Word Active Compare",
+                                     extraButtonText:=If(Not String.IsNullOrWhiteSpace(extractedChangesText), "Summarize Changes", Nothing),
+                                     extraButtonAction:=extraAction,
+                                     CloseAfterExtra:=False)
+
+        Catch ex As System.Exception
+            ShowCustomMessageBox($"Comparison failed: {ex.Message}", AN)
+        Finally
+            ' Safety close
+            If compareDoc IsNot Nothing Then
+                Try
+                    compareDoc.Close(WdSaveOptions.wdDoNotSaveChanges)
+                Catch
+                End Try
+                compareDoc = Nothing
+            End If
+
+            ' Restore UI
+            wordApp.DisplayAlerts = prevAlerts
+            wordApp.ScreenUpdating = prevScreenUpdating
+
+            ' Cleanup temp (delayed, best effort)
+            If Not String.IsNullOrEmpty(tempFolder) Then
+                Try
+                    Dim t As New Threading.Thread(
+                        Sub()
+                            Try
+                                Threading.Thread.Sleep(3000)
+                                If File.Exists(tempHtmlPath) Then File.Delete(tempHtmlPath)
+                                Dim filesFolder As String = tempHtmlPath & "_files"
+                                If Directory.Exists(filesFolder) Then
+                                    Try
+                                        Directory.Delete(filesFolder, recursive:=True)
+                                    Catch
+                                    End Try
+                                End If
+                                Directory.Delete(tempFolder, recursive:=True)
+                            Catch
+                            End Try
+                        End Sub)
+                    t.IsBackground = True
+                    t.Start()
+                Catch
+                End Try
+            End If
+        End Try
+    End Sub
+
+    ''' <summary>
+    ''' Extracts text from a comparison document with revisions marked using &lt;ins&gt; and &lt;del&gt; tags,
+    ''' comments marked with &lt;comment&gt; tags, and footnotes/endnotes included.
+    ''' </summary>
+    Private Shared Function ExtractChangesWithMarkupTags(compareDoc As Microsoft.Office.Interop.Word.Document) As String
+        If compareDoc Is Nothing Then Return String.Empty
+
+        Dim sb As New System.Text.StringBuilder()
+
+        Try
+            ' Process main document content with revisions
+            Dim content As Microsoft.Office.Interop.Word.Range = compareDoc.Content
+
+            ' Build text with revision markup
+            For Each para As Microsoft.Office.Interop.Word.Paragraph In compareDoc.Paragraphs
+                Dim paraText As New System.Text.StringBuilder()
+                Dim rng As Microsoft.Office.Interop.Word.Range = para.Range
+
+                ' Check each character/word for revisions
+                For Each rev As Microsoft.Office.Interop.Word.Revision In rng.Revisions
+                    Try
+                        Dim revText As String = If(rev.Range.Text, String.Empty)
+                        If String.IsNullOrEmpty(revText) Then Continue For
+
+                        Select Case rev.Type
+                            Case WdRevisionType.wdRevisionInsert
+                                paraText.Append($"<ins>{revText}</ins>")
+                            Case WdRevisionType.wdRevisionDelete
+                                paraText.Append($"<del>{revText}</del>")
+                            Case WdRevisionType.wdRevisionMovedFrom
+                                paraText.Append($"<del>[moved from:]{revText}</del>")
+                            Case WdRevisionType.wdRevisionMovedTo
+                                paraText.Append($"<ins>[moved to:]{revText}</ins>")
+                            Case Else
+                                ' For formatting and other changes, note them but include the text
+                                paraText.Append($"<ins>[{rev.Type}:]{revText}</ins>")
+                        End Select
+                    Catch
+                    End Try
+                Next
+
+                ' If no revisions in this paragraph, just add the plain text
+                If paraText.Length = 0 Then
+                    Try
+                        paraText.Append(If(rng.Text, String.Empty))
+                    Catch
+                    End Try
+                End If
+
+                sb.AppendLine(paraText.ToString())
+            Next
+
+            ' Process comments
+            If compareDoc.Comments IsNot Nothing AndAlso compareDoc.Comments.Count > 0 Then
+                sb.AppendLine()
+                sb.AppendLine("<comments>")
+                For Each cmt As Microsoft.Office.Interop.Word.Comment In compareDoc.Comments
+                    Try
+                        Dim author As String = If(cmt.Author, "Unknown")
+                        Dim commentText As String = If(cmt.Range.Text, String.Empty)
+                        Dim scopeText As String = String.Empty
+                        Try
+                            scopeText = If(cmt.Scope.Text, String.Empty)
+                        Catch
+                        End Try
+
+                        sb.AppendLine($"<comment author=""{System.Security.SecurityElement.Escape(author)}"" scope=""{System.Security.SecurityElement.Escape(scopeText)}"">{System.Security.SecurityElement.Escape(commentText)}</comment>")
+                    Catch
+                    End Try
+                Next
+                sb.AppendLine("</comments>")
+            End If
+
+            ' Process footnotes
+            If compareDoc.Footnotes IsNot Nothing AndAlso compareDoc.Footnotes.Count > 0 Then
+                sb.AppendLine()
+                sb.AppendLine("<footnotes>")
+                For Each fn As Microsoft.Office.Interop.Word.Footnote In compareDoc.Footnotes
+                    Try
+                        Dim fnText As String = If(fn.Range.Text, String.Empty)
+                        sb.AppendLine($"<footnote index=""{fn.Index}"">{System.Security.SecurityElement.Escape(fnText)}</footnote>")
+                    Catch
+                    End Try
+                Next
+                sb.AppendLine("</footnotes>")
+            End If
+
+            ' Process endnotes
+            If compareDoc.Endnotes IsNot Nothing AndAlso compareDoc.Endnotes.Count > 0 Then
+                sb.AppendLine()
+                sb.AppendLine("<endnotes>")
+                For Each en As Microsoft.Office.Interop.Word.Endnote In compareDoc.Endnotes
+                    Try
+                        Dim enText As String = If(en.Range.Text, String.Empty)
+                        sb.AppendLine($"<endnote index=""{en.Index}"">{System.Security.SecurityElement.Escape(enText)}</endnote>")
+                    Catch
+                    End Try
+                Next
+                sb.AppendLine("</endnotes>")
+            End If
+
+        Catch ex As System.Exception
+            sb.AppendLine($"[Error extracting changes: {ex.Message}]")
+        End Try
+
+        Return sb.ToString()
+    End Function
+
+    ''' <summary>
+    ''' Calls the LLM to summarize the extracted changes and displays the result in a new HTML window.
+    ''' This method spawns its own async operation and ShowHTMLCustomMessageBox call.
+    ''' </summary>
+    Private Shared Sub SummarizeComparisonChangesAsync(extractedChangesText As String)
+        ' Run the LLM call and display on a new thread to avoid blocking
+        Dim t As New Threading.Thread(
+            Sub()
+                Try
+                    ' Build the prompt
+                    Dim userPrompt As String = "<TEXTTOPROCESS>" & vbCrLf & extractedChangesText & vbCrLf & "</TEXTTOPROCESS>"
+
+                    ' System prompt for change analysis
+                    Dim systemPrompt As String = SP_Markup
+
+                    Dim llmResult As String = String.Empty
+                    Try
+                        llmResult = SharedMethods.LLM(
+                            _context,
+                            systemPrompt,
+                            userPrompt,
+                            "",
+                            "",
+                            0,
+                            False,
+                            False).GetAwaiter().GetResult()
+                    Catch ex As System.Exception
+                        llmResult = $"Error calling LLM: {ex.Message}"
+                    End Try
+
+                    ' Convert Markdown to HTML using Markdig
+                    Dim htmlResult As String
+                    Try
+                        Dim pipeline = New Markdig.MarkdownPipelineBuilder().UseAdvancedExtensions().Build()
+                        Dim bodyHtml As String = Markdig.Markdown.ToHtml(If(llmResult, String.Empty), pipeline)
+
+                        htmlResult = "<!DOCTYPE html><html><head><meta charset=""utf-8"">" &
+                                     SummaryHtmlStyle &
+                                     "</head><body>" &
+                                     bodyHtml &
+                                     "</body></html>"
+                    Catch ex As System.Exception
+                        htmlResult = $"<html><body><pre>{System.Security.SecurityElement.Escape(If(llmResult, ex.Message))}</pre></body></html>"
+                    End Try
+
+                    ShowHTMLCustomMessageBox(htmlResult, $"{AN} Change Summary")
+
+                Catch ex As System.Exception
+                    ShowCustomMessageBox($"Failed to summarize changes: {ex.Message}", AN)
+                End Try
+            End Sub)
+        t.SetApartmentState(Threading.ApartmentState.STA)
+        t.IsBackground = True
+        t.Start()
+    End Sub
+
+
+    ''' <summary>
+    ''' Extracts revisions and comments from the active document or selection based on a date filter,
+    ''' then summarizes them using the LLM and displays the result.
+    ''' </summary>
+    Public Shared Async Sub SummarizeDocumentChanges()
+        Try
+            Dim app As Microsoft.Office.Interop.Word.Application = Nothing
+            Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
+
+            Try
+                app = Globals.ThisAddIn.Application
+                doc = app.ActiveDocument
+            Catch
+                ShowCustomMessageBox("No active document found.", AN)
+                Exit Sub
+            End Try
+
+            If doc Is Nothing Then
+                ShowCustomMessageBox("No active document found.", AN)
+                Exit Sub
+            End If
+
+            ' Determine scope: selection or entire document
+            Dim sel As Microsoft.Office.Interop.Word.Selection = app.Selection
+            Dim useEntireDoc As Boolean = (sel Is Nothing OrElse sel.Range Is Nothing OrElse sel.Start = sel.End)
+            Dim scopeRange As Microsoft.Office.Interop.Word.Range = If(useEntireDoc, doc.Content, sel.Range)
+            Dim scopeDescription As String = If(useEntireDoc, "the entire document", "the selected text")
+
+            ' Prompt for date filter
+            Dim defaultDate As String = System.DateTime.Now.AddDays(-7).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)
+            Dim userDateInput As String = ShowCustomInputBox(
+                $"Enter the earliest date for changes to include (leave empty to include all tracked changes and only comments made not older than 60 minutes before the first change).{vbCrLf}{vbCrLf}Changes from {scopeDescription} will be analyzed.",
+                $"{AN} Summarize Changes",
+                True,
+                defaultDate)
+
+            If userDateInput Is Nothing Then
+                ' User cancelled
+                Exit Sub
+            End If
+
+            userDateInput = userDateInput.Trim()
+
+            Dim filterDate As System.DateTime? = Nothing
+            Dim filterByDate As Boolean = False
+
+            If Not String.IsNullOrEmpty(userDateInput) Then
+                Dim parsed As System.DateTime
+                If System.DateTime.TryParse(userDateInput, System.Globalization.CultureInfo.CurrentCulture, System.Globalization.DateTimeStyles.None, parsed) Then
+                    filterDate = parsed.Date ' Use start of day
+                    filterByDate = True
+                Else
+                    ShowCustomMessageBox("Invalid date format. Operation aborted.", AN)
+                    Exit Sub
+                End If
+            End If
+
+            ' Extract revisions and comments
+            Dim extractedText As String = ExtractRevisionsAndCommentsWithMarkup(doc, scopeRange, filterDate, filterByDate)
+
+            If String.IsNullOrWhiteSpace(extractedText) Then
+                Dim dateInfo As String = If(filterByDate, $" on or after {filterDate.Value:yyyy-MM-dd}", "")
+                ShowCustomMessageBox($"No revisions or comments found{dateInfo} in {scopeDescription}.", AN)
+                Exit Sub
+            End If
+
+            ' Build the prompt
+            Dim userPrompt As String = "<TEXTTOPROCESS>" & vbCrLf & extractedText & vbCrLf & "</TEXTTOPROCESS>"
+
+            ' System prompt for change analysis (same as SummarizeComparisonChangesAsync)
+            Dim systemPrompt As String = SP_Markup
+
+            Dim llmResult As String = String.Empty
+            Try
+                llmResult = Await SharedMethods.LLM(
+                    _context,
+                    systemPrompt,
+                    userPrompt,
+                    "",
+                    "",
+                    0,
+                    False,
+                    False)
+            Catch ex As System.Exception
+                llmResult = $"Error calling LLM: {ex.Message}"
+            End Try
+
+            ' Convert Markdown to HTML using Markdig
+            Dim htmlResult As String
+            Try
+                Dim pipeline = New Markdig.MarkdownPipelineBuilder().UseAdvancedExtensions().Build()
+                Dim bodyHtml As String = Markdig.Markdown.ToHtml(If(llmResult, String.Empty), pipeline)
+
+                Dim dateFilterInfo As String = If(filterByDate,
+                    $"<p style='color:#666; font-size:9pt;'>Covering changes/comments from {filterDate.Value:yyyy-MM-dd} onwards in {scopeDescription}</p>",
+                    $"<p style='color:#666; font-size:9pt;'>Covering all tracked changes in {scopeDescription} (and comments not older than 60 minutes before the first change)</p>")
+
+                htmlResult = "<!DOCTYPE html><html><head><meta charset=""utf-8"">" &
+                             SummaryHtmlStyle &
+                             "</head><body>" &
+                             dateFilterInfo &
+                             bodyHtml &
+                             "</body></html>"
+            Catch ex As System.Exception
+                htmlResult = $"<html><body><pre>{System.Security.SecurityElement.Escape(If(llmResult, ex.Message))}</pre></body></html>"
+            End Try
+
+            ' Show the result
+            ShowHTMLCustomMessageBox(htmlResult, $"{AN} Change Summary")
+
+        Catch ex As System.Exception
+            ShowCustomMessageBox($"Failed to summarize changes: {ex.Message}", AN)
+        End Try
+    End Sub
+
+    ''' <summary>
+    ''' Extracts revisions and comments from a document range with markup tags.
+    ''' Uses the same format as ExtractChangesWithMarkupTags for LLM compatibility.
+    ''' Ignores pure formatting revisions for output but uses them for comment date calculation.
+    ''' If filterByDate is True, includes revisions and comments on or after filterDate.
+    ''' If filterByDate is False, includes all substantive revisions and comments added since first revision minus 60 minutes.
+    ''' </summary>
+    Private Shared Function ExtractRevisionsAndCommentsWithMarkup(
+        doc As Microsoft.Office.Interop.Word.Document,
+        scopeRange As Microsoft.Office.Interop.Word.Range,
+        filterDate As System.DateTime?,
+        filterByDate As Boolean) As String
+
+        If doc Is Nothing OrElse scopeRange Is Nothing Then Return String.Empty
+
+        Dim sb As New System.Text.StringBuilder()
+        Dim hasContent As Boolean = False
+
+        ' Revision types that are pure formatting (to be ignored in output, but used for date calculation)
+        Dim formattingTypes As New HashSet(Of Integer)({
+            CInt(WdRevisionType.wdRevisionProperty),
+            CInt(WdRevisionType.wdRevisionParagraphNumber),
+            CInt(WdRevisionType.wdRevisionParagraphProperty),
+            CInt(WdRevisionType.wdRevisionSectionProperty),
+            CInt(WdRevisionType.wdRevisionStyle),
+            CInt(WdRevisionType.wdRevisionStyleDefinition),
+            CInt(WdRevisionType.wdRevisionTableProperty)
+        })
+
+        Try
+            ' Find the earliest revision date (including formatting revisions) for comment filtering
+            Dim earliestRevisionDate As System.DateTime? = Nothing
+            For Each rev As Microsoft.Office.Interop.Word.Revision In scopeRange.Revisions
+                Try
+                    If Not earliestRevisionDate.HasValue OrElse rev.Date < earliestRevisionDate.Value Then
+                        earliestRevisionDate = rev.Date
+                    End If
+                Catch
+                End Try
+            Next
+
+            ' Calculate comment cutoff date: earliest revision minus 60 minutes
+            Dim commentCutoffDate As System.DateTime? = Nothing
+            If earliestRevisionDate.HasValue Then
+                commentCutoffDate = earliestRevisionDate.Value.AddMinutes(-60)
+            End If
+
+            ' Collect substantive revisions within the scope range
+            Dim revisionList As New List(Of Microsoft.Office.Interop.Word.Revision)()
+
+            For Each rev As Microsoft.Office.Interop.Word.Revision In scopeRange.Revisions
+                Try
+                    ' Skip pure formatting revisions for output
+                    If formattingTypes.Contains(CInt(rev.Type)) Then
+                        Continue For
+                    End If
+
+                    Dim includeRevision As Boolean = False
+
+                    If filterByDate Then
+                        ' Include if revision date >= filter date
+                        If rev.Date >= filterDate.Value Then
+                            includeRevision = True
+                        End If
+                    Else
+                        ' No date filter: include all substantive revisions
+                        includeRevision = True
+                    End If
+
+                    If includeRevision Then
+                        revisionList.Add(rev)
+                    End If
+                Catch
+                End Try
+            Next
+
+            ' Sort revisions by position in document
+            revisionList.Sort(Function(a, b)
+                                  Try
+                                      Return a.Range.Start.CompareTo(b.Range.Start)
+                                  Catch
+                                      Return 0
+                                  End Try
+                              End Function)
+
+            ' Build revision output using same format as ExtractChangesWithMarkupTags
+            For Each rev In revisionList
+                Try
+                    Dim revText As String = If(rev.Range.Text, String.Empty)
+                    If String.IsNullOrEmpty(revText) Then Continue For
+
+                    Select Case rev.Type
+                        Case WdRevisionType.wdRevisionInsert
+                            sb.AppendLine($"<ins>{revText}</ins>")
+                            hasContent = True
+                        Case WdRevisionType.wdRevisionDelete
+                            sb.AppendLine($"<del>{revText}</del>")
+                            hasContent = True
+                        Case WdRevisionType.wdRevisionMovedFrom
+                            sb.AppendLine($"<del>[moved from:]{revText}</del>")
+                            hasContent = True
+                        Case WdRevisionType.wdRevisionMovedTo
+                            sb.AppendLine($"<ins>[moved to:]{revText}</ins>")
+                            hasContent = True
+                        Case Else
+                            ' Other non-formatting revision types
+                            sb.AppendLine($"<ins>[{rev.Type}:]{revText}</ins>")
+                            hasContent = True
+                    End Select
+                Catch
+                End Try
+            Next
+
+            ' Collect comments within the scope range
+            Dim commentList As New List(Of Microsoft.Office.Interop.Word.Comment)()
+
+            For Each cmt As Microsoft.Office.Interop.Word.Comment In doc.Comments
+                Try
+                    ' Check if comment scope overlaps with our range
+                    Dim cmtStart As Integer = -1
+                    Dim cmtEnd As Integer = -1
+                    Try
+                        cmtStart = cmt.Scope.Start
+                        cmtEnd = cmt.Scope.End
+                    Catch
+                        Try
+                            cmtStart = cmt.Reference.Start
+                            cmtEnd = cmt.Reference.End
+                        Catch
+                            Continue For
+                        End Try
+                    End Try
+
+                    ' Check if comment is within scope range
+                    If cmtStart >= scopeRange.Start AndAlso cmtEnd <= scopeRange.End Then
+                        Dim includeComment As Boolean = False
+
+                        If filterByDate Then
+                            ' Include if comment date >= filter date
+                            If cmt.Date >= filterDate.Value Then
+                                includeComment = True
+                            End If
+                        Else
+                            ' No date filter: include comments added since first revision minus 60 minutes
+                            If commentCutoffDate.HasValue Then
+                                If cmt.Date >= commentCutoffDate.Value Then
+                                    includeComment = True
+                                End If
+                            Else
+                                ' No revisions found, so no comments to include
+                                includeComment = False
+                            End If
+                        End If
+
+                        If includeComment Then
+                            commentList.Add(cmt)
+                        End If
+                    End If
+                Catch
+                End Try
+            Next
+
+            ' Sort comments by position
+            commentList.Sort(Function(a, b)
+                                 Try
+                                     Return a.Scope.Start.CompareTo(b.Scope.Start)
+                                 Catch
+                                     Return 0
+                                 End Try
+                             End Function)
+
+            ' Build comments output using same format as ExtractChangesWithMarkupTags
+            If commentList.Count > 0 Then
+                sb.AppendLine()
+                sb.AppendLine("<comments>")
+                For Each cmt In commentList
+                    Try
+                        Dim author As String = If(cmt.Author, "Unknown")
+                        Dim commentText As String = If(cmt.Range.Text, String.Empty)
+                        Dim scopeText As String = String.Empty
+                        Try
+                            scopeText = If(cmt.Scope.Text, String.Empty)
+                        Catch
+                        End Try
+
+                        sb.AppendLine($"<comment author=""{System.Security.SecurityElement.Escape(author)}"" scope=""{System.Security.SecurityElement.Escape(scopeText)}"">{System.Security.SecurityElement.Escape(commentText)}</comment>")
+                        hasContent = True
+                    Catch
+                    End Try
+                Next
+                sb.AppendLine("</comments>")
+            End If
+
+        Catch ex As System.Exception
+            sb.AppendLine($"[Error extracting changes: {ex.Message}]")
+        End Try
+
+        Return If(hasContent, sb.ToString(), String.Empty)
+    End Function
 
     Public Sub RemoveContentControlsRespectSelection()
         Try

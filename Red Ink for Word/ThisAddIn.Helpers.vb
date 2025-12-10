@@ -234,31 +234,6 @@ Partial Public Class ThisAddIn
 
     End Function
 
-    Private Function oldGetSelectedTextLength() As Integer
-        Try
-            ' Get the active Word application
-            Dim wordApp As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
-
-            ' Get the current selection in the active document
-            Dim selection As Microsoft.Office.Interop.Word.Selection = wordApp.Selection
-
-            ' Check if there is any selected text
-            Dim selectedText As String = selection.Text
-            If String.IsNullOrWhiteSpace(selectedText) Then
-                Return 0
-            End If
-
-            ' Split the text on whitespace to count words,
-            ' ignoring empty entries from multiple spaces/newlines
-            Dim words = selectedText.Split(New Char() {" "c, ControlChars.Tab, ControlChars.Cr, ControlChars.Lf},
-                                       StringSplitOptions.RemoveEmptyEntries)
-            Return words.Length
-
-        Catch ex As System.Exception ' Explicitly referencing System.Exception
-            ' Handle any exceptions and return 0 if an error occurs
-            Return 0
-        End Try
-    End Function
 
     ''' <summary>
     ''' Counts real words in the current selection: sequences of letters (Unicode) optionally joined by internal apostrophes or hyphens; numeric/mixed tokens are ignored.

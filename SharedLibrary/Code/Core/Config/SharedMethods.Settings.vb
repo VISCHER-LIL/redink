@@ -771,6 +771,10 @@ Namespace SharedLibrary
                     Return context.INI_UpdatePath
                 Case "HelpMeInkyPath"
                     Return context.INI_HelpMeInkyPath
+                Case "DiscussInkyPath"
+                    Return context.INI_DiscussInkyPath
+                Case "DiscussInkyPathLocal"
+                    Return context.INI_DiscussInkyPathLocal
                 Case "RedactionInstructionsPath"
                     Return context.INI_RedactionInstructionsPath
                 Case "RedactionInstructionsPathLocal"
@@ -1008,6 +1012,10 @@ Namespace SharedLibrary
                     context.INI_UpdatePath = value
                 Case "HelpMeInkyPath"
                     context.INI_HelpMeInkyPath = value
+                Case "DiscussInkyPath"
+                    context.INI_DiscussInkyPath = value
+                Case "DiscussInkyPathLocal"
+                    context.INI_DiscussInkyPathLocal = value
                 Case "RedactionInstructionsPath"
                     context.INI_RedactionInstructionsPath = value
                 Case "RedactionInstructionsPathLocal"
@@ -1269,6 +1277,8 @@ Namespace SharedLibrary
                     {"UpdateCheckInterval", context.INI_UpdateCheckInterval.ToString()},
                     {"UpdatePath", context.INI_UpdatePath},
                     {"HelpMeInkyPath", context.INI_HelpMeInkyPath},
+                    {"DiscussInkyPath", context.INI_DiscussInkyPath},
+                    {"DiscussInkyPathLocal", context.INI_DiscussInkyPathLocal},
                     {"RedactionInstructionsPath", context.INI_RedactionInstructionsPath},
                     {"RedactionInstructionsPathLocal", context.INI_RedactionInstructionsPathLocal},
                     {"ExtractorPath", context.INI_ExtractorPath},
@@ -1313,6 +1323,7 @@ Namespace SharedLibrary
                     {"SP_ArgueAgainst", context.SP_ArgueAgainst},
                     {"SP_InsertClipboard", context.SP_InsertClipboard},
                     {"SP_Summarize", context.SP_Summarize},
+                    {"SP_Markup", context.SP_Markup},
                     {"SP_MailReply", context.SP_MailReply},
                     {"SP_MailSumup", context.SP_MailSumup},
                     {"SP_MailSumup2", context.SP_MailSumup2},
@@ -1383,6 +1394,7 @@ Namespace SharedLibrary
                     {"SP_ArgueAgainst", Default_SP_ArgueAgainst},
                     {"SP_InsertClipboard", Default_SP_InsertClipboard},
                     {"SP_Summarize", Default_SP_Summarize},
+                    {"SP_Markup", Default_SP_Markup},
                     {"SP_MailReply", Default_SP_MailReply},
                     {"SP_MailSumup", Default_SP_MailSumup},
                     {"SP_MailSumup2", Default_SP_MailSumup2},
@@ -1619,6 +1631,8 @@ Namespace SharedLibrary
                     {"RenameLibPath", context.INI_RenameLibPath},
                     {"RenameLibPathLocal", context.INI_RenameLibPathLocal},
                     {"HelpMeInkyPath", context.INI_HelpMeInkyPath},
+                    {"DiscussInkyPath", context.INI_DiscussInkyPath},
+                    {"DiscussInkyPathLocal", context.INI_DiscussInkyPathLocal},
                     {"UpdateCheckInterval", context.INI_UpdateCheckInterval.ToString()},
                     {"UpdatePath", context.INI_UpdatePath}
                 }
@@ -2018,6 +2032,8 @@ Namespace SharedLibrary
             variableValues.Add("UpdateCheckInterval", context.INI_UpdateCheckInterval)
             variableValues.Add("UpdatePath", context.INI_UpdatePath)
             variableValues.Add("HelpMeInkyPath", context.INI_HelpMeInkyPath)
+            variableValues.Add("DiscussInkyPath", context.INI_DiscussInkyPath)
+            variableValues.Add("DiscussInkyPathLocal", context.INI_DiscussInkyPathLocal)
             variableValues.Add("RedactionInstructionsPath", context.INI_RedactionInstructionsPath)
             variableValues.Add("RedactionInstructionsPathLocal", context.INI_RedactionInstructionsPathLocal)
             variableValues.Add("ExtractorPath", context.INI_ExtractorPath)
@@ -2063,6 +2079,7 @@ Namespace SharedLibrary
             variableValues.Add("SP_ArgueAgainst", context.SP_ArgueAgainst)
             variableValues.Add("SP_InsertClipboard", context.SP_InsertClipboard)
             variableValues.Add("SP_Summarize", context.SP_Summarize)
+            variableValues.Add("SP_Markup", context.SP_Markup)
             variableValues.Add("SP_MailReply", context.SP_MailReply)
             variableValues.Add("SP_MailSumup", context.SP_MailSumup)
             variableValues.Add("SP_MailSumup2", context.SP_MailSumup2)
@@ -2203,6 +2220,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_ArgueAgainst") Then context.SP_ArgueAgainst = CStr(updatedValues("SP_ArgueAgainst"))
                 If updatedValues.ContainsKey("SP_InsertClipboard") Then context.SP_InsertClipboard = CStr(updatedValues("SP_InsertClipboard"))
                 If updatedValues.ContainsKey("SP_Summarize") Then context.SP_Summarize = CStr(updatedValues("SP_Summarize"))
+                If updatedValues.ContainsKey("SP_Markup") Then context.SP_Markup = CStr(updatedValues("SP_Markup"))
                 If updatedValues.ContainsKey("SP_MailReply") Then context.SP_MailReply = CStr(updatedValues("SP_MailReply"))
                 If updatedValues.ContainsKey("SP_MailSumup") Then context.SP_MailSumup = CStr(updatedValues("SP_MailSumup"))
                 If updatedValues.ContainsKey("SP_MailSumup2") Then context.SP_MailSumup2 = CStr(updatedValues("SP_MailSumup2"))
@@ -2272,6 +2290,9 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("UpdateCheckInterval") Then context.INI_UpdateCheckInterval = CInt(updatedValues("UpdateCheckInterval"))
                 If updatedValues.ContainsKey("UpdatePath") Then context.INI_UpdatePath = CStr(updatedValues("UpdatePath"))
                 If updatedValues.ContainsKey("HelpMeInkyPath") Then context.INI_HelpMeInkyPath = CStr(updatedValues("HelpMeInkyPath"))
+                If updatedValues.ContainsKey("DiscussInkyPath") Then context.INI_DiscussInkyPath = CStr(updatedValues("DiscussInkyPath"))
+                If updatedValues.ContainsKey("DiscussInkyPathLocal") Then context.INI_DiscussInkyPathLocal = CStr(updatedValues("DiscussInkyPathLocal"))
+
                 If updatedValues.ContainsKey("RedactionInstructionsPath") Then context.INI_RedactionInstructionsPath = CStr(updatedValues("RedactionInstructionsPath"))
                 If updatedValues.ContainsKey("RedactionInstructionsPathLocal") Then context.INI_RedactionInstructionsPathLocal = CStr(updatedValues("RedactionInstructionsPathLocal"))
                 If updatedValues.ContainsKey("ExtractorPath") Then context.INI_ExtractorPath = CStr(updatedValues("ExtractorPath"))

@@ -6,6 +6,7 @@ Option Explicit On
 Option Strict On
 
 Imports System.Diagnostics
+Imports System.Globalization
 Imports System.IO
 Imports System.Text.RegularExpressions
 Imports System.Windows.Forms
@@ -107,6 +108,8 @@ Partial Public Class ThisAddIn
             SysPrompt = ""
             InsertDocs = ""
             MyStyleInsert = ""
+
+            CurrentDate = "(Current Date: " & DateTime.Now.ToString("dd-MMM-yyyy", CultureInfo.GetCultureInfo("en-US")) & ")"
 
             Dim NoText As Boolean = False
             Dim DoMarkup As Boolean = False

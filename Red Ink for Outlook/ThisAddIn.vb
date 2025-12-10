@@ -30,6 +30,7 @@
 Option Explicit On
 Option Strict Off
 
+Imports System.Globalization
 Imports System.Runtime.InteropServices
 Imports System.Threading
 Imports System.Threading.Tasks
@@ -82,6 +83,7 @@ Partial Public Class ThisAddIn
 
     Public TranslateLanguage As String = ""
     Public OtherPrompt As String = ""
+    Public CurrentDate As String = "(Current Date: " & DateTime.Now.ToString("dd-MMM-yyyy", CultureInfo.GetCultureInfo("en-US")) & ")"
     Public Username As String = ""
     Public MyStyleInsert As String = ""
     Public ShortenLength, SummaryLength As Long

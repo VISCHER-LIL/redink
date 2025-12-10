@@ -987,7 +987,8 @@ Partial Public Class ThisAddIn
                     Else
                         SelectedText = RichTextBox1.SelectedText
                     End If
-                    Dim LLMResult As String = Await LLM(OtherPrompt & " Current Date is: " & DateTime.Now.ToString("dd MMM yyyy", CultureInfo.CurrentCulture), SelectedText, "", "", 0, False)
+
+                    Dim LLMResult As String = Await LLM(OtherPrompt & " (Current Date: " & DateTime.Now.ToString("dd MMM yyyy", CultureInfo.GetCultureInfo("en-US")) & ")", SelectedText, "", "", 0, False)
 
                     Dim wordApp As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
                     Dim selection As Microsoft.Office.Interop.Word.Selection = wordApp.Selection

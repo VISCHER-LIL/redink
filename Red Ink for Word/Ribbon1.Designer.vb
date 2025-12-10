@@ -85,7 +85,9 @@ Partial Class Ribbon1
         Me.Menu3 = Me.Factory.CreateRibbonMenu
         Me.RI_Summarize = Me.Factory.CreateRibbonButton
         Me.RI_Explain = Me.Factory.CreateRibbonButton
+        Me.RI_ArgueAgainst = Me.Factory.CreateRibbonButton
         Me.RI_SuggestTitles = Me.Factory.CreateRibbonButton
+        Me.RI_RevisionsSummary = Me.Factory.CreateRibbonButton
         Me.RI_SpecialModel = Me.Factory.CreateRibbonButton
         Me.RI_DocCheck = Me.Factory.CreateRibbonButton
         Me.RI_FindClause = Me.Factory.CreateRibbonButton
@@ -102,6 +104,7 @@ Partial Class Ribbon1
         Me.RI_Search = Me.Factory.CreateRibbonButton
         Me.Menu2 = Me.Factory.CreateRibbonMenu
         Me.RI_Halves = Me.Factory.CreateRibbonButton
+        Me.RI_LiveCompare = Me.Factory.CreateRibbonButton
         Me.RI_AcceptFormat = Me.Factory.CreateRibbonButton
         Me.RI_TimeSpan = Me.Factory.CreateRibbonButton
         Me.RI_Regex = Me.Factory.CreateRibbonButton
@@ -111,13 +114,13 @@ Partial Class Ribbon1
         Me.RI_InsertClipboard = Me.Factory.CreateRibbonButton
         Me.RI_Chat2 = Me.Factory.CreateRibbonButton
         Me.RI_Transcriptor = Me.Factory.CreateRibbonButton
+        Me.RI_DiscussInky = Me.Factory.CreateRibbonButton
         Me.RI_HelpMe = Me.Factory.CreateRibbonButton
         Me.Settings = Me.Factory.CreateRibbonButton
         Me.Group2 = Me.Factory.CreateRibbonGroup
         Me.RI_PrimLang2 = Me.Factory.CreateRibbonButton
         Me.RI_Correct2 = Me.Factory.CreateRibbonButton
         Me.RI_Chat = Me.Factory.CreateRibbonButton
-        Me.RI_ArgueAgainst = Me.Factory.CreateRibbonButton
         Me.Tab1.SuspendLayout()
         Me.Group1.SuspendLayout()
         Me.Group2.SuspendLayout()
@@ -160,6 +163,7 @@ Partial Class Ribbon1
         Me.Menu1.Items.Add(Me.Menu2)
         Me.Menu1.Items.Add(Me.RI_Chat2)
         Me.Menu1.Items.Add(Me.RI_Transcriptor)
+        Me.Menu1.Items.Add(Me.RI_DiscussInky)
         Me.Menu1.Items.Add(Me.RI_HelpMe)
         Me.Menu1.Items.Add(Me.Settings)
         Me.Menu1.KeyTip = "RI"
@@ -389,6 +393,7 @@ Partial Class Ribbon1
         Me.Menu3.Items.Add(Me.RI_Explain)
         Me.Menu3.Items.Add(Me.RI_ArgueAgainst)
         Me.Menu3.Items.Add(Me.RI_SuggestTitles)
+        Me.Menu3.Items.Add(Me.RI_RevisionsSummary)
         Me.Menu3.Items.Add(Me.RI_SpecialModel)
         Me.Menu3.Items.Add(Me.RI_DocCheck)
         Me.Menu3.Items.Add(Me.RI_FindClause)
@@ -421,6 +426,15 @@ Partial Class Ribbon1
         Me.RI_Explain.ScreenTip = "Explain in simple terms what the selected text means"
         Me.RI_Explain.ShowImage = True
         '
+        'RI_ArgueAgainst
+        '
+        Me.RI_ArgueAgainst.Label = "Argue Against"
+        Me.RI_ArgueAgainst.Name = "RI_ArgueAgainst"
+        Me.RI_ArgueAgainst.OfficeImageId = "SpeakStop"
+        Me.RI_ArgueAgainst.ScreenTip = "This will let the AI argue against the selected text with at least the number of " &
+    "words defined by you"
+        Me.RI_ArgueAgainst.ShowImage = True
+        '
         'RI_SuggestTitles
         '
         Me.RI_SuggestTitles.Label = "Suggest Titles"
@@ -428,6 +442,14 @@ Partial Class Ribbon1
         Me.RI_SuggestTitles.OfficeImageId = "FillUp"
         Me.RI_SuggestTitles.ScreenTip = "Suggest various titles for the selected text"
         Me.RI_SuggestTitles.ShowImage = True
+        '
+        'RI_RevisionsSummary
+        '
+        Me.RI_RevisionsSummary.Label = "Sum-up Revisions"
+        Me.RI_RevisionsSummary.Name = "RI_RevisionsSummary"
+        Me.RI_RevisionsSummary.OfficeImageId = "ReviewCompareSpecificVersion"
+        Me.RI_RevisionsSummary.ScreenTip = "Will provide a summary of the revisions made in your selection or document"
+        Me.RI_RevisionsSummary.ShowImage = True
         '
         'RI_SpecialModel
         '
@@ -547,6 +569,7 @@ Partial Class Ribbon1
         'Menu2
         '
         Me.Menu2.Items.Add(Me.RI_Halves)
+        Me.Menu2.Items.Add(Me.RI_LiveCompare)
         Me.Menu2.Items.Add(Me.RI_AcceptFormat)
         Me.Menu2.Items.Add(Me.RI_TimeSpan)
         Me.Menu2.Items.Add(Me.RI_Regex)
@@ -567,6 +590,14 @@ Partial Class Ribbon1
         Me.RI_Halves.OfficeImageId = "ReviewCompareTwoVersions"
         Me.RI_Halves.ScreenTip = "Will compare two or more paragraphs with each other"
         Me.RI_Halves.ShowImage = True
+        '
+        'RI_LiveCompare
+        '
+        Me.RI_LiveCompare.Label = "Compare Active Docs"
+        Me.RI_LiveCompare.Name = "RI_LiveCompare"
+        Me.RI_LiveCompare.OfficeImageId = "ReviewCompareTwoVersions"
+        Me.RI_LiveCompare.ScreenTip = "Compare your current Word document with a second open Word document"
+        Me.RI_LiveCompare.ShowImage = True
         '
         'RI_AcceptFormat
         '
@@ -642,6 +673,15 @@ Partial Class Ribbon1
         Me.RI_Transcriptor.OfficeImageId = "AudioRecordingInsert"
         Me.RI_Transcriptor.ShowImage = True
         '
+        'RI_DiscussInky
+        '
+        Me.RI_DiscussInky.Label = "Discuss this"
+        Me.RI_DiscussInky.Name = "RI_DiscussInky"
+        Me.RI_DiscussInky.OfficeImageId = "ShareWithPeopleFromSharePane"
+        Me.RI_DiscussInky.ScreenTip = "Have Inky take the role of your chosen persona to discuss with you a document you" &
+    " provide"
+        Me.RI_DiscussInky.ShowImage = True
+        '
         'RI_HelpMe
         '
         Me.RI_HelpMe.Label = "Help me, Inky"
@@ -695,15 +735,6 @@ Partial Class Ribbon1
         Me.RI_Chat.OfficeImageId = "ContactUs"
         Me.RI_Chat.ScreenTip = "Will open a window where you can chat with the LLM"
         Me.RI_Chat.ShowImage = True
-        '
-        'RI_ArgueAgainst
-        '
-        Me.RI_ArgueAgainst.Label = "Argue Against"
-        Me.RI_ArgueAgainst.Name = "RI_ArgueAgainst"
-        Me.RI_ArgueAgainst.OfficeImageId = "SpeakStop"
-        Me.RI_ArgueAgainst.ScreenTip = "This will let the AI argue against the selected text with at least the number of " &
-    "words defined by you"
-        Me.RI_ArgueAgainst.ShowImage = True
         '
         'Ribbon1
         '
@@ -872,6 +903,13 @@ Partial Class Ribbon1
             Me.RI_EditWebAgent.Visible = True
         End If
 
+
+        If Trim(ThisAddIn.INI_DiscussInkyPath) = "" And Trim(ThisAddIn.INI_DiscussInkyPathLocal) = "" Then
+            Me.RI_DiscussInky.Visible = False
+        Else
+            Me.RI_DiscussInky.Visible = True
+        End If
+
         Dim LastFreestylePrompt As String = My.Settings.LastFreestylePrompt
         If Trim(LastFreestylePrompt) = "" Then
             Me.RI_FreestyleRepeat.Enabled = False
@@ -954,6 +992,9 @@ Partial Class Ribbon1
     Friend WithEvents RI_EditRedact As RibbonButton
     Friend WithEvents RI_Filibuster As RibbonButton
     Friend WithEvents RI_ArgueAgainst As RibbonButton
+    Friend WithEvents RI_LiveCompare As RibbonButton
+    Friend WithEvents RI_RevisionsSummary As RibbonButton
+    Friend WithEvents RI_DiscussInky As RibbonButton
 End Class
 
 Partial Class ThisRibbonCollection

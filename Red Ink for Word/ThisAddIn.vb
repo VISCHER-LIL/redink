@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 7.12.2025
+' 10.12.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -36,12 +36,13 @@ Imports System.Threading
 Imports System.Threading.Tasks
 Imports System.Windows.Forms
 Imports SharedLibrary.SharedLibrary
+Imports System.Globalization
 
 Partial Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.071225 Gen2 Beta Test"
+    Public Const Version As String = "V.101225 Gen2 Beta Test"
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -235,7 +236,7 @@ Partial Public Class ThisAddIn
     Public FormatInstruction As String = ""
     Public SearchTerms As String
     Public SearchContext As String
-    Public CurrentDate As String
+    Public CurrentDate As String = "(Current Date: " & DateTime.Now.ToString("dd-MMM-yyyy", CultureInfo.GetCultureInfo("en-US")) & ")"
     Public SysPrompt As String
     Public OldParty, NewParty As String
     Public SelectedText As String

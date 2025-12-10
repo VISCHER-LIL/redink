@@ -6,6 +6,7 @@ Imports System.ComponentModel
 Imports System.Data
 Imports System.Diagnostics
 Imports System.Drawing
+Imports System.Globalization
 Imports System.Runtime.InteropServices
 Imports System.Text.RegularExpressions
 Imports System.Threading.Tasks
@@ -355,7 +356,7 @@ Public Class frmAIChat
 
         Try
             ' Build entire conversation so far into one string for context
-            SystemPrompt = _context.SP_ChatWord().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("MMMM dd, yyyy hh:mm tt")}. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland." & If(chkIncludeDocText.Checked, "\nYou have access to the user's document. \n", "") & If(chkIncludeselection.Checked, "\nYou have access to a selection of user's document. \n ", "") & If(My.Settings.DoCommands And (chkIncludeDocText.Checked Or chkIncludeselection.Checked), _context.SP_Add_ChatWord_Commands, _context.SP_Add_Chat_NoCommands)
+            SystemPrompt = _context.SP_ChatWord().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("dd-MMM-yyyy hh:mm tt", CultureInfo.GetCultureInfo("en-US"))}. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland." & If(chkIncludeDocText.Checked, "\nYou have access to the user's document. \n", "") & If(chkIncludeselection.Checked, "\nYou have access to a selection of user's document. \n ", "") & If(My.Settings.DoCommands And (chkIncludeDocText.Checked Or chkIncludeselection.Checked), _context.SP_Add_ChatWord_Commands, _context.SP_Add_Chat_NoCommands)
 
             SystemPrompt = _context.SP_ChatWord().
                         Replace("{UserLanguage}", UserLanguage) &

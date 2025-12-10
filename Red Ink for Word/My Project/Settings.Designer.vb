@@ -616,6 +616,90 @@ Namespace My
                 Me("Flatten_OutputExtension") = value
             End Set
         End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("0, 0")>  _
+        Public Property DiscussFormLocation() As Global.System.Drawing.Point
+            Get
+                Return CType(Me("DiscussFormLocation"),Global.System.Drawing.Point)
+            End Get
+            Set
+                Me("DiscussFormLocation") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("0, 0")>  _
+        Public Property DiscussFormSize() As Global.System.Drawing.Size
+            Get
+                Return CType(Me("DiscussFormSize"),Global.System.Drawing.Size)
+            End Get
+            Set
+                Me("DiscussFormSize") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("False")>  _
+        Public Property DiscussIncludeActiveDoc() As Boolean
+            Get
+                Return CType(Me("DiscussIncludeActiveDoc"),Boolean)
+            End Get
+            Set
+                Me("DiscussIncludeActiveDoc") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property DiscussSelectedPersona() As String
+            Get
+                Return CType(Me("DiscussSelectedPersona"),String)
+            End Get
+            Set
+                Me("DiscussSelectedPersona") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property DiscussKnowledgePath() As String
+            Get
+                Return CType(Me("DiscussKnowledgePath"),String)
+            End Get
+            Set
+                Me("DiscussKnowledgePath") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property DiscussLastChat() As String
+            Get
+                Return CType(Me("DiscussLastChat"),String)
+            End Get
+            Set
+                Me("DiscussLastChat") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property DiscussLastChatHtml() As String
+            Get
+                Return CType(Me("DiscussLastChatHtml"),String)
+            End Get
+            Set
+                Me("DiscussLastChatHtml") = value
+            End Set
+        End Property
     End Class
 End Namespace
 

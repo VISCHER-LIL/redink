@@ -295,11 +295,24 @@ Public Class Ribbon1
         Globals.ThisAddIn.EditRedactionInstructions()
     End Sub
 
-    Private Sub Button1_Click_1(sender As Object, e As RibbonControlEventArgs) Handles RI_Filibuster.Click
+    Private Sub RI_Filibuster_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Filibuster.Click
         Globals.ThisAddIn.Filibuster()
     End Sub
 
-    Private Sub Button2_Click_1(sender As Object, e As RibbonControlEventArgs) Handles RI_ArgueAgainst.Click
+    Private Sub RI_ArgueAgainst_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_ArgueAgainst.Click
         Globals.ThisAddIn.ArgueAgainst()
     End Sub
+
+    Private Sub RI_LiveCompare_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_LiveCompare.Click
+        Globals.ThisAddIn.CompareActiveDocWithOtherOpenDoc()
+    End Sub
+
+    Private Sub RI_RevisionSummary_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_RevisionsSummary.Click
+        Globals.ThisAddIn.SummarizeDocumentChanges()
+    End Sub
+
+    Private Sub RI_DiscussInky_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_DiscussInky.Click
+        Globals.ThisAddIn.DiscussInky()
+    End Sub
+
 End Class

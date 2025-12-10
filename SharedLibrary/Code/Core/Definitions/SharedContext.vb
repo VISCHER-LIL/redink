@@ -102,6 +102,8 @@ Namespace SharedLibrary
             Property INI_UpdateCheckInterval As Integer
             Property INI_UpdatePath As String
             Property INI_HelpMeInkyPath As String
+            Property INI_DiscussInkyPath As String
+            Property INI_DiscussInkyPathLocal As String
             Property INI_ExtractorPath As String
             Property INI_ExtractorPathLocal As String
             Property INI_RenameLibPath As String
@@ -137,6 +139,7 @@ Namespace SharedLibrary
             Property SP_ArgueAgainst As String
             Property SP_InsertClipboard As String
             Property SP_Summarize As String
+            Property SP_Markup As String
             Property SP_MailReply As String
             Property SP_MailSumup As String
             Property SP_MailSumup2 As String
@@ -326,6 +329,8 @@ Namespace SharedLibrary
         Public Property INI_UpdateCheckInterval As Integer Implements ISharedContext.INI_UpdateCheckInterval
         Public Property INI_UpdatePath As String Implements ISharedContext.INI_UpdatePath
         Public Property INI_HelpMeInkyPath As String Implements ISharedContext.INI_HelpMeInkyPath
+        Public Property INI_DiscussInkyPath As String Implements ISharedContext.INI_DiscussInkyPath
+        Public Property INI_DiscussInkyPathLocal As String Implements ISharedContext.INI_DiscussInkyPathLocal
         Public Property INI_ExtractorPath As String Implements ISharedContext.INI_ExtractorPath
         Public Property INI_ExtractorPathLocal As String Implements ISharedContext.INI_ExtractorPathLocal
         Public Property INI_RenameLibPath As String Implements ISharedContext.INI_RenameLibPath
@@ -361,6 +366,8 @@ Namespace SharedLibrary
         Public Property SP_ArgueAgainst As String Implements ISharedContext.SP_ArgueAgainst
         Public Property SP_InsertClipboard As String Implements ISharedContext.SP_InsertClipboard
         Public Property SP_Summarize As String Implements ISharedContext.SP_Summarize
+        Public Property SP_Markup As String Implements ISharedContext.SP_Markup
+
         Public Property SP_MailReply As String Implements ISharedContext.SP_MailReply
         Public Property SP_MailSumup As String Implements ISharedContext.SP_MailSumup
         Public Property SP_MailSumup2 As String Implements ISharedContext.SP_MailSumup2

@@ -843,6 +843,15 @@ Partial Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Markup As String
+        Get
+            Return _context.SP_Markup
+        End Get
+        Set(value As String)
+            _context.SP_Markup = value
+        End Set
+    End Property
+
     Public Shared Property SP_MailReply As String
         Get
             Return _context.SP_MailReply
@@ -1496,6 +1505,24 @@ Partial Public Class ThisAddIn
         End Get
         Set(value As String)
             _context.INI_HelpMeInkyPath = value
+        End Set
+    End Property
+
+    Public Shared Property INI_DiscussInkyPath As String
+        Get
+            Return _context.INI_DiscussInkyPath
+        End Get
+        Set(value As String)
+            _context.INI_DiscussInkyPath = value
+        End Set
+    End Property
+
+    Public Shared Property INI_DiscussInkyPathLocal As String
+        Get
+            Return _context.INI_DiscussInkyPathLocal
+        End Get
+        Set(value As String)
+            _context.INI_DiscussInkyPathLocal = value
         End Set
     End Property
 
