@@ -473,9 +473,10 @@ Namespace SharedLibrary
 
         Public Shared Function CreateProperHtml(inputHtml As String) As String
             ' 0) Vorab: Typografische Quotes normalisieren
-            inputHtml = inputHtml.Replace("„", """") _
-                         .Replace("“", """") _
-                         .Replace("”", """")
+            inputHtml = inputHtml _
+                .Replace("„"c, """"c) _
+                .Replace(ChrW(&H201C), """"c) _
+                .Replace(ChrW(&H201D), """"c)
 
             ' 1) Entities maskieren: alle &...; Sequenzen merken und Platzhalter einsetzen
             Dim entityPattern As New System.Text.RegularExpressions.Regex("(&#\d+;|&[A-Za-z]+;)")

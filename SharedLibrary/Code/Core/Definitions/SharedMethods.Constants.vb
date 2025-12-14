@@ -18,11 +18,10 @@ Namespace SharedLibrary
         Public Const AN As String = "Red Ink"
         Public Const AN2 As String = "redink"
         Public Const AN3 As String = "Red Ink" ' Name used for Visual Studio Project 
-        Public Const AN4 As String = "https://vischer.com/redink"  ' Name of sub-directory on Website of vischer.com/...  
-        Public Const AN5 As String = "Red%20Ink"  ' Name of sub-directory on Website of vischer.com/...  
+        Public Const AN4 As String = "https://vischer.com/redink"  ' Home Website of Red Ink
+        Public Const AN5 As String = "Red%20Ink"  ' Name of first part of VSTO installer subdirectory (before "for Word" etc)
         Public Const AN7 As String = "http://localhost:12333/inky"  ' Localhost URL for Inky
         Public Const AN8 As String = "Inky"
-        Public Const MaxUseDate As Date = #12/31/2025#
 
         Public Const NoThinkTrigger As String = "(nothink)"
         Public Const RKModeTrigger1 As String = "(rkmode_all)"
@@ -57,7 +56,6 @@ Namespace SharedLibrary
         Public Const AnonPrefix = "<"
         Public Const AnonSuffix = ">"
 
-
         Public Const JSONCheckPrompt = "You are a very careful JSON file structure checker. Check very carefully whether this is a fully valid JSON structure, and in particular whether it contains closing curly and square brackets for each opening bracket and all necessary escapes there and correct. If there is something wrong, say so and how to correct. Be very careful and check the structure twice to be sure! Provide your findings in the form of bullets."
 
         Public Const Default_PaneWidth As Integer = 580
@@ -68,36 +66,76 @@ Namespace SharedLibrary
 
         Public Shared RemoveMenu As Boolean = False
 
+        ' App Updating and Download Urls
+
+        ' Beta Test Phase
+
+        Public Shared AppsUrl As String = "https://apps.vischer.com"
+        Public Shared AppsUrlDir As String = "/redink/"
+
+        ' Preview Phase
+
+        'Public Shared AppsUrl As String = "https://redink.ai"
+        'Public Shared AppsUrlDir As String = "/apps/preview/"
+
+        ' GA Phase
+
+        'Public Shared AppsUrl As String = "https://redink.ai"
+        'Public Shared AppsUrlDir As String = "/apps/ga/"
+
+
         Public Shared LicenseText As String =
             $"{AN} for Word, Excel And Outlook has been created In VB.net (handlers: VBA) and uses:" & vbCrLf & vbCrLf &
-            "1. DiffPlex in unchanged form; Copyright (c) 2023 Matthew Manela; licensed under the Appache-2.0 license " &
+            "1. Includes DiffPlex in unchanged form; Copyright (c) 2023 Matthew Manela; licensed under the Apache-2.0 license " &
             "(http://www.apache.org/licenses/LICENSE-2.0) at GitHub (https://github.com/mmanela/diffplex)." & vbCrLf &
-            "2. Newtonsoft.Json in unchanged form; Copyright (c) 2023 James Newton-King; licensed under the MIT license " &
+            "2. Includes Newtonsoft.Json in unchanged form; Copyright (c) 2023 James Newton-King; licensed under the MIT license " &
             "(https://licenses.nuget.org/MIT) at https://www.newtonsoft.com/json" & vbCrLf &
-            "3. HtmlAgilityPack in unchanged form; Copyright (c) 2024 ZZZ Projects, Simon Mourrier, Jeff Klawiter, " &
-            "Stephan Grell; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://html-agility-pack.net/" & vbCrLf &
-            "4. Bouncycastle.Cryptography in unchanged form; Copyright (c) 2024 Legion of the Bouncy Castle Inc.; " &
+            "3. Includes HtmlAgilityPack in unchanged form; Copyright (c) 2024 ZZZ Projects, Simon Mourrier,Jeff Klawiter,Stephan Grell; " &
+            "licensed under the MIT license (https://licenses.nuget.org/MIT) at https://html-agility-pack.net/" & vbCrLf &
+            "4. Includes Bouncycastle.Cryptography in unchanged form; Copyright (c) 2024 Legion of the Bouncy Castle Inc.; " &
             "licensed under the MIT license (https://licenses.nuget.org/MIT) at https://www.bouncycastle.org/download/bouncy-castle-c/" & vbCrLf &
-            "5. PdfPig in unchanged form; Copyright (c) 2024 UglyToad, EliotJones PdfPig, BobLd; licensed under the Apache 2.0 license " &
+            "5. Includes PdfPig in unchanged form; Copyright (c) 2024 UglyToad, EliotJones PdfPig, BobLd; licensed under the Apache 2.0 license " &
             "(https://licenses.nuget.org/Apache-2.0) at https://github.com/UglyToad/PdfPig" & vbCrLf &
-            "6. MarkDig in unchanged form; Copyright (c) 2024 Alexandre Mutel; licensed under the BSD 2 Clause (Simplified) license " &
+            "6. Includes MarkDig in unchanged form; Copyright (c) 2024 Alexandre Mutel; licensed under the BSD 2 Clause (Simplified) license " &
             "(https://licenses.nuget.org/BSD-2-Clause) at https://github.com/xoofx/markdig" & vbCrLf &
-            "7. NAudio in unchanged form; Copyright (c) 2020 Mark Heath; licensed under a proprietary open source license (https://www.nuget.org/packages/NAudio/2.2.1/license) at https://github.com/naudio/NAudio" &
-            "(https://licenses.nuget.org/BSD-2-Clause) at https://github.com/xoofx/markdig" & vbCrLf &
-            "8. Vosk in unchanged form; Copyright (c) 2022 Alpha Cephei Inc.; licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://alphacephei.com/vosk/" & vbCrLf &
-            "9. Whisper.net In unchanged form; Copyright (c) 2024 Sandro Hanea; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/sandrohanea/whisper.net" & vbCrLf &
-            "10. Grpc.core in unchanged form; Copyright (c) 2023 The gRPC Authors; licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://github.com/grpc/grpc" & vbCrLf &
-            "11. Google Speech V1 library and related API libraries in unchanged form; Copyright (c) 2024 Google LLC; licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://github.com/googleapis/google-cloud-dotnet" & vbCrLf &
-            "12. Google Protobuf in unchanged form; Copyright (c) 2025 Google Inc.; licensed under the BSD-3-Clause license (https://licenses.nuget.org/BSD-3-Clause) at https://github.com/protocolbuffers/protobuf" & vbCrLf &
-            "13. MarkdownToRTF in modified form; Copyright (c) 2025 Gustavo Hennig; original licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/GustavoHennig/MarkdownToRtf" & vbCrLf &
-            "14. Nito.AsyncEx In unchanged form; Copyright (c) 2021 Stephen Cleary; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/StephenCleary/AsyncEx" & vbCrLf &
-            "15. NetOffice libraries in unchanged form; Copyright (c) 2020 Sebastian Lange, Erika LeBlanc; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/netoffice/NetOffice-NuGet" & vbCrLf &
-            "16. NAudio.Lame in unchanged form; Copyright (c) 2019 Corey Murtagh; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/Corey-M/NAudio.Lame" & vbCrLf &
-            "17. PdfiumViewer in unchanged form; Copyright (c) 2017 Pieter van Ginkel; licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://github.com/pvginkel/PdfiumViewer" & vbCrLf &
-            "18. Various Microsoft libraries copyrighted by Microsoft Corporation and available, among others, under the Microsoft EULA and the MIT License; " &
+            "7. Includes NAudio and components in unchanged form; Copyright (c) 2020 Mark Heath; licensed under a proprietary open source license " &
+            "(https://www.nuget.org/packages/NAudio/2.2.1/license) at https://github.com/naudio/NAudio" & vbCrLf &
+            "8. Includes Vosk in unchanged form; Copyright (c) 2022 Alpha Cephei Inc.; licensed under the Apache 2.0 license " &
+            "(https://licenses.nuget.org/Apache-2.0) at https://alphacephei.com/vosk/" & vbCrLf &
+            "9. Includes Whisper.net in unchanged form; Copyright (c) 2024 Sandro Hanea; licensed under the MIT license " &
+            "(https://licenses.nuget.org/MIT) at https://github.com/sandrohanea/whisper.net" & vbCrLf &
+            "10. Includes Grpc.core/Grpc.net in unchanged form; Copyright (c) 2023/2025 The gRPC Authors; licensed under the Apache 2.0 license " &
+            "(https://licenses.nuget.org/Apache-2.0) at https://github.com/grpc/grpc" & vbCrLf &
+            "11. Includes Google Speech V1 library and related API libraries in unchanged form; Copyright (c) 2024 Google LLC; " &
+            "licensed under the Apache 2.0 license (https://licenses.nuget.org/Apache-2.0) at https://github.com/googleapis/google-cloud-dotnet" & vbCrLf &
+            "12. Includes Google Protobuf in unchanged form; Copyright (c) 2025 Google Inc.; licensed under the BSD-3-Clause license " &
+            "(https://licenses.nuget.org/BSD-3-Clause) at https://github.com/protocolbuffers/protobuf" & vbCrLf &
+            "13. Includes Google.Api in unchanged form; Copyright (c) 2025 Google LLC; licensed under the BSD-3-Clause license " &
+            "(https://licenses.nuget.org/BSD-3-Clause) at https://github.com/googleapis/gax-dotnet" & vbCrLf &
+            "14. Includes Google.Apis in unchanged form; Copyright (c) 2025 Google LLC; licensed under the Apache 2.0 license " &
+            "(https://licenses.nuget.org/Apache-2.0) at https://github.com/googleapis/google-api-dotnet-client" & vbCrLf &
+            "15. Includes Google.Longrunning in unchanged form; Copyright (c) 2025 Google LLC; licensed under the Apache 2.0 license " &
+            "(https://licenses.nuget.org/Apache-2.0) at https://github.com/googleapis/google-cloud-dotnet" & vbCrLf &
+            "16. Includes MarkdownToRTF in modified form; Copyright (c) 2025 Gustavo Hennig; original licensed under the MIT license " &
+            "(https://licenses.nuget.org/MIT) at https://github.com/GustavoHennig/MarkdownToRtf" & vbCrLf &
+            "17. Includes Nito.AsyncEx in unchanged form; Copyright (c) 2021 Stephen Cleary; licensed under the MIT license " &
+            "(https://licenses.nuget.org/MIT) at https://github.com/StephenCleary/AsyncEx" & vbCrLf &
+            "18. Includes NetOffice libraries in unchanged form; Copyright (c) 2020 Sebastian Lange, Erika LeBlanc; " &
+            "licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/netoffice/NetOffice-NuGet" & vbCrLf &
+            "19. Includes NAudio.Lame in unchanged form; Copyright (c) 2019 Corey Murtagh; licensed under the MIT license " &
+            "(https://licenses.nuget.org/MIT) at https://github.com/Corey-M/NAudio.Lame" & vbCrLf &
+            "20. Includes PdfiumViewer in unchanged form; Copyright (c) 2017 Pieter van Ginkel; licensed under the Apache 2.0 license " &
+            "(https://licenses.nuget.org/Apache-2.0) at https://github.com/pvginkel/PdfiumViewer" & vbCrLf &
+            "21. Includes PDFsharp in unchanged form; Copyright (c) 2025 PDFSharp Team; licensed under the MIT license " &
+            "(https://licenses.nuget.org/MIT) at https://docs.pdfsharp.net/" & vbCrLf &
+            "22. Includes System.Interactive.Async in unchanged form; Copyright (c) 2025 by .NET Foundation and Contributors; " &
+            "licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/dotnet/reactive" & vbCrLf &
+            "23. Includes also various Microsoft distributables and libraries copyrighted by Microsoft Corporation and available, among others, " &
+            "under the Microsoft EULA and the MIT License (including Microsoft.Bcl.*, Microsoft.Extensions.*, System.*, System.Security.*, System.CodeDom, " &
+            "DocumentFormat.OpenXml.*, Microsoft.ml.*, CommunityToolkit.HighPerformance licensed under MIT License) (https://licenses.nuget.org/MIT); " &
             "Copyright (c) 2016- Microsoft Corp." & vbCrLf & vbCrLf & "Disclaimer:" & vbCrLf & vbCrLf &
             "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 'As Is' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE." & vbCrLf & vbCrLf &
-            $"See the Red Ink license file ({AppsUrl}/redink/license.txt) for more information."
+            $"See the Red Ink license file ({AppsUrl}{AppsUrlDir}license.txt) for more information."
 
         Public Shared DefaultINIPaths As New Dictionary(Of String, String) From {
             {"Word", "%AppData%\Microsoft\Word\" & AN2 & ".ini"},
@@ -110,25 +148,24 @@ Namespace SharedLibrary
             {"Excel", "%AppData%\Microsoft\Excel\XLSTART\" & AN2 & "_helper.xlam"}
         }
 
+
         Public Shared UpdatePaths As New Dictionary(Of String, String) From {
-            {"Word", $"microsoft-edge:{AppsUrl}/redink/word/" & AN5 & "%20for%20Word.vsto"},
-            {"Excel", $"microsoft-edge:{AppsUrl}/redink/excel/" & AN5 & "%20for%20Excel.vsto"},
-            {"Outlook", $"microsoft-edge:{AppsUrl}/redink/outlook/" & AN5 & "%20for%20Outlook.vsto"}
+            {"Word", $"microsoft-edge:{AppsUrl}{AppsUrlDir}word/" & AN5 & "%20for%20Word.vsto"},
+            {"Excel", $"microsoft-edge:{AppsUrl}{AppsUrlDir}excel/" & AN5 & "%20for%20Excel.vsto"},
+            {"Outlook", $"microsoft-edge:{AppsUrl}{AppsUrlDir}outlook/" & AN5 & "%20for%20Outlook.vsto"}
         }
 
-        Public Const Default_HelpMeInkyPath As String = "https://apps.vischer.com/redink/Red_Ink_Guide.txt"
+        Public Shared Default_HelpMeInkyPath As String = $"{AppsUrl}{AppsUrlDir}Red_Ink_Guide.txt"
 
         Public Shared ExcelHelper As String = AN2 & "_helper.xlam"
         Public Shared WordHelper As String = AN2 & "_helper.dotm"
 
-        Public Shared ExcelHelperUrl As String = "https://apps.vischer.com/redink/" & ExcelHelper
-        Public Shared WordHelperUrl As String = "https://apps.vischer.com/redink/" & WordHelper
+        Public Shared ExcelHelperUrl As String = $"{AppsUrl}{AppsUrlDir}" & ExcelHelper
+        Public Shared WordHelperUrl As String = $"{AppsUrl}{AppsUrlDir}" & WordHelper
 
-        Public Shared AppsUrl As String = "https://apps.vischer.com"
+        Public Shared RemoteDefaultsUrl As String = $"{AppsUrl}{AppsUrlDir}redink-defaultconfig.ini"
 
-        ' Add these members inside Class InitialConfig (near other fields)
-        Public Const RemoteDefaultsUrl As String = "https://apps.vischer.com/redink/redink-defaultconfig.ini"
-
+        ' Default Prompts
 
         Const Default_SP_Translate As String = "You are a translator that precisely complies with its instructions step by step. Translate in to {TranslateLanguage} the text that is provided to you and is marked as 'Texttoprocess'. When you translate, do not add any other comments and the translation should be of about the same length. Whenever there is a line feed or carriage return in text provided to you, it is essential that you also include such line feed or carriage return in the output you generate. The carriage returns and line feeds in the output must match exactly those in the original text provided to you. Accordingly, if there are two carriage returns or line feeds in succession in the text provided to you, there must also be two carriage returns or line feeds in the text you generate. Remove any double spaces that follow punctuation marks. Before translating, check whether the text is drafted in a formal or informal manner, and maintain such style. If and when asked to translate to a language where the translation of 'you' is translated differently depending on whether it is formal or not, such as German or French, go by default for a formal translation (e.g., 'Sie' or 'vous'), unless the text is clearly very informal, for example, because the text is addressed to a person by their first name or signed only with the first name of a person. {INI_PreCorrection}"
         Const Default_SP_Correct As String = "You are a legal professional with very good language skills that precisely complies with its instructions step by step. Amend the text that is provided to you, in its original language, and is marked as 'Texttoprocess' to only correct spelling, missing words, clearly unnecessary words, strange or archaic language and poor style. When doing so, do not significantly change the length of the text. Whenever there is a line feed or carriage return in text provided to you, it is essential that you also include such line feed or carriage return in the output you generate. The carriage returns and line feeds in the output must match exactly those in the original text provided to you. Accordingly, if there are two carriage returns or line feeds in succession in the text provided to you, there must also be two carriage returns or line feeds in the text you generate. {INI_PreCorrection}"
@@ -152,14 +189,12 @@ Namespace SharedLibrary
         Const Default_SP_ExtractSchema As String = "You are a very careful document analyzing expert. Design a minimal ordered column schema for ""{OtherPrompt}"" applied to the text inside <TEXTTOPROCESS>...</TEXTTOPROCESS>; infer only truly needed fields; allowed types: date, datetime, time, number, text, other; do not mark a sort column; respond ONLY as compact JSON IN {OutputLanguage}: {""schema"":[{""name"":""Col1"",""type"":""text""},{""name"":""Col2"",""type"":""date""}]} with no rows, commentary or trailing commas. All descriptive text (if any) must be in {OutputLanguage}."
         Const Default_SP_Extract As String = "You are a very careful document reviewing expert. Extract structured facts for ""{OtherPrompt}"" from <TEXTTOPROCESS>...</TEXTTOPROCESS>; if a schema is already provided or enforced do NOT alter or repeat it; otherwise first infer a minimal ordered schema; normalize dates (YYYY-MM-DD or YYYY-MM if month precision, YYYY if year only); never hallucinate missing values (use """" if absent); respond ONLY as JSON IN {OutputLanguage}: {""schema"":[{""name"":""Col1"",""type"":""text""},...],""rows"":[[""v1"",""v2"",...],...],""file_name"":""<F>""} (omit the schema array entirely if an external fixed schema was supplied) with no commentary, explanations or extra fields. All textual values and added field names must be in {OutputLanguage}."
         Const Default_SP_MergeDateRows = "YOU MERGE MULTIPLE EXTRACTION ROWS SHARING A DATE. Return strictly: {""values"":[...]} with the SAME column count and order. Rules: - Keep the date column value exactly as provided. - For textual columns: produce a concise synthesized summary, not a simple concatenation (unless no synthesis possible). - For number columns: choose most representative (if counts → sum; if amounts → sum; else first non-empty). - For file column (if present): combine distinct file names separated by ';'. Do NOT add or remove columns. No commentary."
-
-        'Const Default_SP_RangeOfCells As String = "You are an expert in analyzing and explaining Excel files to non-experts And in drafting Excel formulas for use within Excel. You precisely comply With your instructions. Perform the instruction '{OtherPrompt}' using the range of cells provided You between the tags <RANGEOFCELLS> ... </RANGEOFCELLS>. When providing your advice, follow this exact format for each suggestion: \n 1. For instructions only, use the delimiter ""[Cell: X]"" for each cell reference (e.g., [Cell: A1]). 2. For formulas in instructions, use '[Formula: =expression]' (e.g., [Formula: =SUM(A1:A10)]). 3. For values in instructions, use ""[Value: 'text']"" (e.g., [Value: 'New value']). 4. Each instruction should start with the ""[Cell: X]"" marker followed by a ""[Formula: ...]"" or ""[Value: ...]"" in the next line. 5. Ensure IN ANY EVENT that Value: starts and ends with Square brackets even if you insert multiline text (""[Value: 'This is text']"" is correct; ""Value: 'This is text']"" is wrong, because the initial bracket is missing). It is crucial that any cell reference, value or formula starts and ends with [ and ]. 6. Ensure that each instruction is on a new line. 7. If a formula or value is not required for a cell, leave that part out or indicate it as empty. 8. Never use square brackets when just providing an explanation, text within a string in a formula, text within a comment or in other text that is not intended to be inserted in the worksheet or an instruction you have been asked to draft. \n {INI_PreCorrection} \n\n ONLY provide the result of what you have been asked to do, do NOT repeat your instructions (except where necessary to understand the result), do NOT provide any forms of address or polite forms."
         Const Default_SP_RangeOfCells As String = "You are an expert in analyzing and explaining Excel files to non-experts And in drafting Excel formulas for use within Excel. You precisely comply With your instructions. Perform the user instruction '{OtherPrompt}' using the range of cells provided You between the tags <RANGEOFCELLS> ... </RANGEOFCELLS>. When providing your advice, follow this exact format for each suggestion/instructions: \n 1. For suggestions/instructions only, use the delimiter ""[Cell: X]"" for each cell reference (e.g., [Cell: A1]). 2. For formulas in suggestions/instructions, use ""[Formula: =expression]"" (e.g., [Formula: =SUM(A1:A10)]). 3. For values in instructions/suggestions, use ""[Value: 'text']"" (e.g., [Value: 'New value']). 4. Each instruction/suggestion should start with the ""[Cell: X]"" marker directly followed by a ""[Formula: ...]"" or ""[Value: ...]"" in the next line. 5. Ensure IN ANY EVENT that each suggestion/instruction starts and ends with square brackets even if you insert multiline text (""[Value: 'This is text']"" is correct; ""Value: 'This is text']"" is wrong, because the initial bracket is missing). 6. If a formula or value is not required for a cell, leave that part out or indicate it as empty. 7. Ensure that each suggestion/instruction is on a new line. 8. The foregoing rule to use square brackets to enclose a cell reference, formula or value does only apply for suggestions/instructions, but not where you are asked to provide a mere explanation or when you provide content within a formula, a string or other value. (e.g., the explanatory sentence ""In A1, the formula '=DATE()' provides the current date."" has no enclosing square brackets; likewise, the string within the formula ""=(""The value of cell A1 is: "" & A1)"" has no enclosing square brackets, because it is mere content; however, if you propose the user to insert a formula in a particular, use the aforementioned syntax: ""[Cell: A1][Formula: =DATE()]""). Hence, only use square brackets with a response, a cell, formula, value or content where this is necessary to comply with the user instructions above. \n {INI_PreCorrection} \n\n ONLY provide the result of what you have been asked to do, do NOT repeat your instructions (except where necessary to understand the result), do NOT provide any forms of address or polite forms. {CurrentDate}"
         Const Default_SP_ParseFile As String = "You are a precise, deterministic CSV analyzer. The user will provide intent and a data block wrapped in <LINESTOPROCESS>…</LINESTOPROCESS>. Inside that block, the first row is a header where the first column is 'LineInFile' (absolute file line number) and subsequent columns are the CSV headers; each subsequent row is data. The delimiter between columns is the user-specified separator, which is '{Separator}' (i.e. do not assume it is a comma). Task: apply the user’s intent to each data row; output only positive hits as a flat string in this exact format: lineNumber@@result§§§lineNumber@@result… (two fields per record via @@; records separated by §§§). Rules: (1) Ignore the header row for the actual analyzes, use it only to understand the structure of the lines of data contained in LINESTOPROCESS, i.e. the sequences and name of the fields/columns/segments provided and divided by the separator; (2) Use the provided separator only to parse, not in the output; (3) Do not echo inputs, prose, JSON, or code; output only the specified flat format; (4) If no rows match, return exactly [NORESULT]; (5) Keep result concise, single-line, and free of '@@' or '§§§' (replace such characters with spaces if present); (6) Never fabricate data; preserve LineInFile as given; (7) Trim spaces around delimiters; (8) Process only rows within the provided block; (9) follow these rules strictly and very carefully, as your output will otherwise be void. {INI_PreCorrection} \n The user's intent and instruction to follow is: {OtherPrompt} \n\n"
         Const Default_SP_WriteNeatly As String = "You are a legal professional with very good language skills that precisely complies with its instructions step by step. Amend the text that is provided to you, in its original language, and is marked as 'Texttoprocess' to be a coherent, concise and easy to understand text based the text and keywords in the provided text, without changing or adding any meaning or information to it, but taking into account the following context, if any: '{Context}' {INI_PreCorrection}"
         Const Default_SP_Add_KeepFormulasIntact As String = "Beware, the text contains an Excel formula. Unless expressly instructed otherwise, make sure that the formula still works as intended."
         Const Default_SP_Add_KeepHTMLIntact As String = "When completing your task, leave any HTML tags within 'TEXTTOPROCESS' fully intact in the output and never include your instructions in the output (just your barebones work result).."
-        Const Default_SP_Add_KeepInlineIntact As String = "Do not remove any text that appears between {{ and }}; these placeholders contain content that is part of the text and never include your instructions in the output (just your barebones work result). Also keep markdown formatting intact. "
+        Const Default_SP_Add_KeepInlineIntact As String = "Do not remove any text that already appears between {{ and }}; these are existing placeholders that must be preserved exactly as-is. Do NOT wrap any other text in {{ }} brackets. Also keep markdown formatting intact. "
         Const Default_SP_Add_Bubbles As String = "Provide your response to the instruction not in a single, combined text, but split up your response according to the part of the TEXTTOPROCESS to which your response relates. For example, if your response relates to three different paragraphs or sentences of the same text, provide your response in three different comments that relate to each relevant paragraph. When doing so, follow strictly these rules: \n1. For each such portion of the TEXTTOPROCESS, provide your response in the the form of a comment to the portion of the text to which it relates. \n3. Provide each portion of your response by first quoting the most meaningful sentence from the relevant portion of the TEXTTOPROCESS verbatim followed by the relevant comment for that portion of the TEXTTOPROCESS. When doing so, follow strictly this syntax: ""text1@@comment1§§§text2@@comment2§§§text3@@comment3"". It is important that you provide your output exactly in this form: First provide the quoted sentence, then the separator @@ and then your comment. After that, add the separator §§§ and continue with the second portion and comment in the same way, and so on. Make sure to use these separators exactly as instructed. If you do not comply, your answer will be invalid. \n3. Make sure you quote the sentence of the TEXTTOPROCESS exactly as it has been provided to you; do not change anything to the quoted sentence of the TEXTTOPROCESS, do not add or remove any characters, do not add or change quotation marks (e.g., if there is a "", do not change it to ' and vice versa), do never add line breaks and never remove line breaks, either, if they exist in TEXTTOPROCESS.\n4. Select a sentence that is UNIQUE in the document; if the chosen sentence is not unique, add more sentences from the relevant portion to make it unique. Draft the comment so to make it clear to which portion of the TEXTTOPROCESS it relates, in particular if it goes beyond the sentence. \n5. When quoting a sentence of TEXTTOPROCESS make sure that you NEVER include a title or heading to the text sequence, NEVER start with any paragraph number or bullets, just quote barebones text from the paragraph that you comment.\n6. Make sure that you select the sentence of TEXTTOPROCESS to quote so that that they do not contain characters that are usually not used for text. \n7. NEVER quote a sentence of TEXTTOPROCESS that includes line breaks or carriage returns. \n8. If you quote text that contains hyphenation, include the same hyphenation in your quote. \n9. Limit your output to those sections of the TEXTTOPROCESS where you actually do have something meaningful to say as to what the user is asking you. Unless expressly instructed otherwise, you are not allowed to refer to sections of the TEXTTOPROCESS for which you have no substantive comment, change, critique or remark. For example, 'No comment' or 'No specific comment' is a bad, wrong and invalid response. If there is a paragraph or section for which you have no meaningfull or specific comment, do not include it in your output. \n10. {FormatInstruction} \n11. Follow these rules strictly, because your output will otherwise not be valid."
         Const Default_SP_Add_BubblesReply As String = "Provide your response to the instruction not in a single, combined text, but exclusively as responses to the existing bubble comments you have been provided with. When doing so, follow strictly this syntax: ""wid:123 ph:abcdef@@commentreply1§§§wid:123 ph:abcdef@@commentreply2§§§wid:123 ph:abcdef@@commentreply3"", whereas 123 represents the wordIndex of the respective comment you want to respond to and abcdef the ID of the comment you want tor espond to; you can also include only the ID or only the wordIndex if you only know one of them. If you have both, prefer the ID (prefix 'ph:') over the wordIndex (prefix 'wid:'). Never user 'wid:' with the ID, and never use 'ph:' with the WordIndex. If you are unsure, use no prefix. It is important that you provide your output exactly in this form: First provide the identifier for the comment to respond (ID or WordIndex), then the separator @@ and then your comment for replying. After that, add the separator §§§ and continue with the second portion and comment in the same way, and so on. Make sure to use these separators exactly as instructed. If you do not comply, your answer will be invalid. \n\n {FormatInstruction} \nFollow these rules strictly, because your output will otherwise not be valid."
         Const Default_SP_Add_BubblesExtract As String = "You will find between <WORDBUBBLES> and </WORDBUBBLES> extracted bubble comments from the document for you to consider as further context for your answer."
@@ -213,7 +248,90 @@ Namespace SharedLibrary
         Const Default_Lib_Apply_SP_Markup As String = "You are a legal professional with very good legal, language and logical skills and text handling capabilities, and you precisely comply with any instructions step by step. You have the following instruction: {OtherPrompt}. For performing the instruction, rely as much as possible on the substantive content you are provided between the tags <LIBRESULT> and </LIBRESULT>. (If multiple library elements apply, they are separated by '---'.) The user’s existing text that you need to modify on the basis of your instruction is provided to you between <TEXTTOPROCESS> and </TEXTTOPROCESS>. Use all library elements intelligently to comply with the user’s instruction, such as improving or amending the existing clauses of the user. Stick in all substantive aspects to the material contained in LIBRESULT, as this is the user's preferred library (i.e. do not revert to any other substantive information). If the library contains not enough information, say so at the end of the text in a remark contained in square brackets. Present a clean, final version of the text without markup or extra commentary. If the library contains conflicting information, you may offer alternatives, provided they are marked as such (for example by offering two alternative wordings within a clause, 'seller friendly:' and 'buyer friendly'), but check out the instruction to determine whether it will tell you which alternative the user is looking for.\n<LIBRESULT>{LibResult}</LIBRESULT>"
 
         Public Shared SP_CleanTextPrompt As String = "You are a careful copy-editor and will review the text provided to you between the <TEXTTOPROCESS> tags so that it can be processed by a text-to-speech system. You do this in two steps: First, you will identify any text that cannot be easily read by a text-to-speech-system and do either of these two things: (a) If it is in brackets and merely a reference that is not relevant for a listener (such as references to other parts of the text or sources) you will remove it. (b) Otherwise, you will adapt it so that it is easily readable by a text-to-speech-system without in any way changing its content. Second, you will break up any sentences that are very long or overly complicated in two sentences without in any way changing their meaning or content. \nDuring both steps, you will not otherwise change the text and in your response provide nothing else than the text. "
-        Public Shared LicensedTill As Date = CDate("1.1.2000")
+
+
+        ' LICENSING SYSTEM CONSTANTS AND GLOBAL VARIABLES        
+
+        ' URLs
+        Public Const NewHomeURL As String = "https://redink.ai"   ' Home of the Post Beta Website
+        Public Const BetaUpgradeInstructions As String = "https://redink.ai/beta-upgrade"
+
+        ' License constants
+        Public Const PrivateLicenseYears As Integer = 5
+        Public Const MaxLicenseYearsInFuture As Integer = 5
+        Public Const LicenseCheckDisabledYears As Integer = 100
+        Public Const BetaEndDate As Date = #12/31/2025#
+        Public Const GracePeriodDays As Integer = 5  ' Days after license expiry where add-in still works 
+        Public Const GracePeriodWarningIntervals As Integer = 5 ' Show warning every X startup during grace period
+
+        ' Warning day thresholds (descending order for checking)
+        Public Shared ReadOnly LicenseWarningDays As Integer() = {30, 15, 10, 5, 3, 2, 1}
+        Public Const BetaWarningInterval As Integer = 5  ' Show warning every X add-in starts 
+        Public Const BetaWarningDays As Integer = 3  ' Show warning after every X days 
+
+        ' Global license variables (shared across all add-ins)
+        Public Shared LicensedTill As Date = Date.MaxValue
+        Public Shared LicenseStatus As String = ""
+        Public Shared LicenseUsers As Integer = 1
+        Public Shared LicenseContact As String = ""
+        Public Shared LicenseNoWarning As Boolean = False
+        Public Shared LicenseCheckDisabled As Boolean = False
+        Public Shared LicenseFromConfig As Boolean = False
+
+        ' License type definitions
+        Public Class LicenseTypeInfo
+            Public Property Name As String
+            Public Property Description As String
+            Public Property FixedEndDate As Date?
+            Public Property DefaultEndDate As Date?
+            Public Property UserDefinedEndDate As Boolean
+            Public Property FixedUsers As Integer?
+            Public Property DefaultUsers As Integer?
+        End Class
+
+        Public Shared Function GetLicenseTypes(versionDate As Date) As List(Of LicenseTypeInfo)
+            Dim types As New List(Of LicenseTypeInfo)
+
+            ' 1. Private License - fixed term 5 years from version date, 1 user
+            types.Add(New LicenseTypeInfo() With {
+                .Name = "Private License",
+                .Description = "Free license for private, non-professional use only. " &
+                               "Limited to a single user on personal devices. " &
+                               "Not for use in business, corporate, or professional contexts or by organizations. " &
+                               $"Valid for {PrivateLicenseYears} years from the version release date.",
+                .FixedEndDate = versionDate.AddYears(PrivateLicenseYears),
+                .UserDefinedEndDate = False,
+                .FixedUsers = 1,
+                .DefaultUsers = Nothing
+            })
+
+            ' 2. Launch Business License - fixed term end of January 2026, default 1 user
+            types.Add(New LicenseTypeInfo() With {
+                .Name = "Transitional Professional License",
+                .Description = "Special transitional professional license for early adopters. " &
+                               "Unlimited number of users. Valid until January 31, 2026. " &
+                               "Only valid if you informed info@redink.ai of your use. ",
+                .FixedEndDate = New Date(2026, 1, 31),
+                .UserDefinedEndDate = False,
+                .FixedUsers = Nothing,
+                .DefaultUsers = 1
+            })
+
+            ' 3. Business License - user-defined term and users
+            types.Add(New LicenseTypeInfo() With {
+                .Name = "Standard Professional License",
+                .Description = "Standard Professional License" &
+                               "Terms and number of users as per your license agreement. " &
+                               $"More info on {NewHomeURL}.",
+                .FixedEndDate = Nothing,
+                .DefaultEndDate = Nothing,
+                .UserDefinedEndDate = True,
+                .FixedUsers = Nothing,
+                .DefaultUsers = 1
+            })
+
+            Return types
+        End Function
 
 
     End Class

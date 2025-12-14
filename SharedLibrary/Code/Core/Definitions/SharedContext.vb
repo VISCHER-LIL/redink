@@ -11,9 +11,16 @@ Namespace SharedLibrary
 
         Implements ISharedContext
 
-        Public Interface ISharedContext
+        ' To add new Shared Properties (e.g., common configuration variable such as INI_Model or system prompts such as SP_Explain):
+        ' 
+        ' 1. Add Property declaration to ISharedContext interface below
+        ' 2. Implement Property below  (with Implements ISharedContext.PropertyName)
+        ' 3. Update for each project the ThisAddIn.Properties.vb file to initialize the Property
+        ' 4. Search and update SharedLibrary / Core / Config / ShareMethods.LoadConfig.vb (search for a pre-existing Property usage)
+        ' 5. Search and update SharedLibrary / Core / Config / ShareMethods.Settings.vb (search for a pre-existing Property usage)
+        ' 6. Search and update SharedLibrary / Core / Definitions / SharedMethods.Constants.vb (if you need to update Property usage)
 
-#Region "Shared Properties"
+        Public Interface ISharedContext
 
             Property INI_APIKey As String
             Property INI_APIKeyBack As String
@@ -234,11 +241,7 @@ Namespace SharedLibrary
             Property SP_MergePrompt2 As String
             Property SP_Add_MergePrompt As String
 
-#End Region
-
         End Interface
-
-#Region "Shared Properties 2"
 
         Public Sub New()
             ' Initialize the PromptTitles and PromptLibrary properties
@@ -459,8 +462,6 @@ Namespace SharedLibrary
         Public Property SP_MergePrompt As String Implements ISharedContext.SP_MergePrompt
         Public Property SP_MergePrompt2 As String Implements ISharedContext.SP_MergePrompt2
         Public Property SP_Add_MergePrompt As String Implements ISharedContext.SP_Add_MergePrompt
-
-#End Region
 
     End Class
 End Namespace

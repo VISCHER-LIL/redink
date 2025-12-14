@@ -250,10 +250,10 @@ Partial Public Class ThisAddIn
                 ShowPaneAsync(paneHeader, finalToShow, paneFooter, AN, noRTF:=False, insertMarkdown:=True)
             End If
 
-        Catch ex As Exception
+        Catch ex As System.Exception
 #If DEBUG Then
-            Debug.WriteLine("Error: " & ex.Message)
-            Debug.WriteLine("Stacktrace: " & ex.StackTrace)
+            System.Diagnostics.Debug.WriteLine("Error: " & ex.Message)
+            System.Diagnostics.Debug.WriteLine("Stacktrace: " & ex.StackTrace)
 
             System.Diagnostics.Debugger.Break()
 #End If
@@ -929,10 +929,10 @@ Partial Public Class ThisAddIn
                 End Try
             End While
 
-        Catch ex As Exception
+        Catch ex As system.Exception
 #If DEBUG Then
-            Debug.WriteLine("AddClause error: " & ex.Message)
-            Debug.WriteLine(ex.StackTrace)
+            System.Diagnostics.Debug.WriteLine("AddClause error: " & ex.Message)
+            System.Diagnostics.Debug.WriteLine(ex.StackTrace)
 #End If
             ShowCustomMessageBox("Error in AddClause: " & ex.Message)
         End Try

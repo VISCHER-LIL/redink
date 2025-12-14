@@ -325,15 +325,11 @@ Namespace SharedLibrary
                 context.INI_APIKeyBack = context.INI_APIKey
                 context.INI_APIKeyBack_2 = context.INI_APIKey_2
 
-                LicensedTill = If(configDict.ContainsKey("LicensedTill"), CDate(configDict("LicensedTill")), MaxUseDate)
+                'LicensedTill = If(configDict.ContainsKey("LicensedTill"), CDate(configDict("LicensedTill")), MaxUseDate)
 
-                If Now > LicensedTill Then
-                    ShowCustomMessageBox($"Your configured license for {AN} for {context.RDV} has EXPIRED on {LicensedTill}. Ask your administrator to renew and configure the license to continue using {AN} or do this yourself as per the documentation. If you have no administrator or do not know how, try updating the add-in and, if the message persists, consult {AN4} for how to obtain a valid license and to download the user and installation manual. Note that on December 31, 2025, the betatest ends and you may need a paid license depending on your use as well as an updated version of this add-in.")
+                If Not LicenseOK(context, configDict) Then
+                    ShowCustomMessageBox($"{AN} disabled due to invalid or expired license.")
                     Return
-                End If
-
-                If DateTime.Now.AddDays(+14) > LicensedTill Then
-                    ShowCustomMessageBox($"Your configured license for {AN} for {context.RDV} will EXPIRE IN {Microsoft.VisualBasic.DateAndTime.DateDiff(Microsoft.VisualBasic.DateInterval.Day, DateTime.Now, LicensedTill) + 1} DAYS. Contact your administrator or update the configuration file as per the documentation. If you have no administrator or do not how, try updating the add-in and, if the message persists, consult {AN4} for how to obtain a valid license and to download the user and installation manual. Note that on December 31, 2025, the betatest ends and you may need a paid license depending on your use as well as an updated version of this add-in.", AN)
                 End If
 
                 If INIValuesMissing(context) Then
@@ -400,8 +396,6 @@ Namespace SharedLibrary
             End If
             Return defaultvalue
         End Function
-
-
 
 
         Public Shared Function INIValuesMissing(ByVal context As ISharedContext) As Boolean
@@ -714,7 +708,6 @@ Namespace SharedLibrary
 
             Return Result
         End Function
-
 
 
     End Class

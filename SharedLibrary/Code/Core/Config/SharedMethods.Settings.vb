@@ -6,6 +6,7 @@
 Option Strict On
 Option Explicit On
 
+Imports System.ComponentModel
 Imports System.Deployment.Application
 Imports System.Drawing
 Imports System.IO
@@ -590,6 +591,8 @@ Namespace SharedLibrary
                     Return context.INI_MaxOutputToken_2.ToString()
                 Case "TokenCount"
                     Return context.INI_TokenCount
+                Case "TokenCount_2"
+                    Return context.INI_TokenCount_2
                 Case "APIKey_2"
                     Return context.INI_APIKeyBack_2
                 Case "Temperature_2"
@@ -626,6 +629,10 @@ Namespace SharedLibrary
                     Return context.INI_OAuth2Endpoint_2
                 Case "OAuth2ATExpiry_2"
                     Return context.INI_OAuth2ATExpiry_2.ToString() ' Convert to String
+                Case "APIKeyPrefix"
+                    Return context.INI_APIKeyPrefix
+                Case "APIKeyPrefix_2"
+                    Return context.INI_APIKeyPrefix_2
                 Case "Codebasis"
                     Return context.Codebasis
                 Case "DoubleS"
@@ -654,7 +661,6 @@ Namespace SharedLibrary
                     Return context.INI_ReplaceText2.ToString()
                 Case "ReplaceText2Override"
                     Return context.INI_ReplaceText2Override
-
                 Case "DoMarkupOutlook"
                     Return context.INI_DoMarkupOutlook.ToString()
                 Case "DoMarkupWord"
@@ -909,7 +915,6 @@ Namespace SharedLibrary
                     context.INI_MarkupMethodWordOverride = value
                 Case "MarkupMethodOutlookOverride"
                     context.INI_MarkupMethodOutlookOverride = value
-
                 Case "MarkupMethodOutlook"
                     context.INI_MarkupMethodOutlook = Integer.Parse(value)
                 Case "MarkupDiffCap"
@@ -2329,14 +2334,14 @@ Namespace SharedLibrary
             Dim formWidth As Integer = CInt(450)
 
             ' Calculate height based on text content
-            Dim ExpireText As String = $"{vbCrLf}{vbCrLf}(expires on {LicensedTill.ToString("dd-MMM-yyyy")})"
+            Dim ExpireText As String = $"{vbCrLf}{vbCrLf}(your {If(String.IsNullOrEmpty(LicenseStatus), "(undefined license type)", LicenseStatus)} for {LicenseUsers} user(s) expires on {LicensedTill.ToString("dd-MMM-yyyy")})"
             Dim testRichTextBox As New System.Windows.Forms.RichTextBox() With {
         .Font = standardFont,
         .Text = $"{AN}{vbCrLf}{context.RDV}{ExpireText}{vbCrLf}{vbCrLf}Created by David Rosenthal{vbCrLf}david.rosenthal@vischer.com{vbCrLf}{vbCrLf}VISCHER AG, Zürich, Switzerland{vbCrLf}Swiss Law & Tax{vbCrLf}{vbCrLf}All rights reserved.{vbCrLf}{vbCrLf}{AN4}"
     }
             Dim graphics As System.Drawing.Graphics = testRichTextBox.CreateGraphics()
             Dim textSize As System.Drawing.SizeF = graphics.MeasureString(testRichTextBox.Text, standardFont, formWidth - 40)
-            Dim formHeight As Integer = CInt(textSize.Height + 260 + 20) ' Add padding for margins, logo, buttons, and 1–2 extra lines
+            Dim formHeight As Integer = CInt(textSize.Height + 260 + 60) ' Add padding for margins, logo, buttons, extra button row, and 1–2 extra lines
             graphics.Dispose()
             testRichTextBox.Dispose()
 
@@ -2373,7 +2378,7 @@ Namespace SharedLibrary
                     }
 
             Dim topOffset As Integer = logo.Bottom + 10
-            Dim bottomPadding As Integer = 100
+            Dim bottomPadding As Integer = 140
             Dim availableHeight As Integer = formHeight - topOffset - bottomPadding
             aboutTextBox.Size = New System.Drawing.Size(formWidth - 40, availableHeight)
             aboutTextBox.Location = New System.Drawing.Point(20, topOffset)
@@ -2416,14 +2421,62 @@ Namespace SharedLibrary
             End Try
         End Sub
 
+            ' Measure button text widths to size buttons appropriately
+            Dim licenseButtonText As String = "3rd Party Software Used"
+            Dim resetButtonText As String = "Update License Info"
+            Dim licenseTextSize As Size = TextRenderer.MeasureText(licenseButtonText, standardFont)
+            Dim resetTextSize As Size = TextRenderer.MeasureText(resetButtonText, standardFont)
+            Dim buttonHeight As Integer = 30
+            Dim buttonPadding As Integer = 20
+            Dim buttonSpacing As Integer = 10
+
+            Dim licenseButtonWidth As Integer = licenseTextSize.Width + buttonPadding
+            Dim resetButtonWidth As Integer = resetTextSize.Width + buttonPadding
+            Dim totalButtonWidth As Integer = licenseButtonWidth + buttonSpacing + resetButtonWidth
+            Dim buttonsLeft As Integer = (formWidth - totalButtonWidth) \ 2
+
             ' Add a "License" button
             Dim licenseButton As New System.Windows.Forms.Button() With {
-                        .Text = "3rd Party Software Used",
-                        .Size = New System.Drawing.Size(300, 30),
-                        .Location = New System.Drawing.Point((formWidth - 300) \ 2, aboutTextBox.Bottom + 10)
+                        .Text = licenseButtonText,
+                        .Size = New System.Drawing.Size(licenseButtonWidth, buttonHeight),
+                        .Location = New System.Drawing.Point(buttonsLeft, aboutTextBox.Bottom + 10)
                     }
             AddHandler licenseButton.Click, Sub(sender, e) ShowRTFCustomMessageBox(ConvertMarkupToRTF(LicenseText), AN)
             aboutForm.Controls.Add(licenseButton)
+
+            ' Add a "Reset License" button
+            Dim resetLicenseButton As New System.Windows.Forms.Button() With {
+                        .Text = resetButtonText,
+                        .Size = New System.Drawing.Size(resetButtonWidth, buttonHeight),
+                        .Location = New System.Drawing.Point(licenseButton.Right + buttonSpacing, aboutTextBox.Bottom + 10),
+                        .Enabled = Not LicenseFromConfig AndAlso Not LicenseStatus = "Beta Test License"  ' Only enable if license is from config and not beta test
+                    }
+            AddHandler resetLicenseButton.Click, Sub(sender, e)
+                                                     Try
+                                                         ' Reset license information in My.Settings
+                                                         My.Settings.LicenseStatus = ""
+                                                         My.Settings.LicenseUsers = 1
+                                                         My.Settings.LicensedTill = Date.MinValue
+                                                         My.Settings.Save()
+
+                                                         ' Reset global license variables
+                                                         LicenseStatus = ""
+                                                         LicenseUsers = 1
+                                                         LicensedTill = Date.MinValue
+
+                                                         ' Close the current About window
+                                                         aboutForm.Close()
+
+                                                         ' Show the license configuration form
+                                                         ShowLicenseEntryForm(context)
+
+                                                         ' Re-show the About window with updated info
+                                                         ShowAboutWindow(owner, context)
+                                                     Catch ex As Exception
+                                                         ShowCustomMessageBox($"Error resetting license: {ex.Message}", AN)
+                                                     End Try
+                                                 End Sub
+            aboutForm.Controls.Add(resetLicenseButton)
 
             ' Add an OK button
             Dim okButton As New System.Windows.Forms.Button() With {

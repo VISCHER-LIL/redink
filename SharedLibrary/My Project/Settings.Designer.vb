@@ -349,6 +349,76 @@ Namespace My
                 Me("HelpMeIncludeConfig") = value
             End Set
         End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute()>  _
+        Public Property LicensedTill() As Date
+            Get
+                Return CType(Me("LicensedTill"),Date)
+            End Get
+            Set
+                Me("LicensedTill") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property LicenseStatus() As String
+            Get
+                Return CType(Me("LicenseStatus"),String)
+            End Get
+            Set
+                Me("LicenseStatus") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("1")>  _
+        Public Property LicenseUsers() As Integer
+            Get
+                Return CType(Me("LicenseUsers"),Integer)
+            End Get
+            Set
+                Me("LicenseUsers") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute()>  _
+        Public Property LastBetaWarningDate() As Date
+            Get
+                Return CType(Me("LastBetaWarningDate"),Date)
+            End Get
+            Set
+                Me("LastBetaWarningDate") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("0")>  _
+        Public Property BetaWarningStartCount() As Integer
+            Get
+                Return CType(Me("BetaWarningStartCount"),Integer)
+            End Get
+            Set
+                Me("BetaWarningStartCount") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("0")>  _
+        Public Property GracePeriodWarningStartcount() As Integer
+            Get
+                Return CType(Me("GracePeriodWarningStartcount"),Integer)
+            End Get
+            Set
+                Me("GracePeriodWarningStartcount") = value
+            End Set
+        End Property
     End Class
 End Namespace
 

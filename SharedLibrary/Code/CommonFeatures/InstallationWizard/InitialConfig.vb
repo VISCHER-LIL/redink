@@ -536,7 +536,7 @@ Namespace SharedLibrary
                     New AppConfigurationVariable With {.DisplayName = "API Key:", .VarName = "INI_APIKey", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = ""},
                     New AppConfigurationVariable With {.DisplayName = "Temperature:", .VarName = "INI_Temperature", .VarType = "String", .ValidationRule = "2.0", .DefaultValue = "0.2"},
                     New AppConfigurationVariable With {.DisplayName = "Timeout (ms):", .VarName = "INI_Timeout", .VarType = "Integer", .ValidationRule = ">0", .DefaultValue = "200000"},
-                    New AppConfigurationVariable With {.DisplayName = "Model:", .VarName = "INI_Model", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "gpt-4.1"},
+                    New AppConfigurationVariable With {.DisplayName = "Model:", .VarName = "INI_Model", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "gpt-5.1"},
                     New AppConfigurationVariable With {.DisplayName = "Endpoint:", .VarName = "INI_Endpoint", .VarType = "String", .ValidationRule = "Hyperlink", .DefaultValue = "https://api.openai.com/v1/chat/completions"},
                     New AppConfigurationVariable With {.DisplayName = "HeaderA:", .VarName = "INI_HeaderA", .VarType = "String", .ValidationRule = "", .DefaultValue = "Authorization"},
                     New AppConfigurationVariable With {.DisplayName = "HeaderB:", .VarName = "INI_HeaderB", .VarType = "String", .ValidationRule = "", .DefaultValue = "Bearer {apikey}"},

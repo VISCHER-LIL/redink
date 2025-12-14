@@ -835,6 +835,8 @@ Public Class DiscussInky
             Return
         End If
         Try
+            ' Show current session info before welcome
+            ShowSessionInfo()
             Await GenerateWelcomeAsync()
         Catch ex As Exception
             RemoveAssistantThinking()
@@ -843,6 +845,27 @@ Public Class DiscussInky
             Interlocked.Exchange(_welcomeInProgress, 0)
         End Try
     End Function
+
+    ''' <summary>
+    ''' Displays the current persona and knowledge document info so the user knows the chat basis.
+    ''' </summary>
+    Private Sub ShowSessionInfo()
+        Dim sb As New StringBuilder()
+
+        ' Persona info
+        sb.Append($"Persona: {_currentPersonaName}")
+        sb.Append(" (change with 'Persona' button)")
+
+        ' Knowledge document info
+        If Not String.IsNullOrEmpty(_knowledgeFilePath) Then
+            sb.Append($" | Knowledge: {Path.GetFileName(_knowledgeFilePath)}")
+        Else
+            sb.Append(" | Knowledge: None loaded")
+        End If
+        sb.Append(" (change with 'Knowledge' button)")
+
+        AppendSystemMessage(sb.ToString())
+    End Sub
 
     Private Async Function GenerateWelcomeAsync() As Task
         Dim langName = System.Globalization.CultureInfo.CurrentUICulture.DisplayName
