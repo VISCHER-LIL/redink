@@ -261,7 +261,7 @@ Namespace SharedLibrary
         Public Const TestingPeriod As Integer = 6  ' months
         Public Const MaxLicenseYearsInFuture As Integer = 5
         Public Const LicenseCheckDisabledYears As Integer = 100
-        Public Const BetaEndDate As Date = #12/10/2025#
+        Public Const BetaEndDate As Date = #12/31/2025#
         Public Const GracePeriodDays As Integer = 5  ' Days after license expiry where add-in still works 
         Public Const GracePeriodWarningIntervals As Integer = 5 ' Show warning every X startup during grace period
 
