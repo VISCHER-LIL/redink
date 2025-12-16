@@ -13,6 +13,7 @@ Imports SharedLibrary.SharedLibrary.SharedContext
 Namespace SharedLibrary
     Partial Public Class SharedMethods
 
+
         ''' <summary>
         ''' Main license check function. Returns True if license is valid, False otherwise.
         ''' </summary>
@@ -94,7 +95,7 @@ Namespace SharedLibrary
                 Else
                     ' No LicensedTill in config file
                     If isBetaVersion Then
-                        ' Beta version
+                        ' Beta version - always use BetaEndDate
                         LicensedTill = BetaEndDate
                         LicenseUsers = 1
                         LicenseStatus = "Beta Test License"
@@ -223,7 +224,7 @@ Namespace SharedLibrary
                     ' Check if we're within the grace period
                     If GracePeriodDays > 0 AndAlso Date.Now <= LicensedTill.AddDays(GracePeriodDays) Then
                         ' Within grace period - show warning and allow continuation
-                        CheckGracePeriodWarning(context, LicensedTill)
+                        CheckGracePeriodWarning(context, LicensedTill, False)
                         Return True
                     End If
 
@@ -235,7 +236,7 @@ Namespace SharedLibrary
                 End If
 
                 If Not LicenseNoWarning AndAlso LicensedTill > Date.Now AndAlso LicensedTill < Date.MaxValue Then
-                    CheckLicenseExpiryWarnings(context)
+                    CheckLicenseExpiryWarnings(context, False)
                 End If
                 Return True
             End If
@@ -247,7 +248,7 @@ Namespace SharedLibrary
                 ' Check if we're within the grace period
                 If GracePeriodDays > 0 AndAlso Date.Now <= LicensedTill.AddDays(GracePeriodDays) Then
                     ' Within grace period - show warning and allow continuation
-                    CheckGracePeriodWarning(context, LicensedTill)
+                    CheckGracePeriodWarning(context, LicensedTill, False)
                     Return True
                 End If
                 licenseExpired = True
@@ -295,7 +296,7 @@ Namespace SharedLibrary
 
             ' Check for upcoming expiry warnings
             If Not LicenseNoWarning AndAlso LicensedTill > Date.Now AndAlso LicensedTill < Date.MaxValue Then
-                CheckLicenseExpiryWarnings(context)
+                CheckLicenseExpiryWarnings(context, False)
             End If
 
             Return True
@@ -306,7 +307,7 @@ Namespace SharedLibrary
         ''' Shows warning every GracePeriodWarningIntervals starts during the grace period.
         ''' Only shows if LicenseNoWarning is False.
         ''' </summary>
-        Private Shared Sub CheckGracePeriodWarning(context As ISharedContext, expiredDate As Date)
+        Private Shared Sub CheckGracePeriodWarning(context As ISharedContext, expiredDate As Date, isBeta As Boolean)
             Try
                 ' Skip warning if LicenseNoWarning is True
                 If LicenseNoWarning Then Return
@@ -317,20 +318,31 @@ Namespace SharedLibrary
 
                 ' Check if we should show the warning based on start count
                 If ShouldShowGracePeriodWarning() Then
-                    Dim msg = BuildLicenseMessage(
-                $"Your license for {AN} for {context.RDV} EXPIRED on {expiredDate:d}." & vbCrLf & vbCrLf &
-                $"You are currently in a {GracePeriodDays}-day grace period. " &
-                $"The add-in will stop working in {remainingDays} day(s) on {gracePeriodEnd:d}." & vbCrLf & vbCrLf &
-                If(LicenseFromConfig,
-                   "Please contact your administrator to update the license configuration.",
-                   "Would you like to update your license information now?"))
-
-                    If LicenseFromConfig Then
-                        ShowCustomMessageBox(msg, $"{AN} License Grace Period")
+                    Dim msg As String
+                    If isBeta Then
+                        msg = BuildLicenseMessage(
+                            $"Your beta test license for {AN} for {context.RDV} EXPIRED on {expiredDate:d}." & vbCrLf & vbCrLf &
+                            $"You are currently in a {GracePeriodDays}-day grace period. " &
+                            $"The add-in will stop working in {remainingDays} day(s) on {gracePeriodEnd:d}." & vbCrLf & vbCrLf &
+                            $"To continue using {AN}, please upgrade to the General Audience or Preview version. " &
+                            $"Visit {AN4} for upgrade instructions.")
+                        ShowCustomMessageBox(msg, $"{AN} Beta Test Grace Period")
                     Else
-                        Dim result = ShowCustomYesNoBox(msg, "Update License", "Later", $"{AN} License Grace Period")
-                        If result = 1 Then
-                            ShowLicenseEntryForm(context)
+                        msg = BuildLicenseMessage(
+                            $"Your license for {AN} for {context.RDV} EXPIRED on {expiredDate:d}." & vbCrLf & vbCrLf &
+                            $"You are currently in a {GracePeriodDays}-day grace period. " &
+                            $"The add-in will stop working in {remainingDays} day(s) on {gracePeriodEnd:d}." & vbCrLf & vbCrLf &
+                            If(LicenseFromConfig,
+                               "Please contact your administrator to update the license configuration.",
+                               "Would you like to update your license information now?"))
+
+                        If LicenseFromConfig Then
+                            ShowCustomMessageBox(msg, $"{AN} License Grace Period")
+                        Else
+                            Dim result = ShowCustomYesNoBox(msg, "Update License", "Later", $"{AN} License Grace Period")
+                            If result = 1 Then
+                                ShowLicenseEntryForm(context)
+                            End If
                         End If
                     End If
 
@@ -372,7 +384,7 @@ Namespace SharedLibrary
         ''' </summary>
         Private Shared Sub RecordGracePeriodWarningShown()
             Try
-                My.Settings.GracePeriodWarningStartCount = 0
+                My.Settings.GracePeriodWarningStartcount = 0
                 My.Settings.Save()
             Catch
             End Try
@@ -382,41 +394,72 @@ Namespace SharedLibrary
         ''' Performs license check for Beta version
         ''' </summary>
         Private Shared Function PerformBetaLicenseCheck(context As ISharedContext) As Boolean
+            ' Track if we showed a warning to avoid double-warning from CheckLicenseExpiryWarnings
+            Dim warningAlreadyShown As Boolean = False
+
             ' Check if BetaUpgradeInstructions URL is available
             Dim upgradeAvailable = CheckUrlAvailable(BetaUpgradeInstructions)
 
             Debug.WriteLine("upgradeAvailable = " & upgradeAvailable)
 
-            If upgradeAvailable And Not Date.Now > BetaEndDate Then
-                ' Check if we should warn (every 3rd day)
-                If ShouldShowBetaWarning() Then
-                    Dim msg = BuildLicenseMessage(
-                        $"The beta test for and your copy of {AN} ends on {BetaEndDate:d}." & vbCrLf & vbCrLf &
-                        $"To continue using {AN}, upgrade now to the new General Audience or Preview version as per the upgrade instructions at {BetaUpgradeInstructions}." & vbCrLf & vbCrLf &
-                        "Would you like to open the upgrade instructions page?")
+            ' Calculate days until beta end
+            Dim daysUntilBetaEnd As Integer = CInt((BetaEndDate.Date - Date.Now.Date).TotalDays)
 
-                    Dim result = ShowCustomYesNoBox(msg, "Open Instructions", "Later", $"{AN} Beta Test")
-                    If result = 1 Then
-                        Try
-                            Process.Start(New ProcessStartInfo(BetaUpgradeInstructions) With {.UseShellExecute = True})
-                        Catch ex As Exception
-                            ShowCustomMessageBox($"Could not open the upgrade instructions page: {ex.Message}", AN)
-                        End Try
+            ' Show pre-expiry warning only if:
+            ' - upgradeAvailable = True, OR
+            ' - 7 or fewer days remain until BetaEndDate
+            If Not Date.Now > BetaEndDate Then
+                Dim shouldShowBetaPreWarning As Boolean = upgradeAvailable OrElse daysUntilBetaEnd <= BetaWarningNoUpgradeDays
+
+                If shouldShowBetaPreWarning AndAlso ShouldShowBetaWarning() Then
+                    Dim msg As String
+                    If upgradeAvailable Then
+                        msg = BuildLicenseMessage(
+                            $"The beta test for {AN} ends on {BetaEndDate:d}." & vbCrLf & vbCrLf &
+                            $"To continue using {AN}, upgrade now to the General Audience or Preview version. " &
+                            $"Visit {AN4} for upgrade instructions." & vbCrLf & vbCrLf &
+                            "Would you like to open the upgrade instructions page?")
+
+                        Dim result = ShowCustomYesNoBox(msg, "Open Instructions", "Later", $"{AN} Beta Test")
+                        If result = 1 Then
+                            Try
+                                Process.Start(New ProcessStartInfo(BetaUpgradeInstructions) With {.UseShellExecute = True})
+                            Catch ex As Exception
+                                ShowCustomMessageBox($"Could not open the upgrade instructions page: {ex.Message}", AN)
+                            End Try
+                        End If
+                    Else
+                        ' No upgrade available but within 7 days - just inform
+                        msg = BuildLicenseMessage(
+                            $"The beta test for {AN} ends in {daysUntilBetaEnd} day(s) on {BetaEndDate:d}." & vbCrLf & vbCrLf &
+                            $"To continue using {AN} after that date, you will need to upgrade to the General Audience or Preview version. " &
+                            $"Visit {AN4} for more information.")
+                        ShowCustomMessageBox(msg, $"{AN} Beta Test")
                     End If
 
                     RecordBetaWarningShown()
+                    warningAlreadyShown = True
                 End If
             End If
 
-            ' Standard expiry check for beta
+            ' Check if beta has expired
             If Date.Now > BetaEndDate Then
+                ' Check if we're within the grace period
+                If GracePeriodDays > 0 AndAlso Date.Now <= BetaEndDate.AddDays(GracePeriodDays) Then
+                    ' Within grace period - show warning and allow continuation
+                    CheckGracePeriodWarning(context, BetaEndDate, True)
+                    Return True
+                End If
+
+                ' Past grace period - beta expired
                 If upgradeAvailable Then
                     Dim msg = BuildLicenseMessage(
-                    $"Your beta test license for {AN} for {context.RDV} has EXPIRED on {BetaEndDate:d}. {If(Date.Now > LicensedTill, $"Therefore, your copy of {AN} no longer works.", "")}" & vbCrLf & vbCrLf &
-                    $"To continue using {AN}, upgrade to the new General Audience or Preview version at {BetaUpgradeInstructions}." & vbCrLf & vbCrLf &
-                    "Would you like to open the upgrade instructions page?")
+                        $"Your beta test license for {AN} for {context.RDV} has EXPIRED on {BetaEndDate:d}." & vbCrLf & vbCrLf &
+                        $"To continue using {AN}, upgrade to the General Audience or Preview version. " &
+                        $"Visit {AN4} for upgrade instructions." & vbCrLf & vbCrLf &
+                        "Would you like to open the upgrade instructions page?")
 
-                    Dim result = ShowCustomYesNoBox(msg, "Open Instructions", "Later", $"{AN} Beta Test")
+                    Dim result = ShowCustomYesNoBox(msg, "Open Instructions", "Cancel", $"{AN} Beta Test Expired")
                     If result = 1 Then
                         Try
                             Process.Start(New ProcessStartInfo(BetaUpgradeInstructions) With {.UseShellExecute = True})
@@ -424,51 +467,72 @@ Namespace SharedLibrary
                             ShowCustomMessageBox($"Could not open the upgrade instructions page: {ex.Message}", AN)
                         End Try
                     End If
-
-                    Return Not Date.Now > LicensedTill
                 Else
                     Dim msg = BuildLicenseMessage(
-                    $"Your beta test license for {AN} for {context.RDV} has EXPIRED on {BetaEndDate:d}. {If(Date.Now > LicensedTill, $"Therefore, your copy of {AN} no longer works.", "")}" & vbCrLf & vbCrLf &
-                    $"To continue using {AN}, upgrade to the new General Audience or Preview version at {NewHomeURL}.")
-                    ShowCustomMessageBox(msg, $"{AN} Beta Test")
-
-                    Return Not Date.Now > LicensedTill
+                        $"Your beta test license for {AN} for {context.RDV} has EXPIRED on {BetaEndDate:d}." & vbCrLf & vbCrLf &
+                        $"To continue using {AN}, upgrade to the General Audience or Preview version at {AN4}.")
+                    ShowCustomMessageBox(msg, $"{AN} Beta Test Expired")
                 End If
+
+                Return False
             End If
 
-            ' Upcoming expiry warnings for beta
-            If Not LicenseNoWarning Then
-                CheckLicenseExpiryWarnings(context)
+            ' Upcoming expiry warnings for beta - only if no warning was already shown
+            If Not warningAlreadyShown AndAlso Not LicenseNoWarning Then
+                ' Only show if upgrade available OR within 7 days
+                Dim shouldShowExpiryWarning As Boolean = upgradeAvailable OrElse daysUntilBetaEnd <= BetaWarningNoUpgradeDays
+                If shouldShowExpiryWarning Then
+                    CheckLicenseExpiryWarnings(context, True)
+                End If
             End If
 
             Return True
         End Function
 
         ''' <summary>
-        ''' Checks license expiry warnings at 30, 15, 10, 5, 3, 1 days before expiry
+        ''' Checks license expiry warnings at 30, 15, 10, 5, 3, 1 days before expiry.
+        ''' Warnings are shown only once every LicenseWarningInterval starts.
         ''' </summary>
-        Private Shared Sub CheckLicenseExpiryWarnings(context As ISharedContext)
+        Private Shared Sub CheckLicenseExpiryWarnings(context As ISharedContext, isBeta As Boolean)
             Try
-                Dim daysUntilExpiry = CInt((LicensedTill.Date - Date.Now.Date).TotalDays)
+                Dim expiryDate As Date = If(isBeta, BetaEndDate, LicensedTill)
+                Dim daysUntilExpiry = CInt((expiryDate.Date - Date.Now.Date).TotalDays)
 
                 For Each warningDay In LicenseWarningDays
                     If daysUntilExpiry = warningDay Then
-                        Dim msg = BuildLicenseMessage(
-                            $"Your license for {AN} for {context.RDV} will EXPIRE in {daysUntilExpiry} day(s) " &
-                            $"on {LicensedTill:d}." & vbCrLf & vbCrLf &
-                            If(LicenseFromConfig,
-                               "Your license is configured centrally. Contact your administrator to renew.",
-                               $"Please update your license at {AN4} or contact your administrator. Updating the license information is possible via 'Settings', then 'About {AN}'." & vbCrLf & vbCrLf & "Would you like to update your license information now?"))
+                        ' Check if we should show the warning based on start count
+                        If Not ShouldShowLicenseWarning() Then
+                            Exit For
+                        End If
 
-                        ' Only offer to update if license is NOT from config
-                        If LicenseFromConfig Then
-                            ShowCustomMessageBox(msg, $"{AN} License Warning")
+                        Dim msg As String
+                        If isBeta Then
+                            msg = BuildLicenseMessage(
+                                $"Your beta test license for {AN} for {context.RDV} will EXPIRE in {daysUntilExpiry} day(s) " &
+                                $"on {expiryDate:d}." & vbCrLf & vbCrLf &
+                                $"To continue using {AN}, please upgrade to the General Audience or Preview version. " &
+                                $"Visit {AN4} for upgrade instructions.")
+                            ShowCustomMessageBox(msg, $"{AN} Beta Test Warning")
                         Else
-                            Dim result = ShowCustomYesNoBox(msg, "Update License", "Later", $"{AN} License Warning")
-                            If result = 1 Then
-                                ShowLicenseEntryForm(context)
+                            msg = BuildLicenseMessage(
+                                $"Your license for {AN} for {context.RDV} will EXPIRE in {daysUntilExpiry} day(s) " &
+                                $"on {expiryDate:d}." & vbCrLf & vbCrLf &
+                                If(LicenseFromConfig,
+                                   "Your license is configured centrally. Contact your administrator to renew.",
+                                   $"Please update your license at {AN4} or contact your administrator. Updating the license information is possible via 'Settings', then 'About {AN}'." & vbCrLf & vbCrLf & "Would you like to update your license information now?"))
+
+                            ' Only offer to update if license is NOT from config
+                            If LicenseFromConfig Then
+                                ShowCustomMessageBox(msg, $"{AN} License Warning")
+                            Else
+                                Dim result = ShowCustomYesNoBox(msg, "Update License", "Later", $"{AN} License Warning")
+                                If result = 1 Then
+                                    ShowLicenseEntryForm(context)
+                                End If
                             End If
                         End If
+
+                        RecordLicenseWarningShown()
                         Exit For
                     End If
                 Next
@@ -477,16 +541,66 @@ Namespace SharedLibrary
             End Try
         End Sub
 
+        ''' <summary>
+        ''' Checks if license warning should be shown (every LicenseWarningInterval starts)
+        ''' </summary>
+        Private Shared Function ShouldShowLicenseWarning() As Boolean
+            Try
+                ' Increment start count
+                Dim startCount As Integer = 0
+                Try
+                    startCount = My.Settings.LicenseWarningStartCount + 1
+                Catch
+                    startCount = 1
+                End Try
+
+                My.Settings.LicenseWarningStartCount = startCount
+                My.Settings.Save()
+
+                ' Show warning if start count reaches the interval threshold
+                Return startCount >= LicenseWarningInterval
+
+            Catch
+                Return True
+            End Try
+        End Function
 
         ''' <summary>
-        ''' Shows the license entry form for users to select and configure their license
+        ''' Records that license warning was shown (resets the counter)
+        ''' </summary>
+        Private Shared Sub RecordLicenseWarningShown()
+            Try
+                My.Settings.LicenseWarningStartCount = 0
+                My.Settings.Save()
+            Catch
+            End Try
+        End Sub
+
+        ''' <summary>
+        ''' Shows the license entry form for users to select and configure their license.
+        ''' Returns False immediately if this is a beta version (no license storage in beta).
         ''' </summary>
         Public Shared Function ShowLicenseEntryForm(context As ISharedContext) As Boolean
             Try
+                ' Beta version cannot store license information
+                Dim isBetaVersion As Boolean = Not AppsUrl.StartsWith(NewHomeURL, StringComparison.OrdinalIgnoreCase)
+                If isBetaVersion Then
+                    ShowCustomMessageBox(
+                        $"License configuration is not available during the beta test period." & vbCrLf & vbCrLf &
+                        $"To use {AN} after the beta ends on {BetaEndDate:d}, please upgrade to the General Audience or Preview version. " &
+                        $"Visit {AN4} for more information.",
+                        $"{AN} Beta Test")
+                    Return False
+                End If
+
                 Dim versionDate = ParseVersionDateFromRDV(context.RDV)
                 Dim licenseTypes = GetLicenseTypes(versionDate)
 
                 Using form As New Form()
+                    ' Enable DPI awareness
+                    form.AutoScaleMode = AutoScaleMode.Dpi
+                    form.AutoScaleDimensions = New System.Drawing.SizeF(96.0F, 96.0F)
+
                     form.Text = $"{AN} License Configuration"
                     form.FormBorderStyle = FormBorderStyle.FixedDialog
                     form.StartPosition = FormStartPosition.CenterScreen
@@ -494,7 +608,10 @@ Namespace SharedLibrary
                     form.MinimizeBox = False
                     form.ShowInTaskbar = True
                     form.TopMost = True
-                    form.Width = 500
+
+                    ' Enable auto-sizing for the form
+                    form.AutoSize = True
+                    form.AutoSizeMode = AutoSizeMode.GrowAndShrink
 
                     ' Set icon
                     Try
@@ -506,107 +623,123 @@ Namespace SharedLibrary
                     Dim font As New System.Drawing.Font("Segoe UI", 9.0F)
                     form.Font = font
 
-                    Dim yPos = 15
-                    Dim leftMargin = 15
-                    Dim controlWidth = 450
-                    Dim inputControlLeft = 180 ' Aligned position for input controls
+                    ' Use TableLayoutPanel for DPI-aware layout
+                    Dim mainLayout As New TableLayoutPanel() With {
+                        .AutoSize = True,
+                        .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                        .ColumnCount = 2,
+                        .RowCount = 6,
+                        .Padding = New Padding(15, 15, 15, 20)
+                    }
+                    mainLayout.ColumnStyles.Add(New ColumnStyle(SizeType.AutoSize))
+                    mainLayout.ColumnStyles.Add(New ColumnStyle(SizeType.AutoSize))
 
-                    ' Title label (not bold, 3 extra points before selector)
+                    ' Row 0: Title label (spans both columns)
                     Dim titleLabel As New Label() With {
                         .Text = "Select your license type:",
                         .AutoSize = True,
-                        .Location = New System.Drawing.Point(leftMargin, yPos),
-                        .Font = New System.Drawing.Font("Segoe UI", 9.0F)
+                        .Font = New System.Drawing.Font("Segoe UI", 9.0F),
+                        .Margin = New Padding(0, 0, 0, 5)
                     }
-                    form.Controls.Add(titleLabel)
-                    yPos += titleLabel.PreferredHeight + 3
+                    mainLayout.Controls.Add(titleLabel, 0, 0)
+                    mainLayout.SetColumnSpan(titleLabel, 2)
 
-                    ' License type ComboBox (single line, no dropdown list expanding)
+                    ' Row 1: License type ComboBox (spans both columns)
                     Dim cboLicenseType As New ComboBox() With {
-                        .Location = New System.Drawing.Point(leftMargin, yPos),
-                        .Width = controlWidth,
-                        .DropDownStyle = ComboBoxStyle.DropDownList
+                        .Width = 450,
+                        .DropDownStyle = ComboBoxStyle.DropDownList,
+                        .Margin = New Padding(0, 0, 0, 10)
                     }
                     For Each lt In licenseTypes
                         cboLicenseType.Items.Add(lt.Name)
                     Next
-                    form.Controls.Add(cboLicenseType)
-                    yPos += cboLicenseType.Height + 8
+                    mainLayout.Controls.Add(cboLicenseType, 0, 1)
+                    mainLayout.SetColumnSpan(cboLicenseType, 2)
 
                     ' Calculate max description height needed
                     Dim maxDescHeight = 0
                     Using g = form.CreateGraphics()
                         For Each lt In licenseTypes
-                            Dim size = g.MeasureString(lt.Description, font, controlWidth)
+                            Dim size = g.MeasureString(lt.Description, font, 450)
                             maxDescHeight = Math.Max(maxDescHeight, CInt(Math.Ceiling(size.Height)))
                         Next
                     End Using
 
-                    ' Description label (flat, no scrollbars, no 3D border, dark grey text)
+                    ' Row 2: Description label (spans both columns)
                     Dim lblDescription As New Label() With {
-                        .Location = New System.Drawing.Point(leftMargin, yPos),
-                        .Width = controlWidth,
+                        .Width = 450,
                         .Height = maxDescHeight + 10,
                         .ForeColor = System.Drawing.Color.FromArgb(96, 96, 96),
                         .BackColor = System.Drawing.SystemColors.Control,
-                        .BorderStyle = BorderStyle.None
+                        .Margin = New Padding(0, 0, 0, 10)
                     }
-                    form.Controls.Add(lblDescription)
-                    yPos += lblDescription.Height + 8
+                    mainLayout.Controls.Add(lblDescription, 0, 2)
+                    mainLayout.SetColumnSpan(lblDescription, 2)
 
-                    ' License end date label
+                    ' Row 3: License end date
                     Dim lblEndDate As New Label() With {
                         .Text = "License valid until:",
                         .AutoSize = True,
-                        .Location = New System.Drawing.Point(leftMargin, yPos + 3)
+                        .Anchor = AnchorStyles.Left,
+                        .Margin = New Padding(0, 5, 15, 12)
                     }
-                    form.Controls.Add(lblEndDate)
+                    mainLayout.Controls.Add(lblEndDate, 0, 3)
 
                     Dim dtpEndDate As New DateTimePicker() With {
                         .Format = DateTimePickerFormat.Short,
-                        .Location = New System.Drawing.Point(inputControlLeft, yPos),
-                        .Width = 150
+                        .Width = 150,
+                        .Anchor = AnchorStyles.Left,
+                        .Margin = New Padding(0, 0, 0, 12)
                     }
-                    form.Controls.Add(dtpEndDate)
-                    yPos += dtpEndDate.Height + 10
+                    mainLayout.Controls.Add(dtpEndDate, 1, 3)
 
-                    ' Number of users label
+                    ' Row 4: Number of users
                     Dim lblUsers As New Label() With {
                         .Text = "Number of users:",
                         .AutoSize = True,
-                        .Location = New System.Drawing.Point(leftMargin, yPos + 3)
+                        .Anchor = AnchorStyles.Left,
+                        .Margin = New Padding(0, 5, 15, 20)
                     }
-                    form.Controls.Add(lblUsers)
+                    mainLayout.Controls.Add(lblUsers, 0, 4)
 
                     Dim nudUsers As New NumericUpDown() With {
                         .Minimum = 1,
                         .Maximum = 10000,
                         .Value = 1,
-                        .Location = New System.Drawing.Point(inputControlLeft, yPos),
-                        .Width = 80
+                        .Width = 80,
+                        .Anchor = AnchorStyles.Left,
+                        .Margin = New Padding(0, 0, 0, 20)
                     }
-                    form.Controls.Add(nudUsers)
-                    yPos += nudUsers.Height + 25
+                    mainLayout.Controls.Add(nudUsers, 1, 4)
 
-                    ' Buttons with proper padding
+                    ' Row 5: Buttons panel (spans both columns)
+                    Dim buttonPanel As New FlowLayoutPanel() With {
+                        .AutoSize = True,
+                        .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                        .FlowDirection = FlowDirection.LeftToRight,
+                        .Margin = New Padding(0, 5, 0, 0)
+                    }
+
                     Dim btnSave As New Button() With {
                         .Text = "Save License",
-                        .Location = New System.Drawing.Point(leftMargin, yPos),
                         .AutoSize = True,
-                        .Padding = New Padding(10, 5, 10, 5)
+                        .Padding = New Padding(10, 5, 10, 5),
+                        .Margin = New Padding(0, 0, 10, 0)
                     }
-                    form.Controls.Add(btnSave)
+                    buttonPanel.Controls.Add(btnSave)
 
                     Dim btnCancel As New Button() With {
                         .Text = "Cancel",
-                        .Location = New System.Drawing.Point(btnSave.Right + 10, yPos),
                         .AutoSize = True,
-                        .Padding = New Padding(10, 5, 10, 5)
+                        .Padding = New Padding(10, 5, 10, 5),
+                        .Margin = New Padding(0, 0, 0, 0)
                     }
-                    form.Controls.Add(btnCancel)
+                    buttonPanel.Controls.Add(btnCancel)
 
-                    ' Set form height based on content plus adequate bottom margin
-                    form.ClientSize = New System.Drawing.Size(form.ClientSize.Width, yPos + btnSave.Height + 25)
+                    mainLayout.Controls.Add(buttonPanel, 0, 5)
+                    mainLayout.SetColumnSpan(buttonPanel, 2)
+
+                    form.Controls.Add(mainLayout)
 
                     Dim result As Boolean = False
 
@@ -622,6 +755,10 @@ Namespace SharedLibrary
                                                                                 dtpEndDate.Enabled = False
                                                                             ElseIf selectedType.DefaultEndDate.HasValue Then
                                                                                 dtpEndDate.Value = selectedType.DefaultEndDate.Value
+                                                                                dtpEndDate.Enabled = True
+                                                                            ElseIf selectedType.UserDefinedEndDate Then
+                                                                                ' User-defined but no default: suggest end of current calendar year
+                                                                                dtpEndDate.Value = New Date(Date.Now.Year, 12, 31)
                                                                                 dtpEndDate.Enabled = True
                                                                             Else
                                                                                 dtpEndDate.Value = Date.Now.AddYears(1)
@@ -711,6 +848,13 @@ Namespace SharedLibrary
                 ShowCustomMessageBox($"Error showing license form: {ex.Message}", AN)
                 Return False
             End Try
+        End Function
+
+        ''' <summary>
+        ''' Returns True if this is a beta version (license storage disabled)
+        ''' </summary>
+        Public Shared Function IsBetaVersion() As Boolean
+            Return Not AppsUrl.StartsWith(NewHomeURL, StringComparison.OrdinalIgnoreCase)
         End Function
 
         ''' <summary>

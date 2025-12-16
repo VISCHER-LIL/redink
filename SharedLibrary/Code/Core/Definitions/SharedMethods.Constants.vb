@@ -258,14 +258,17 @@ Namespace SharedLibrary
 
         ' License constants
         Public Const PrivateLicenseYears As Integer = 5
+        Public Const TestingPeriod As Integer = 6  ' months
         Public Const MaxLicenseYearsInFuture As Integer = 5
         Public Const LicenseCheckDisabledYears As Integer = 100
-        Public Const BetaEndDate As Date = #12/31/2025#
+        Public Const BetaEndDate As Date = #12/10/2025#
         Public Const GracePeriodDays As Integer = 5  ' Days after license expiry where add-in still works 
         Public Const GracePeriodWarningIntervals As Integer = 5 ' Show warning every X startup during grace period
 
         ' Warning day thresholds (descending order for checking)
         Public Shared ReadOnly LicenseWarningDays As Integer() = {30, 15, 10, 5, 3, 2, 1}
+        Public Const LicenseWarningInterval As Integer = 5  ' Show warning every X add-in starts
+        Public Const BetaWarningNoUpgradeDays As Integer = 7 ' Constants for beta warning when no upgrade available
         Public Const BetaWarningInterval As Integer = 5  ' Show warning every X add-in starts 
         Public Const BetaWarningDays As Integer = 3  ' Show warning after every X days 
 
@@ -305,11 +308,24 @@ Namespace SharedLibrary
                 .DefaultUsers = Nothing
             })
 
-            ' 2. Launch Business License - fixed term end of January 2026, default 1 user
+            ' 2. Testing Pro License 
             types.Add(New LicenseTypeInfo() With {
-                .Name = "Transitional Professional License",
+                .Name = "Testing Pro License",
+                .Description = "Special license for non-productive testing for professional purposes or by or within organizations. " &
+                               "Up to five users. Valid for six months since first use (once per organization). " &
+                               "Only valid if you informed info@redink.ai of your use. ",
+                .FixedEndDate = Nothing,
+                .DefaultEndDate = Date.Now.AddMonths(TestingPeriod),
+                .UserDefinedEndDate = True,
+                .FixedUsers = 5,
+                .DefaultUsers = Nothing
+            })
+
+            ' 3. Launch Pro License - fixed term end of January 2026, default 1 user
+            types.Add(New LicenseTypeInfo() With {
+                .Name = "Transition Pro License",
                 .Description = "Special transitional professional license for early adopters. " &
-                               "Unlimited number of users. Valid until January 31, 2026. " &
+                               "Unlimited number of users. Valid until January 31, 2026, thereafter a Pro License is required. " &
                                "Only valid if you informed info@redink.ai of your use. ",
                 .FixedEndDate = New Date(2026, 1, 31),
                 .UserDefinedEndDate = False,
@@ -319,8 +335,8 @@ Namespace SharedLibrary
 
             ' 3. Business License - user-defined term and users
             types.Add(New LicenseTypeInfo() With {
-                .Name = "Standard Professional License",
-                .Description = "Standard Professional License" &
+                .Name = "Pro License",
+                .Description = "Pro License" &
                                "Terms and number of users as per your license agreement. " &
                                $"More info on {NewHomeURL}.",
                 .FixedEndDate = Nothing,

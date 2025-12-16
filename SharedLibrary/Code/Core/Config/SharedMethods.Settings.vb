@@ -2449,7 +2449,7 @@ Namespace SharedLibrary
                         .Text = resetButtonText,
                         .Size = New System.Drawing.Size(resetButtonWidth, buttonHeight),
                         .Location = New System.Drawing.Point(licenseButton.Right + buttonSpacing, aboutTextBox.Bottom + 10),
-                        .Enabled = Not LicenseFromConfig AndAlso Not LicenseStatus = "Beta Test License"  ' Only enable if license is from config and not beta test
+                        .Enabled = Not LicenseFromConfig AndAlso Not IsBetaVersion() AndAlso Not LicenseStatus = "Beta Test License"  ' Only enable if license is from config and not beta test
                     }
             AddHandler resetLicenseButton.Click, Sub(sender, e)
                                                      Try
