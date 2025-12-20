@@ -18,10 +18,12 @@ Namespace SharedLibrary
         Public Const AN As String = "Red Ink"
         Public Const AN2 As String = "redink"
         Public Const AN3 As String = "Red Ink" ' Name used for Visual Studio Project 
-        Public Const AN4 As String = "https://vischer.com/redink"  ' Home Website of Red Ink
+        Public Const AN4 As String = "https://redink.ai"  ' Home Website of Red Ink
         Public Const AN5 As String = "Red%20Ink"  ' Name of first part of VSTO installer subdirectory (before "for Word" etc)
         Public Const AN7 As String = "http://localhost:12333/inky"  ' Localhost URL for Inky
         Public Const AN8 As String = "Inky"
+
+        Public Shared CopyrightNotice As String = "Copyright © LawDigital Ltd. 2025"
 
         Public Const NoThinkTrigger As String = "(nothink)"
         Public Const RKModeTrigger1 As String = "(rkmode_all)"
@@ -66,23 +68,23 @@ Namespace SharedLibrary
 
         Public Shared RemoveMenu As Boolean = False
 
-        ' App Updating and Download Urls
+        ' App Updating and Download Urls and VersionQualifier (will be added to the version string in the add-ins and the About box)
 
-        ' Beta Test Phase
+        ' Note: The DEVELOP property is defined at SharedMethods.DevelopURLs.vb, so you can keep it untouched if you update your codebase with code from the repo
 
-        Public Shared AppsUrl As String = "https://apps.vischer.com"
-        Public Shared AppsUrlDir As String = "/redink/"
+#If PREVIEW Then
 
-        ' Preview Phase
+        Public Shared ReadOnly Property AppsUrl As String = "https://redink.ai"
+        Public Shared ReadOnly Property AppsUrlDir As String = "/apps/preview/"
+        Public Shared ReadOnly Property VersionQualifier As String = " Preview"
 
-        'Public Shared AppsUrl As String = "https://redink.ai"
-        'Public Shared AppsUrlDir As String = "/apps/preview/"
+#ElseIf Not DEVELOP Then    ' This is for General Audience (GA)
 
-        ' GA Phase
+        Public Shared ReadOnly Property AppsUrl As String = "https://redink.ai"
+        Public Shared ReadOnly Property AppsUrlDir As String = "/apps/ga/"
+        Public Shared ReadOnly Property VersionQualifier As String = ""
 
-        'Public Shared AppsUrl As String = "https://redink.ai"
-        'Public Shared AppsUrlDir As String = "/apps/ga/"
-
+#End If
 
         Public Shared LicenseText As String =
             $"{AN} for Word, Excel And Outlook has been created In VB.net (handlers: VBA) and uses:" & vbCrLf & vbCrLf &

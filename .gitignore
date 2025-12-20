@@ -4,3 +4,5 @@ obj/
 *.user
 *.suo
 *.vs/
+/SharedLibrary/Code/Core/Definitions/apps-path.txt
+/SharedLibrary/Code/apps-path.txt

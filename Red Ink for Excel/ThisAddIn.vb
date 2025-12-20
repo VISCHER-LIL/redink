@@ -56,7 +56,7 @@ Partial Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Const Version As String = "V.211225 Beta Test Develop"
+    Public Shared Version As String = "V.201225" & SharedMethods.VersionQualifier
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"

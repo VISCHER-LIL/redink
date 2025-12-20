@@ -17,6 +17,9 @@
     </NuGetPackageImportStamp>
     <TargetFrameworkProfile />
   </PropertyGroup>
+  <PropertyGroup>
+    <DefineConstants>DEVELOP</DefineConstants>
+  </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
@@ -326,6 +329,7 @@
     <Compile Include="Code\Core\Definitions\SharedContext.vb" />
     <Compile Include="Code\Core\Converter\MarkdownToRtfConverter.vb" />
     <Compile Include="Code\Core\Definitions\SharedMethods.Constants.vb" />
+    <Compile Include="Code\Core\Definitions\SharedMethods.DevelopURLs.vb" />
     <Compile Include="Code\Core\LLM\ModelSelection\SharedMethods.AlternateModels.vb" />
     <Compile Include="Code\Core\LLM\SharedMethods.GoogleOAuthHelper.vb" />
     <Compile Include="Code\Core\LLM\SharedMethods.MainLLM.vb" />
@@ -425,7 +429,9 @@
     <None Include="Resources\Red_Ink_Logo_Large.png" />
     <None Include="Resources\Red_Ink_Logo.png" />
   </ItemGroup>
-  <ItemGroup />
+  <ItemGroup>
+    <Service Include="{508349B6-6B84-4DF5-91F0-309BEEBAD82D}" />
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.VisualBasic.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>

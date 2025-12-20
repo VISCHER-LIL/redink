@@ -343,7 +343,7 @@ Partial Class Ribbon1
         Me.Menu1.ScreenTip = If(String.IsNullOrEmpty(ThisAddIn.INI_UsageRestrictions), "",
                             ThisAddIn.INI_UsageRestrictions)
         Me.Menu1.SuperTip = AN & " " & ThisAddIn.Version &
-                        " © by David Rosenthal, VISCHER AG " &
+                        $" {SharedLibrary.SharedLibrary.SharedMethods.CopyrightNotice} " &
                         "(model: " & ThisAddIn.INI_Model & ")"
 
         If Trim(ThisAddIn.INI_MyStylePath) = "" Then
@@ -731,7 +731,7 @@ Partial Class Ribbon2
         Me.Menu1.ScreenTip = If(String.IsNullOrEmpty(ThisAddIn.INI_UsageRestrictions), "",
         ThisAddIn.INI_UsageRestrictions)
         Me.Menu1.SuperTip = AN & " " & ThisAddIn.Version &
-        " © by David Rosenthal, VISCHER AG " &
+        $" {SharedLibrary.SharedLibrary.SharedMethods.CopyrightNotice} " &
         "(model: " & ThisAddIn.INI_Model & ")"
 
         If Trim(ThisAddIn.INI_MyStylePath) = "" Then
