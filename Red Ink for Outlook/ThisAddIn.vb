@@ -2,7 +2,7 @@
 ' Copyright by David Rosenthal, david.rosenthal@vischer.com
 ' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
 '
-' 15.12.2025
+' 21.12.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -55,7 +55,7 @@ Partial Public Class ThisAddIn
     Public Const AN2 As String = "red_ink"
     Public Const AN6 As String = "Inky"
 
-    Public Const Version As String = "V.151225 Gen2 Beta Test"
+    Public Const Version As String = "V.211225 Beta Test Develop"
 
     Public Const ShortenPercent As Integer = 20
     Public Const SummaryPercent As Integer = 20

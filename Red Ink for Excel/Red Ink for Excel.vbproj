@@ -33,17 +33,17 @@
     <IsWebBootstrapper>True</IsWebBootstrapper>
     <TargetFrameworkProfile />
     <BootstrapperEnabled>true</BootstrapperEnabled>
-    <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\redink_prerelease\excel\</PublishUrl>
-    <InstallUrl>https://apps.vischer.com/redink/excel/</InstallUrl>
+    <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\ridevelop\excel\</PublishUrl>
+    <InstallUrl>https://www.rosenthal.ch/ridevelop/excel/</InstallUrl>
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.1.1.81</ApplicationVersion>
+    <ApplicationVersion>0.2.0.1</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
     <UpdateIntervalUnits>days</UpdateIntervalUnits>
-    <ProductName>Red Ink for Excel</ProductName>
-    <PublisherName>VISCHER AG</PublisherName>
-    <SupportUrl>https://www.vischer.com/redink</SupportUrl>
+    <ProductName>Red Ink for Excel %28Develop%29</ProductName>
+    <PublisherName>LawDigital Ltd.</PublisherName>
+    <SupportUrl>https://redink.ai</SupportUrl>
     <FriendlyName>Red Ink for Excel</FriendlyName>
     <OfficeApplicationDescription />
     <LoadBehavior>3</LoadBehavior>

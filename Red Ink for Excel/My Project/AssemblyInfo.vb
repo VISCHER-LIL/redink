@@ -11,9 +11,9 @@ Imports System.Security
 
 <Assembly: AssemblyTitle("Red Ink for Excel")>
 <Assembly: AssemblyDescription("")>
-<Assembly: AssemblyCompany("VISCHER AG")>
-<Assembly: AssemblyProduct("Red Ink for Excel")>
-<Assembly: AssemblyCopyright("Copyright © David Rosenthal, david.rosenthal@vischer.com")>
+<Assembly: AssemblyCompany("LawDigital Ltd.")>
+<Assembly: AssemblyProduct("Red Ink for Excel (Develop)")>
+<Assembly: AssemblyCopyright("Copyright 2025 LawDigital Ltd., Switzerland")>
 <Assembly: AssemblyTrademark("")> 
 
 ' Setting ComVisible to false makes the types in this assembly not visible 

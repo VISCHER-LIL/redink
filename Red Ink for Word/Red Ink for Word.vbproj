@@ -37,17 +37,17 @@
     </NuGetPackageImportStamp>
     <TargetFrameworkProfile />
     <BootstrapperEnabled>true</BootstrapperEnabled>
-    <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\redink_prerelease\word\</PublishUrl>
-    <InstallUrl>https://apps.vischer.com/redink/word/</InstallUrl>
+    <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\ridevelop\word\</PublishUrl>
+    <InstallUrl>https://www.rosenthal.ch/downloads/ridevelop/word/</InstallUrl>
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.1.1.113</ApplicationVersion>
+    <ApplicationVersion>0.2.0.1</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
     <UpdateIntervalUnits>days</UpdateIntervalUnits>
-    <ProductName>Red Ink for Word</ProductName>
-    <PublisherName>VISCHER AG</PublisherName>
-    <SupportUrl>https://vischer.com/redink</SupportUrl>
+    <ProductName>Red Ink for Word %28Develop%29</ProductName>
+    <PublisherName>LawDigital Ltd.</PublisherName>
+    <SupportUrl>https://redink.ai</SupportUrl>
     <FriendlyName>Red Ink for Word</FriendlyName>
     <OfficeApplicationDescription />
     <LoadBehavior>3</LoadBehavior>
