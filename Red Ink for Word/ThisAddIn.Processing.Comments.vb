@@ -1,0 +1,1166 @@
+﻿' Part of: Red Ink for Word
+' Copyright by David Rosenthal, david.rosenthal@vischer.com
+' May only be used under with an appropriate license (see vischer.com/redink)
+
+Option Explicit On
+Option Strict Off
+
+Imports System.Data
+Imports System.Diagnostics
+Imports System.Windows.Forms
+Imports DocumentFormat.OpenXml
+Imports DocumentFormat.OpenXml.Wordprocessing
+Imports Markdig
+Imports Microsoft.Office.Interop.Word
+Imports SharedLibrary.SharedLibrary.SharedMethods
+Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
+
+Partial Public Class ThisAddIn
+
+
+    ' Adds a comment at the current selection and renders Markdown/HTML into its bubble.
+    Private Shared Function AddMarkdownComment(sel As Microsoft.Office.Interop.Word.Selection, prefix As String, body As String) As Microsoft.Office.Interop.Word.Comment
+        Dim doc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
+        ' Create with a single space to get a writable comment range
+        Dim cmt As Microsoft.Office.Interop.Word.Comment = doc.Comments.Add(sel.Range, " ")
+        Dim cr As Microsoft.Office.Interop.Word.Range = cmt.Range
+
+        ' Clear and insert plain prefix
+        cr.Text = ""
+        Dim startPos As Integer = cr.Start
+        cr.InsertAfter(prefix)
+
+        ' Move insertion point to end of prefix and render the body
+        Dim ins As Microsoft.Office.Interop.Word.Range = cmt.Range.Duplicate
+        ins.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
+
+        ' Separate prefix and body with a space if needed
+        If prefix.Length > 0 AndAlso body.Length > 0 AndAlso Not Char.IsWhiteSpace(prefix(prefix.Length - 1)) Then
+            ins.InsertAfter(" ")
+            ins.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
+        End If
+
+        InsertMarkdownToComment(ins, body)
+
+        Return cmt
+    End Function
+
+    Public Sub SetBubbles(LLMResult As System.String, Selection As Microsoft.Office.Interop.Word.Selection, DoSilent As System.Boolean, Optional Prefix As String = "")
+
+        Dim responseItems() As System.String = LLMResult.Split(New System.String() {"§§§"}, System.StringSplitOptions.RemoveEmptyEntries)
+        Dim wrongformatresponse As New System.Collections.Generic.List(Of System.String)
+        Dim notfoundresponse As New System.Collections.Generic.List(Of System.String)
+
+        ' Stable doc reference
+        Dim docRef As Microsoft.Office.Interop.Word.Document = Nothing
+        Try
+            If Selection IsNot Nothing AndAlso Selection.Range IsNot Nothing Then
+                docRef = Selection.Range.Document
+            End If
+            If docRef Is Nothing AndAlso Globals.ThisAddIn IsNot Nothing AndAlso
+           Globals.ThisAddIn.Application IsNot Nothing AndAlso
+           Globals.ThisAddIn.Application.Documents.Count > 0 Then
+                docRef = Globals.ThisAddIn.Application.ActiveDocument
+            End If
+        Catch ex As System.Exception
+        End Try
+        If docRef Is Nothing Then Exit Sub
+
+        Dim originalRange As Microsoft.Office.Interop.Word.Range = Selection.Range.Duplicate
+        Dim BubblecutHappened As System.Boolean = False
+        Dim BubbleCount As System.Int32 = 0
+        Dim MaxBubbles As System.Int32 = responseItems.Count
+
+        If MaxBubbles = 0 Then
+            If Not DoSilent Then ShowCustomMessageBox($"The bubble command did not result in any comment(s) by the LLM.")
+            Exit Sub
+        End If
+
+        Dim splash As New SLib.SplashScreen($"Adding {MaxBubbles} bubble(s) to your text... press 'Esc' to abort")
+        splash.Show()
+        splash.Refresh()
+
+        ' ─────────────────────────────────────────────────────────────────────
+        ' Prevent user interaction and hide balloons while we run
+        Dim app As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
+        Dim win As Microsoft.Office.Interop.Word.Window = app.ActiveWindow
+        Dim hwnd As System.IntPtr = System.IntPtr.Zero
+        Dim winWasEnabled As System.Boolean = True
+        Dim prevShowRevs As System.Boolean = False
+        Dim prevScreenUpdating As System.Boolean = True
+
+        Try
+            If win IsNot Nothing Then
+                Try
+                    hwnd = CType(win.Hwnd, System.IntPtr)
+                Catch ex As System.Exception
+                    hwnd = System.IntPtr.Zero
+                End Try
+                Try
+                    prevShowRevs = win.View.ShowRevisionsAndComments
+                    win.View.ShowRevisionsAndComments = False ' hide balloons/comments
+                    win.View.RevisionsView = Microsoft.Office.Interop.Word.WdRevisionsView.wdRevisionsViewFinal
+                Catch ex As System.Exception
+                End Try
+            End If
+
+            Try
+                prevScreenUpdating = app.ScreenUpdating
+                app.ScreenUpdating = False
+            Catch ex As System.Exception
+            End Try
+
+            If hwnd <> System.IntPtr.Zero Then
+                Try
+                    winWasEnabled = IsWindowEnabled(hwnd)
+                Catch ex As System.Exception
+                    winWasEnabled = True
+                End Try
+                Try
+                    ' HARD LOCK: disable Word window so clicks can’t move Selection
+                    EnableWindow(hwnd, False)
+                Catch ex As System.Exception
+                End Try
+            End If
+            ' ─────────────────────────────────────────────────────────────────────
+
+            Try
+                For Each item As System.String In responseItems
+
+                    splash.UpdateMessage($"Adding {MaxBubbles - BubbleCount} bubble(s) to your text... press 'Esc' to abort")
+                    System.Windows.Forms.Application.DoEvents()
+
+                    If (GetAsyncKeyState(VK_ESCAPE) And &H8000) <> 0 Then Exit For
+                    If (GetAsyncKeyState(VK_ESCAPE) And 1) <> 0 Then Exit For
+
+                    Dim parts() As System.String = item.Split(New System.String() {"@@"}, System.StringSplitOptions.None)
+                    If parts.Length = 2 Then
+
+                        Dim findText As System.String = parts(0).Trim().Trim("'"c).Trim(""""c)
+                        Dim commentText As System.String = parts(1).Trim()
+
+                        Dim viewChanged1 As Boolean = False
+                        Dim viewChanged2 As Boolean = False
+                        Dim view = wordApp.ActiveWindow.View
+                        Dim origRevView = view.RevisionsView
+                        Dim origShowRev = view.ShowRevisionsAndComments
+
+                        If view.RevisionsView <> Microsoft.Office.Interop.Word.WdRevisionsView.wdRevisionsViewFinal Then
+                            view.RevisionsView = Microsoft.Office.Interop.Word.WdRevisionsView.wdRevisionsViewFinal
+                            viewChanged1 = True
+                        End If
+                        If view.ShowRevisionsAndComments Then
+                            view.ShowRevisionsAndComments = False
+                            viewChanged2 = True
+                        End If
+
+                        Try
+                            ' Ensure we start in MainText (best effort)
+                            Try
+                                If app.Selection IsNot Nothing AndAlso app.Selection.StoryType <> Microsoft.Office.Interop.Word.WdStoryType.wdMainTextStory Then
+                                    app.Selection.SetRange(Start:=originalRange.Start, End:=originalRange.End)
+                                End If
+                            Catch exSet As System.Exception
+                            End Try
+
+                            ' === NO DoEvents between the finder and creating the stable range ===
+                            If FindLongTextInChunks(findText, Selection) Then
+                                Dim s As System.Int32 = -1, e As System.Int32 = -1
+                                Try
+                                    s = Selection.Range.Start : e = Selection.Range.End
+                                Catch exGrab As System.Exception
+                                    s = -1 : e = -1
+                                End Try
+
+                                If s >= 0 AndAlso e >= 0 Then
+                                    Dim matchedRange As Microsoft.Office.Interop.Word.Range = Nothing
+                                    Try
+                                        matchedRange = docRef.Range(Start:=s, End:=e)
+                                    Catch exR As System.Exception
+                                        matchedRange = Nothing
+                                    End Try
+
+                                    If matchedRange IsNot Nothing AndAlso
+                                   matchedRange.StoryType = Microsoft.Office.Interop.Word.WdStoryType.wdMainTextStory Then
+
+                                        If INI_MarkdownBubbles Then
+                                            Dim cmt As Microsoft.Office.Interop.Word.Comment = Nothing
+                                            Try
+                                                cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:="")
+                                            Catch exAdd As System.Runtime.InteropServices.COMException
+                                                cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:=$"{AN5}{Prefix}: ")
+                                            Catch exAdd2 As System.Exception
+                                                cmt = Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(Range:=matchedRange, Text:=$"{AN5}{Prefix}: ")
+                                            End Try
+
+                                            Try
+                                                If commentText.StartsWith("* ") Then
+                                                    commentText = $"{AN5}{Prefix}:" & vbCrLf & commentText
+                                                Else
+                                                    commentText = $"{AN5}{Prefix}: " & commentText
+                                                End If
+                                                Dim cRng As Microsoft.Office.Interop.Word.Range = cmt.Range
+                                                ' Ensure balloons visible during paste into comment text:
+                                                Dim prevShow As System.Boolean = win.View.ShowRevisionsAndComments
+                                                Try
+                                                    win.View.ShowRevisionsAndComments = True
+                                                    InsertMarkdownToComment(cRng, commentText) ' will not fight a hidden pane
+                                                Finally
+                                                    win.View.ShowRevisionsAndComments = prevShow
+                                                End Try
+                                            Catch exMk As System.Exception
+                                                cmt.Range.Text = $"{AN5}{Prefix}: " & commentText
+                                            End Try
+                                        Else
+                                            Globals.ThisAddIn.Application.ActiveDocument.Comments.Add(matchedRange, $"{AN5}{Prefix}: " & commentText)
+                                        End If
+
+                                        BubbleCount += 1
+                                    Else
+                                        notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}{Prefix}: " & commentText & vbCrLf & vbCrLf)
+                                    End If
+                                Else
+                                    notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}{Prefix}: " & commentText & vbCrLf & vbCrLf)
+                                End If
+                            Else
+                                notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}{Prefix}: " & commentText & vbCrLf & vbCrLf)
+                            End If
+
+                        Catch ex As System.Exception
+                            notfoundresponse.Add("'" & findText & "' " & vbCrLf & ChrW(8594) & $" {AN5}{Prefix}: " & commentText & " [Error: " & ex.Message & "]" & vbCrLf & vbCrLf)
+                        End Try
+
+                        If viewChanged1 Then view.RevisionsView = origRevView
+                        If viewChanged2 Then view.ShowRevisionsAndComments = origShowRev
+
+                    Else
+                        If Not System.String.IsNullOrWhiteSpace(item) Then
+                            wrongformatresponse.Add(item)
+                        End If
+                    End If
+
+                    ' Best-effort restore
+                    Try
+                        Selection.SetRange(Start:=originalRange.Start, End:=originalRange.End)
+                    Catch exRestore As System.Exception
+                    End Try
+                Next
+
+            Finally
+                'splash.Close()
+            End Try
+
+        Finally
+            ' ─────────────────────────────────────────────────────────────────
+            ' Restore Word window + UI
+            Try
+                If hwnd <> System.IntPtr.Zero Then EnableWindow(hwnd, winWasEnabled)
+            Catch ex As System.Exception
+            End Try
+            Try
+                If win IsNot Nothing Then win.View.ShowRevisionsAndComments = prevShowRevs
+            Catch ex As System.Exception
+            End Try
+            Try
+                If app IsNot Nothing Then app.ScreenUpdating = prevScreenUpdating
+            Catch ex As System.Exception
+            End Try
+            ' ─────────────────────────────────────────────────────────────────
+
+            If splash IsNot Nothing Then
+                Try : splash.Close() : Catch : End Try
+            End If
+
+        End Try
+
+        ' (unchanged) build ErrorList and add final summary comment…
+        Dim ErrorList As System.String = ""
+
+        If notfoundresponse.Count > 0 Then
+            ErrorList += "The following comments could not be assigned to your text (they were not found, typically because of the LLM not acting as instructed, formatting or markup issues):" & vbCrLf & vbCrLf
+            For Each itemNF As System.String In notfoundresponse
+                If itemNF.Trim() <> "" Then ErrorList += Trim("- " & itemNF & vbCrLf)
+            Next
+            ErrorList += vbCrLf
+        End If
+
+        If wrongformatresponse.Count > 0 Then
+            ErrorList += "The following responses could not be identified as bubble comments (typically because the LLM did not act as instructed):" & vbCrLf & vbCrLf
+            For Each itemWF As System.String In wrongformatresponse
+                If itemWF.Trim() <> "" Then ErrorList += Trim("- " & itemWF & vbCrLf)
+            Next
+            ErrorList += vbCrLf
+        End If
+
+        If Not System.String.IsNullOrWhiteSpace(ErrorList) Then
+            If BubblecutHappened Then
+                ErrorList = $"Some of the sections to which the bubble comments relate were too long for selecting. Only the initial part has been selected. This is indicated by '{BubbleCutText}' in the bubble comments, as applicable." & vbCrLf & vbCrLf & ErrorList
+            End If
+            If Not DoSilent Then
+                ErrorList = ShowCustomWindow($"{BubbleCount} bubble comment(s) applied (Warning: complicated formatting and markups may cause misalignments of the commented portions of the text). The following errors occurred when implementing the 'bubbles' feedback of the LLM:", ErrorList, "The above error list will be included in a final comment at the end of your selection (it will also be included in the clipboard). You can have the original list included, or you can now make changes and have this version used. If you select Cancel, nothing will be put added to the document.", AN, True)
+            End If
+            If ErrorList <> "" AndAlso ErrorList.ToLower() <> "esc" Then
+                SLib.PutInClipboard(ErrorList)
+
+                Dim tailRange As Microsoft.Office.Interop.Word.Range = originalRange.Duplicate
+                tailRange.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
+
+                If INI_MarkdownBubbles Then
+                    Try
+                        Dim cmt As Microsoft.Office.Interop.Word.Comment = docRef.Comments.Add(Range:=tailRange, Text:="")
+                        Dim cRng As Microsoft.Office.Interop.Word.Range = cmt.Range
+                        InsertMarkdownToComment(cRng, $"{AN5}{Prefix}:" & ErrorList)
+                    Catch exMkSum As System.Exception
+                        docRef.Comments.Add(Range:=tailRange, Text:=$"{AN5}{Prefix}: " & ErrorList)
+                    End Try
+                Else
+                    docRef.Comments.Add(Range:=tailRange, Text:=$"{AN5}{Prefix}: " & ErrorList)
+                End If
+            End If
+        Else
+            If Not DoSilent Then
+                ShowCustomMessageBox($"{BubbleCount} bubble comment(s) provided by the LLM applied to to your text (Warning: complicated formatting and markups may cause misalignments of the commented portions of the text)." &
+                                 If(BubblecutHappened, $"Some of the sections to which the bubble comments relate were too long for selecting. Only the initial part has been selected. This is indicated by '{BubbleCutText}' in the bubble comments, as applicable.", ""))
+            End If
+        End If
+
+    End Sub
+
+
+
+
+    ' Extracts multiple comment-replies from an LLM result and adds a threaded reply to each
+    ' Expected format per reply item:
+    '   "wid:123 ph:abcdef@@commentreply1§§§wid:123 ph:abcdef@@commentreply2..."
+    ' Supported ID token variants (same as in ExecuteReplyToCommentByIdToken inspiration):
+    '   - "1234|abcdef"                  (id|hash)
+    '   - "id=1234;hash=abcdef"          (labels; separators ; , | or whitespace)
+    '   - "wid:1234 ph:abcdef"           (labels with ':' and whitespace)
+    '   - "1234"                         (id only)
+    '   - "abcdef"                       (hash only)
+    Public Sub ReplyBubbles(ByVal LLMResult As String,
+                        ByVal Selection As Microsoft.Office.Interop.Word.Selection,
+                        ByVal DoSilent As Boolean, Optional Prefix As String = "")
+
+        If String.IsNullOrWhiteSpace(LLMResult) Then
+            If Not DoSilent Then ShowCustomMessageBox("No replies found in the LLM result.")
+            Exit Sub
+        End If
+
+        ' Stable doc reference
+        Dim app As Microsoft.Office.Interop.Word.Application = Nothing
+        Dim docRef As Microsoft.Office.Interop.Word.Document = Nothing
+        Dim win As Microsoft.Office.Interop.Word.Window = Nothing
+        Dim hwnd As IntPtr = IntPtr.Zero
+
+        Dim hadSel As Boolean = False
+        Dim origStart As Integer = -1
+        Dim origEnd As Integer = -1
+
+        Dim prevScreenUpdating As Boolean = True
+        Dim winWasEnabled As Boolean = True
+
+        ' Split into individual reply items
+        Dim items As String() = LLMResult.Split(New String() {"§§§"}, StringSplitOptions.RemoveEmptyEntries)
+        If items.Length = 0 Then
+            If Not DoSilent Then ShowCustomMessageBox("No replies found in the LLM result.")
+            Exit Sub
+        End If
+
+        ' Collect errors
+        Dim wrongformatresponse As New List(Of String)()
+        Dim notfoundresponse As New List(Of String)()
+
+        Try
+            app = Globals.ThisAddIn.Application
+            If app Is Nothing OrElse app.Documents Is Nothing OrElse app.Documents.Count = 0 Then
+                If Not DoSilent Then ShowCustomMessageBox("No active Word document.")
+                Exit Sub
+            End If
+
+            docRef = app.ActiveDocument
+            win = app.ActiveWindow
+
+            ' Capture original selection
+            Try
+                If Selection IsNot Nothing Then
+                    origStart = Selection.Start
+                    origEnd = Selection.End
+                    hadSel = True
+                Else
+                    ' Fall back to active selection
+                    If app.Selection IsNot Nothing Then
+                        origStart = app.Selection.Start
+                        origEnd = app.Selection.End
+                        hadSel = True
+                    End If
+                End If
+            Catch
+            End Try
+
+            ' Clamp selection to main story bounds
+            Dim safeStart As Integer = docRef.Content.Start
+            Dim safeEnd As Integer = docRef.Content.End
+            If hadSel Then
+                safeStart = System.Math.Max(docRef.Content.Start, System.Math.Min(origStart, docRef.Content.End))
+                safeEnd = System.Math.Max(docRef.Content.Start, System.Math.Min(origEnd, docRef.Content.End))
+                If safeEnd < safeStart Then safeEnd = safeStart
+            End If
+
+            ' Minimize UI interaction while processing
+            Try
+                prevScreenUpdating = app.ScreenUpdating
+                app.ScreenUpdating = False
+            Catch
+            End Try
+
+            If win IsNot Nothing Then
+                Try
+                    hwnd = CType(win.Hwnd, IntPtr)
+                    winWasEnabled = IsWindowEnabled(hwnd)
+                    EnableWindow(hwnd, False)
+                Catch
+                End Try
+            End If
+
+            ' Process each reply item
+            Dim addedCount As Integer = 0
+            For Each raw In items
+                ' ESC to abort
+                If (GetAsyncKeyState(VK_ESCAPE) And &H8000) <> 0 OrElse (GetAsyncKeyState(VK_ESCAPE) And 1) <> 0 Then Exit For
+
+                Dim item As String = If(raw, String.Empty).Trim()
+                If item.Length = 0 Then Continue For
+
+                ' Split into "token@@reply"
+                Dim sepIdx As Integer = item.IndexOf("@@")
+                If sepIdx <= 0 OrElse sepIdx >= item.Length - 2 Then
+                    wrongformatresponse.Add(item)
+                    Continue For
+                End If
+
+                Dim idToken As String = item.Substring(0, sepIdx).Trim()
+                Dim replyText As String = item.Substring(sepIdx + 2).Trim()
+
+                If idToken.Length = 0 OrElse replyText.Length = 0 Then
+                    wrongformatresponse.Add(item)
+                    Continue For
+                End If
+
+                ' Parse token into (wordId, hash)
+                Dim wordId As Integer? = Nothing
+                Dim pseudoHash As String = Nothing
+                If Not TryParseCommentIdToken(idToken, wordId, pseudoHash) Then
+                    wrongformatresponse.Add(item)
+                    Continue For
+                End If
+
+                replyText = AN5 & ": " & replyText
+
+                ' Add reply using existing helper
+                Dim formatted As Boolean = INI_MarkdownBubbles ' follow same setting as SetBubbles
+                Dim ok As Boolean = False
+                Try
+                    ok = ReplyToWordComment(wordId, pseudoHash, replyText, formatted)
+                Catch ex As Exception
+                    ok = False
+                End Try
+
+                If ok Then
+                    addedCount += 1
+                Else
+                    notfoundresponse.Add($"'{idToken}'{vbCrLf}{ChrW(&H2192)} reply: {replyText}")
+                End If
+
+                ' Ensure focus stays on main story (avoid leaving caret in a comment card)
+                Try
+                    app.ActiveWindow.Activate()
+                    docRef.Range(safeStart, safeEnd).Select()
+                Catch
+                End Try
+            Next
+
+            ' Build and optionally show summary
+            Dim errList As String = ""
+            If notfoundresponse.Count > 0 Then
+                errList += "The following replies could not be added (target comment not found):" & vbCrLf & vbCrLf
+                For Each nf In notfoundresponse
+                    If nf.Trim() <> "" Then errList += "- " & nf & vbCrLf
+                Next
+                errList += vbCrLf
+            End If
+            If wrongformatresponse.Count > 0 Then
+                errList += "The following items did not match the expected 'token@@reply' format:" & vbCrLf & vbCrLf
+                For Each wf In wrongformatresponse
+                    If wf.Trim() <> "" Then errList += "- " & wf & vbCrLf
+                Next
+                errList += vbCrLf
+            End If
+
+            If String.IsNullOrWhiteSpace(errList) Then
+                If Not DoSilent Then
+                    ShowCustomMessageBox($"{addedCount} reply/replies added.")
+                End If
+            Else
+                If Not DoSilent Then
+                    Dim final As String = ShowCustomWindow($"{addedCount} reply/replies added. Some issues occurred:", errList, "You can edit the error list before it is inserted as a final comment at the end of your selection. Cancel to skip insertion.", AN, True)
+                    If final <> "" AndAlso final.ToLower() <> "esc" Then
+                        ' Insert summary comment at end of original selection (or at document end if none)
+                        Dim tail As Microsoft.Office.Interop.Word.Range =
+                        If(hadSel, docRef.Range(safeStart, safeEnd).Duplicate, docRef.Content.Duplicate)
+                        tail.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
+                        Try
+                            If INI_MarkdownBubbles Then
+                                Dim cmt As Microsoft.Office.Interop.Word.Comment = docRef.Comments.Add(Range:=tail, Text:="")
+                                InsertMarkdownToComment(cmt.Range, $"{AN5}{Prefix}: " & final)
+                            Else
+                                docRef.Comments.Add(Range:=tail, Text:=$"{AN5}{Prefix}: " & final)
+                            End If
+                        Catch
+                            docRef.Comments.Add(Range:=tail, Text:=$"{AN5}{Prefix}: " & final)
+                        End Try
+                    End If
+                End If
+            End If
+
+        Finally
+            ' Restore UI and selection
+            Try
+                If win IsNot Nothing AndAlso hwnd <> IntPtr.Zero Then
+                    EnableWindow(hwnd, winWasEnabled)
+                End If
+            Catch
+            End Try
+            Try
+                If app IsNot Nothing Then app.ScreenUpdating = prevScreenUpdating
+            Catch
+            End Try
+
+            ' Force selection back into main text story (avoid comment card focus)
+            Try
+                If docRef IsNot Nothing Then
+                    If hadSel Then
+                        Dim s As Integer = System.Math.Max(docRef.Content.Start, System.Math.Min(origStart, docRef.Content.End))
+                        Dim e As Integer = System.Math.Max(docRef.Content.Start, System.Math.Min(origEnd, docRef.Content.End))
+                        If e < s Then e = s
+                        docRef.Range(s, e).Select()
+                    Else
+                        docRef.Range(docRef.Content.End, docRef.Content.End).Select()
+                    End If
+                End If
+            Catch
+            End Try
+        End Try
+    End Sub
+
+
+
+
+
+    ' Local parser for comment id tokens (mirrors the inspiration function)
+    Private Function TryParseCommentIdToken(ByVal raw As String,
+                                              ByRef wordId As System.Nullable(Of Integer),
+                                              ByRef pseudoHash As String) As Boolean
+        wordId = Nothing
+        pseudoHash = Nothing
+        If String.IsNullOrWhiteSpace(raw) Then Return False
+
+        Dim s As String = raw.Trim()
+
+        ' 1) "id|hash"
+        Dim pipeParts = s.Split(New Char() {"|"c}, 2, StringSplitOptions.None)
+        If pipeParts.Length = 2 Then
+            Dim left = pipeParts(0).Trim()
+            Dim right = pipeParts(1).Trim()
+            Dim idVal As Integer
+            If Integer.TryParse(left, idVal) Then wordId = idVal
+            If Not String.IsNullOrWhiteSpace(right) Then pseudoHash = right
+            Return (wordId.HasValue OrElse Not String.IsNullOrWhiteSpace(pseudoHash))
+        End If
+
+        ' 2) labeled forms (wid/id and ph/hash/pseudohash)
+        Dim idMatch = System.Text.RegularExpressions.Regex.Match(s, "(?:\bwid|\bid|\bwordid)\s*[:=]\s*(?<id>-?\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        If idMatch.Success Then
+            Dim idVal As Integer
+            If Integer.TryParse(idMatch.Groups("id").Value, idVal) Then wordId = idVal
+        End If
+        Dim hashMatch = System.Text.RegularExpressions.Regex.Match(s, "(?:\bph|\bhash|\bpseudohash)\s*[:=]\s*(?<hash>[A-Za-z0-9_-]{6,})", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        If hashMatch.Success Then
+            pseudoHash = hashMatch.Groups("hash").Value.Trim()
+        End If
+        If wordId.HasValue OrElse Not String.IsNullOrWhiteSpace(pseudoHash) Then Return True
+
+        ' 3) single-token fallback
+        Dim onlyDigits As Boolean = s.All(Function(ch) Char.IsDigit(ch))
+        If onlyDigits Then
+            Dim idVal As Integer
+            If Integer.TryParse(s, idVal) Then wordId = idVal
+            Return True
+        Else
+            If s.Length >= 6 Then
+                pseudoHash = s
+                Return True
+            End If
+        End If
+
+        Return False
+    End Function
+
+    ' Renders Markdown or HTML into a Word comment balloon.
+    Public Shared Sub InsertMarkdownToComment(ByRef rg As Word.Range,
+                                                 ByVal src As String)
+        Try
+            ' Heuristic: is this HTML already?
+            Dim looksLikeHtml As Boolean =
+            (src IsNot Nothing AndAlso src.IndexOf("<"c) >= 0 AndAlso src.IndexOf(">"c) > src.IndexOf("<"c))
+
+            ' 1) Get HTML (Markdown -> HTML if needed)
+            Dim html As String
+            If looksLikeHtml Then
+                html = src
+            Else
+                Dim pipeline = New MarkdownPipelineBuilder().UseAdvancedExtensions().Build()
+                html = Markdig.Markdown.ToHtml(If(src, String.Empty), pipeline)
+            End If
+
+            ' 2) Load/sanitize
+            Dim hdoc As New HtmlAgilityPack.HtmlDocument()
+            hdoc.LoadHtml(If(html, String.Empty))
+
+
+            ' Comments in modern Word only allow a small subset of formatting.
+            RemoveNodesIfPresent(hdoc, "//script|//style|//img")
+            FlattenTables(hdoc)              ' turn tables into plain text block(s)
+            RemoveTrailingParagraph(hdoc)       ' cosmetic trim
+
+            Dim finalHtml As String = hdoc.DocumentNode.OuterHtml
+
+            ParseHtmlNode(hdoc.DocumentNode, rg)
+
+        Catch
+            ' Last-resort fallback: plain text
+            Dim fallback As String = SafePlainFromMarkdownOrHtml(src)
+
+            rg.Text = fallback
+
+        End Try
+    End Sub
+
+
+
+    Private Shared Sub RemoveNodesIfPresent(hdoc As HtmlAgilityPack.HtmlDocument, xpath As String)
+        Dim nodes = hdoc.DocumentNode.SelectNodes(xpath)
+        If nodes Is Nothing Then Return
+        For Each n In nodes
+            n.Remove()
+        Next
+    End Sub
+
+    ' Replace each <table> with a plaintext representation (tab-separated rows).
+    Private Shared Sub FlattenTables(hdoc As HtmlAgilityPack.HtmlDocument)
+        Dim tables = hdoc.DocumentNode.SelectNodes("//table")
+        If tables Is Nothing Then Return
+        For Each t In tables
+            Dim lines As New List(Of String)
+            For Each tr In t.SelectNodes(".//tr")
+                Dim cells = tr.SelectNodes("./th|./td")
+                If cells Is Nothing Then Continue For
+                Dim vals = cells.Select(Function(c) HtmlAgilityPack.HtmlEntity.DeEntitize(c.InnerText).Trim())
+                lines.Add(String.Join(vbTab, vals))
+            Next
+            Dim repl = hdoc.CreateTextNode(String.Join(vbCrLf, lines))
+            t.ParentNode.ReplaceChild(repl, t)
+        Next
+    End Sub
+
+    ' Converts either Markdown or HTML to a safe plain text fallback.
+    Private Shared Function SafePlainFromMarkdownOrHtml(src As String) As String
+        Try
+            Dim looksLikeHtml As Boolean =
+            CBool(src?.IndexOf("<"c) >= 0 AndAlso src.IndexOf(">"c) > src.IndexOf("<"c))
+            Dim html As String
+            If looksLikeHtml Then
+                html = src
+            Else
+                Dim pipeline = New MarkdownPipelineBuilder().UseAdvancedExtensions().Build()
+                html = Markdig.Markdown.ToHtml(If(src, String.Empty), pipeline)
+            End If
+            Dim hdoc As New HtmlAgilityPack.HtmlDocument()
+            hdoc.LoadHtml(html)
+            Return HtmlAgilityPack.HtmlEntity.DeEntitize(hdoc.DocumentNode.InnerText).Trim()
+        Catch
+            Return If(src, String.Empty)
+        End Try
+    End Function
+
+    Public Shared Function BubblesExtract(ByVal rng As Microsoft.Office.Interop.Word.Range,
+                                      Optional ByVal Silent As Boolean = False, Optional ByVal SortByDate As Boolean = False) As System.String
+
+        Dim app As Microsoft.Office.Interop.Word.Application = Nothing
+        Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
+
+        Try
+            ' Get Word Application
+            Try
+                Try
+                    app = CType(System.Runtime.InteropServices.Marshal.GetActiveObject("Word.Application"), Microsoft.Office.Interop.Word.Application)
+                Catch ex As System.Exception
+                    app = Globals.ThisAddIn.Application
+                End Try
+            Catch ex As System.Exception
+                If Not Silent Then ShowCustomMessageBox("Unable to access Word Application instance.")
+                Return ""
+            End Try
+
+            ' Get Active Document
+            Try
+                doc = app.ActiveDocument
+            Catch ex As System.Exception
+                If Not Silent Then ShowCustomMessageBox("No active document found.")
+                Return ""
+            End Try
+            If doc Is Nothing Then
+                If Not Silent Then ShowCustomMessageBox("No active document found.")
+                Return ""
+            End If
+
+            ' Rule 1: If range is Nothing or zero-length, use the whole document.
+            Dim effectiveRange As Microsoft.Office.Interop.Word.Range
+            If rng Is Nothing OrElse rng.Start = rng.End Then
+                effectiveRange = doc.Content
+            Else
+                effectiveRange = rng
+            End If
+
+            ' Collect comments fully within effectiveRange
+            Dim allInRange As System.Collections.Generic.List(Of Microsoft.Office.Interop.Word.Comment) =
+            New System.Collections.Generic.List(Of Microsoft.Office.Interop.Word.Comment)()
+
+            Try
+                For Each c As Microsoft.Office.Interop.Word.Comment In doc.Comments
+                    Dim cStart As System.Int32
+                    Dim cEnd As System.Int32
+                    Try
+                        cStart = c.Scope.Start
+                        cEnd = c.Scope.End
+                    Catch
+                        Try
+                            cStart = c.Reference.Start
+                            cEnd = c.Reference.End
+                        Catch
+                            Continue For
+                        End Try
+                    End Try
+                    If cStart >= effectiveRange.Start AndAlso cEnd <= effectiveRange.End Then
+                        allInRange.Add(c)
+                    End If
+                Next
+            Catch ex As System.Exception
+                If Not Silent Then ShowCustomMessageBox("Failed to collect comments from the document.")
+                Return ""
+            End Try
+
+            If allInRange.Count = 0 Then
+                'If Not Silent Then ShowCustomMessageBox("No comments found in the selected range (or document).")
+                Return ""
+            End If
+
+            ' Build author and date sets (date grouped by day)
+            Dim authors As New System.Collections.Generic.HashSet(Of System.String)(System.StringComparer.OrdinalIgnoreCase)
+            Dim dateSet As New System.Collections.Generic.HashSet(Of System.DateTime)()
+
+            For Each c In allInRange
+                Try
+                    Dim a As System.String = If(c.Author, System.String.Empty)
+                    If Not System.String.IsNullOrWhiteSpace(a) Then authors.Add(a)
+                Catch
+                End Try
+                Try
+                    Dim d As System.DateTime = c.Date.Date
+                    If d <> System.DateTime.MinValue Then dateSet.Add(d)
+                Catch
+                End Try
+            Next
+
+            ' Only prompt when not silent
+            Dim needPrompt As System.Boolean = (Not Silent AndAlso (authors.Count > 1 OrElse dateSet.Count > 1))
+
+            Dim selectedAuthor As System.String = "(All authors)"
+            Dim fromDateChoice As System.String = "(All dates)"
+            Dim toDateChoice As System.String = "(All dates)"
+
+            If needPrompt Then
+                ' Author options
+                Dim authorOptions As New System.Collections.Generic.List(Of System.String)()
+                authorOptions.Add("(All authors)")
+                For Each a In authors
+                    authorOptions.Add(a)
+                Next
+                authorOptions.Sort(System.StringComparer.CurrentCultureIgnoreCase)
+
+                ' Date options (descending by date)
+                Dim dateList As New System.Collections.Generic.List(Of System.DateTime)(dateSet)
+                dateList.Sort() : dateList.Reverse()
+                Dim dateOptions As New System.Collections.Generic.List(Of System.String)()
+                dateOptions.Add("(All dates)")
+                Dim now As System.DateTime = System.DateTime.Now
+                For Each d In dateList
+                    Dim daysAgo As System.Int32 = System.Math.Max(0, CInt((now.Date - d.Date).TotalDays))
+                    dateOptions.Add($"{d:yyyy-MM-dd} ({daysAgo} days ago)")
+                Next
+
+                Dim prmAuthor As New SLib.InputParameter() With {
+                .Name = "Author",
+                .Value = "(All authors)",
+                .Options = New System.Collections.Generic.List(Of System.String)(authorOptions)
+            }
+                Dim prmFrom As New SLib.InputParameter() With {
+                .Name = "From date",
+                .Value = "(All dates)",
+                .Options = New System.Collections.Generic.List(Of System.String)(dateOptions)
+            }
+                Dim prmTo As New SLib.InputParameter() With {
+                .Name = "To date",
+                .Value = "(All dates)",
+                .Options = New System.Collections.Generic.List(Of System.String)(dateOptions)
+            }
+
+                Dim parameters As SLib.InputParameter() = {prmAuthor, prmFrom, prmTo}
+
+                Dim ok As System.Boolean = False
+                Try
+                    ok = SLib.ShowCustomVariableInputForm(
+                    "Select an author (or keep 'All authors') and optional date range (From/To). If only 'To' is set, all comments up to and including that date will be selected. If only 'From' is set, all comments from that date onward will be selected.",
+                    $"{AN} Filter Word Comments",
+                    parameters
+                )
+                Catch ex As System.Exception
+                    If Not Silent Then ShowCustomMessageBox("Failed to open the filter dialog.")
+                    ok = False
+                End Try
+
+                If Not ok Then
+                    Dim proceed As Integer = SLib.ShowCustomYesNoBox("No selection made. Do you want to continue with all authors and all dates?", "Yes", "No")
+                    If proceed <> 1 Then
+                        Return ""
+                    End If
+                Else
+                    selectedAuthor = System.Convert.ToString(prmAuthor.Value)
+                    fromDateChoice = System.Convert.ToString(prmFrom.Value)
+                    toDateChoice = System.Convert.ToString(prmTo.Value)
+                    If System.String.IsNullOrWhiteSpace(selectedAuthor) Then selectedAuthor = "(All authors)"
+                    If System.String.IsNullOrWhiteSpace(fromDateChoice) Then fromDateChoice = "(All dates)"
+                    If System.String.IsNullOrWhiteSpace(toDateChoice) Then toDateChoice = "(All dates)"
+                End If
+            End If
+
+            ' Parse "yyyy-MM-dd (…)" labels
+            Dim parseDateFromLabel As System.Func(Of System.String, System.Nullable(Of System.DateTime)) =
+            Function(lbl As System.String) As System.Nullable(Of System.DateTime)
+                If System.String.Equals(lbl, "(All dates)", System.StringComparison.OrdinalIgnoreCase) Then Return Nothing
+                Dim spaceIdx As System.Int32 = lbl.IndexOf(" "c)
+                If spaceIdx <= 0 Then Return Nothing
+                Dim datePart As System.String = lbl.Substring(0, spaceIdx)
+                Dim d As System.DateTime
+                If System.DateTime.TryParseExact(datePart, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, d) Then
+                    Return d.Date
+                End If
+                Return Nothing
+            End Function
+
+            Dim fromDate As System.Nullable(Of System.DateTime) = parseDateFromLabel(fromDateChoice)
+            Dim toDate As System.Nullable(Of System.DateTime) = parseDateFromLabel(toDateChoice)
+
+            ' Apply filters
+            Dim filtered As System.Collections.Generic.IEnumerable(Of Microsoft.Office.Interop.Word.Comment) = allInRange
+
+            If Not System.String.Equals(selectedAuthor, "(All authors)", System.StringComparison.OrdinalIgnoreCase) Then
+                filtered = filtered.Where(Function(c)
+                                              Dim a As System.String = System.String.Empty
+                                              Try : a = If(c.Author, System.String.Empty) : Catch : End Try
+                                              Return System.String.Equals(a, selectedAuthor, System.StringComparison.OrdinalIgnoreCase)
+                                          End Function)
+            End If
+
+            If fromDate.HasValue OrElse toDate.HasValue Then
+                filtered = filtered.Where(Function(c)
+                                              Dim d As System.DateTime
+                                              Try : d = c.Date.Date : Catch : Return False : End Try
+                                              If fromDate.HasValue AndAlso toDate.HasValue Then
+                                                  Return d >= fromDate.Value.Date AndAlso d <= toDate.Value.Date
+                                              ElseIf fromDate.HasValue Then
+                                                  Return d >= fromDate.Value.Date
+                                              ElseIf toDate.HasValue Then
+                                                  Return d <= toDate.Value.Date
+                                              Else
+                                                  Return True
+                                              End If
+                                          End Function)
+            End If
+
+            Dim finalList As System.Collections.Generic.List(Of Microsoft.Office.Interop.Word.Comment)
+
+            If SortByDate Then
+
+                finalList =
+            filtered.OrderBy(Function(c)
+                                 Dim d As System.DateTime = System.DateTime.MinValue
+                                 Try : d = c.Date : Catch : End Try
+                                 Return d
+                             End Function).
+                     ThenBy(Function(c)
+                                Try
+                                    Return c.Scope.Start
+                                Catch
+                                    Return System.Int32.MaxValue
+                                End Try
+                            End Function).
+                     ToList()
+
+            Else
+                ' Sort strictly by order of appearance in the document
+                finalList = filtered.OrderBy(Function(c) CommentStartPos(c)).ThenBy(Function(c) CommentEndPos(c)).ToList()
+
+            End If
+
+
+            If finalList.Count = 0 Then
+                If Not Silent Then ShowCustomMessageBox("No comments matched the selected filters.")
+                Return ""
+            End If
+
+            ' Build XML
+            Dim sb As New System.Text.StringBuilder()
+            sb.AppendLine("<WORDBUBBLES>")
+            sb.Append("  <Summary ")
+            sb.Append($"documentName=""{xmlEscapeSafe(doc.Name)}"" ")
+            sb.Append($"rangeStart=""{effectiveRange.Start}"" ")
+            sb.Append($"rangeEnd=""{effectiveRange.End}"" ")
+            If selectedAuthor <> "" Then sb.Append($"authorFilter=""{xmlEscapeSafe(selectedAuthor)}"" ")
+            If fromDateChoice <> "" Then sb.Append($"fromFilter=""{xmlEscapeSafe(fromDateChoice)}"" ")
+            If toDateChoice <> "" Then sb.Append($"toFilter=""{xmlEscapeSafe(toDateChoice)}"" ")
+            sb.AppendLine($"/>")
+
+            For Each c In finalList
+                Dim author As System.String = System.String.Empty
+                Dim initials As System.String = System.String.Empty
+                Dim dateStr As System.String = System.String.Empty
+                Dim text As System.String = System.String.Empty
+                Dim referencedText As System.String = System.String.Empty
+                Dim commentIndex As System.Int32 = -1
+
+                Try : author = If(c.Author, System.String.Empty) : Catch : End Try
+                Try : initials = If(c.Initial, System.String.Empty) : Catch : End Try
+                Try : dateStr = c.Date.ToString("yyyy-MM-ddTHH:mm:ssK", System.Globalization.CultureInfo.InvariantCulture) : Catch : End Try
+                Try : text = If(c.Range.Text, System.String.Empty) : Catch : End Try
+                Try : referencedText = If(c.Scope.Text, System.String.Empty) : Catch : End Try
+                Try : commentIndex = c.Index : Catch : End Try
+
+                ' Pseudo-stable ID based on contents (position independent)
+                Dim idMaterial As System.String = author & "|" & initials & "|" & dateStr & "|" & referencedText & "|" & text
+                Dim stableId As System.String = ComputeSha256Hex(idMaterial)
+
+                sb.AppendLine("  <Comment " &
+                          $"id=""{xmlEscapeSafe(stableId)}"" " &
+                          $"wordIndex=""{commentIndex}"" " &
+                          $"author=""{xmlEscapeSafe(author)}"" " &
+                          $"initials=""{xmlEscapeSafe(initials)}"" " &
+                          $"date=""{xmlEscapeSafe(dateStr)}"">")
+                sb.AppendLine($"    <ScopeText>{xmlEscapeSafe(referencedText)}</ScopeText>")
+                sb.AppendLine($"    <Content>{xmlEscapeSafe(text)}</Content>")
+                sb.AppendLine("  </Comment>")
+            Next
+
+            sb.AppendLine("</WORDBUBBLES>")
+            Return sb.ToString()
+
+        Catch ex As System.Exception
+            If Not Silent Then ShowCustomMessageBox($"Unexpected error: {ex.Message}")
+            Return ""
+        End Try
+    End Function
+
+    ' Helper: safe start/end for a comment’s anchor in the document
+    Private Shared Function CommentStartPos(c As Microsoft.Office.Interop.Word.Comment) As Integer
+        Try
+            Return c.Scope.Start
+        Catch
+            Try
+                Return c.Reference.Start
+            Catch
+                Return Integer.MaxValue
+            End Try
+        End Try
+    End Function
+
+    Private Shared Function CommentEndPos(c As Microsoft.Office.Interop.Word.Comment) As Integer
+        Try
+            Return c.Scope.End
+        Catch
+            Try
+                Return c.Reference.End
+            Catch
+                Return Integer.MaxValue
+            End Try
+        End Try
+    End Function
+
+
+    ' : ReplyToWordComment (by Word-ID, fallback by PseudoHashID)
+    ' Replies to an existing Word comment. First tries by Word-ID (c.Index), then (if not found) by pseudo hash id (same as in BubblesExtract).
+    ' If formatted = True, calls InsertMarkdownToComment to write the reply content; otherwise inserts as plain text.
+    ' Returns True on success, False otherwise (with user-facing messages via ShowCustomMessageBox).
+
+    Public Shared Function ReplyToWordComment(ByVal wordId As System.Nullable(Of System.Int32),
+                                              ByVal pseudoHashId As System.String,
+                                              ByVal replyText As System.String,
+                                              ByVal formatted As System.Boolean) As System.Boolean
+        Dim app As Microsoft.Office.Interop.Word.Application = Nothing
+        Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
+
+        Try
+            Try
+                app = CType(System.Runtime.InteropServices.Marshal.GetActiveObject("Word.Application"), Microsoft.Office.Interop.Word.Application)
+            Catch ex As System.Exception
+                app = Globals.ThisAddIn.Application
+            End Try
+        Catch ex As System.Exception
+            Debug.WriteLine("ReplyToComment: Unable to access Word Application instance.")
+            Return False
+        End Try
+
+        Try
+            doc = app.ActiveDocument
+        Catch ex As System.Exception
+            Debug.WriteLine("ReplyToComment: No active document found.")
+            Return False
+        End Try
+        If doc Is Nothing Then
+            ShowCustomMessageBox("ReplyToComment: No active document found.")
+            Return False
+        End If
+
+        If System.String.IsNullOrEmpty(replyText) Then
+            Debug.WriteLine("Reply text is empty.")
+            Return False
+        End If
+
+        ' 1) Try locate by Word-ID (Index)
+        Dim target As Microsoft.Office.Interop.Word.Comment = Nothing
+        If wordId.HasValue Then
+            For Each c As Microsoft.Office.Interop.Word.Comment In doc.Comments
+                Try
+                    If c.Index = wordId.Value Then
+                        target = c
+                        Exit For
+                    End If
+                Catch
+                End Try
+            Next
+        End If
+
+        ' 2) Fallback: locate by pseudo hash id (content-based)
+        If target Is Nothing AndAlso Not System.String.IsNullOrWhiteSpace(pseudoHashId) Then
+            For Each c As Microsoft.Office.Interop.Word.Comment In doc.Comments
+                Try
+                    Dim author As System.String = If(c.Author, System.String.Empty)
+                    Dim initials As System.String = If(c.Initial, System.String.Empty)
+                    Dim dateStr As System.String = c.Date.ToString("yyyy-MM-ddTHH:mm:ssK", System.Globalization.CultureInfo.InvariantCulture)
+                    Dim text As System.String = If(c.Range.Text, System.String.Empty)
+                    Dim referencedText As System.String = System.String.Empty
+                    Try : referencedText = If(c.Scope.Text, System.String.Empty) : Catch : referencedText = System.String.Empty : End Try
+
+                    Dim idMaterial As System.String = author & "|" & initials & "|" & dateStr & "|" & referencedText & "|" & text
+                    Dim stableId As System.String = ComputeSha256Hex(idMaterial)
+
+                    If System.String.Equals(stableId, pseudoHashId, System.StringComparison.OrdinalIgnoreCase) Then
+                        target = c
+                        Exit For
+                    End If
+                Catch
+                End Try
+            Next
+        End If
+
+        If target Is Nothing Then
+            Debug.WriteLine("ReplyToComment: Target comment not found by Word-ID or pseudo hash id.")
+            Return False
+        End If
+
+        ' 3) Try to create a threaded reply if available, else fall back to appending inside the original comment range.
+        Try
+            ' Preferred path: threaded reply (Word 2013+)
+            Dim newReply As Microsoft.Office.Interop.Word.Comment = Nothing
+            Try
+                ' Use the same anchor scope for the reply; text will be set via Range below.
+                newReply = target.Replies.Add(target.Scope, System.String.Empty)
+            Catch
+                ' Some versions may require a reference range; try Reference
+                Try
+                    newReply = target.Replies.Add(target.Reference, System.String.Empty)
+                Catch
+                    newReply = Nothing
+                End Try
+            End Try
+
+            If newReply IsNot Nothing Then
+                If formatted Then
+                    ' Use provided formatter
+                    InsertMarkdownToComment(newReply.Range, replyText)
+                Else
+                    newReply.Range.Text = replyText
+                End If
+                Return True
+            End If
+        Catch ex As System.Exception
+            ' fall through to non-threaded fallback
+        End Try
+
+        ' 4) Fallback: append "reply" inside the original comment content (non-threaded Word)
+        Try
+            Dim sep As System.String = System.Environment.NewLine & System.Environment.NewLine & "--- Reply ---" & System.Environment.NewLine
+            If formatted Then
+                ' Insert separator as plain, then formatted content after it
+                target.Range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                target.Range.Text &= sep
+                target.Range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                InsertMarkdownToComment(target.Range, replyText)
+            Else
+                target.Range.Text = (If(target.Range.Text, System.String.Empty)) & sep & replyText
+            End If
+            Return True
+        Catch ex As System.Exception
+            ShowCustomMessageBox($"ReplyToComment failed to add the reply: {ex.Message}")
+            Return False
+        End Try
+    End Function
+
+
+    ' Helper: XML escape
+    Private Shared Function xmlEscapeSafe(ByVal s As System.String) As System.String
+        If s Is Nothing Then Return System.String.Empty
+        Dim r As System.String = s.Replace("&", "&amp;").
+                                  Replace("<", "&lt;").
+                                  Replace(">", "&gt;").
+                                  Replace("""", "&quot;").
+                                  Replace("'", "&apos;")
+        Return r
+    End Function
+
+
+    ' Helper: Compute SHA-256 hex for pseudo ID
+    Private Shared Function ComputeSha256Hex(ByVal input As System.String) As System.String
+        If input Is Nothing Then input = System.String.Empty
+        Dim bytes As System.Byte() = System.Text.Encoding.UTF8.GetBytes(input)
+        Using sha As System.Security.Cryptography.SHA256 = System.Security.Cryptography.SHA256.Create()
+            Dim hash As System.Byte() = sha.ComputeHash(bytes)
+            Dim sbHex As New System.Text.StringBuilder(hash.Length * 2)
+            For Each b As System.Byte In hash
+                sbHex.Append(b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture))
+            Next
+            Return sbHex.ToString()
+        End Using
+    End Function
+
+
+End Class

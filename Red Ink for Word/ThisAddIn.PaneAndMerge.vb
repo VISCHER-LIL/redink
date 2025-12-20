@@ -1,0 +1,266 @@
+﻿' Part of: Red Ink for Word
+' Copyright by David Rosenthal, david.rosenthal@vischer.com
+' May only be used under with an appropriate license (see vischer.com/redink)
+
+Option Explicit On
+Option Strict Off
+
+Imports System.Diagnostics
+Imports System.Windows.Forms
+Imports Microsoft.Office.Interop.Word
+Imports SharedLibrary.SharedLibrary
+Imports SharedLibrary.SharedLibrary.SharedMethods
+Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
+
+Partial Public Class ThisAddIn
+
+    Private Async Sub ShowPaneAsync(
+                          introLine As String,
+                          bodyText As String,
+                          finalRemark As String,
+                          header As String,
+                          Optional noRTF As Boolean = False,
+                          Optional insertMarkdown As Boolean = False
+                        )
+        Try
+            Dim OriginalText As String = bodyText
+            Dim result As String = ""
+
+            Await EnsureUIThread()
+
+            ' Ensure we're on the UI thread for the pane operation
+            'If mainThreadControl.InvokeRequired Then
+            'result = Await mainThreadControl.Invoke(
+            'Function() As Task(Of String)
+            'Return PaneManager.ShowMyPane(introLine, bodyText, finalRemark, header, noRTF, insertMarkdown, New IntelligentMergeCallback(AddressOf HandleIntelligentMerge))
+            'End Function
+            ')
+            'Else
+            result = Await PaneManager.ShowMyPane(introLine, bodyText, finalRemark, header, noRTF, insertMarkdown, New IntelligentMergeCallback(AddressOf HandleIntelligentMerge))
+            'End If
+
+            If result <> "" Then
+                If result = "Markdown" Then
+                    ' Ensure UI operations are on the main thread
+                    Await SwitchToUi(
+                    Sub()
+                        Dim NewDocChoice As Integer = ShowCustomYesNoBox("Do you want to insert the text into a new Word document (if you cancel, it will be in the clipboard with formatting)?", "Yes, new", "No, into my existing doc")
+
+                        If NewDocChoice = 1 Then
+                            Dim newDoc As Word.Document = Globals.ThisAddIn.Application.Documents.Add()
+                            Dim currentSelection As Word.Selection = newDoc.Application.Selection
+                            currentSelection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                            InsertTextWithMarkdown(currentSelection, OriginalText, True, True)
+                        ElseIf NewDocChoice = 2 Then
+                            Dim currentSelection As Word.Selection = Globals.ThisAddIn.Application.Selection
+                            currentSelection.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
+                            Globals.ThisAddIn.Application.Selection.TypeParagraph()
+                            Globals.ThisAddIn.Application.Selection.TypeParagraph()
+                            InsertTextWithMarkdown(currentSelection, OriginalText, False)
+                        Else
+                            ShowCustomMessageBox("No text was inserted (but included in the clipboard as RTF).")
+                            SLib.PutInClipboard(MarkdownToRtfConverter.Convert((OriginalText)))
+                        End If
+                    End Sub
+                )
+                End If
+            End If
+
+        Catch ex As System.Exception
+            Debug.WriteLine("Bodytext=" & bodyText)
+            MessageBox.Show("Error in ShowPaneAsync: " & ex.Message)
+        End Try
+    End Sub
+
+
+    Private Sub HandleIntelligentMerge(selectedText As String)
+        ' Hier Deine bestehende Merge-Logik aufrufen:
+        IntelligentMerge(selectedText)
+    End Sub
+
+    Public Async Sub IntelligentMerge(newtext As String)
+        Dim application As Word.Application = Globals.ThisAddIn.Application
+        Dim selection As Microsoft.Office.Interop.Word.Selection = application.Selection
+        If selection.Type = WdSelectionType.wdSelectionIP Then
+            ShowCustomMessageBox("Please select the text in your document with which your selection in the pane shall be merged.")
+            Return
+        End If
+        OtherPrompt = SLib.ShowCustomInputBox("If you want, you can amend the prompt that will be used to intelligently merge your selection into your document:", $"{AN} Intelligent Merge", False, SP_MergePrompt_Cached).Trim()
+        If String.IsNullOrEmpty(OtherPrompt) Or OtherPrompt = "ESC" Then Return
+        Dim result As String = Await ProcessSelectedText(OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" & newtext & "</INSERT> ", True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap)
+    End Sub
+
+
+    ''' <summary>
+    ''' Collects comment text in <c>newtext</c>, selects either the anchor
+    ''' text or its paragraph, and continues with your downstream processing.
+    ''' </summary>
+    Public Async Function BalloonMerge(
+        ByVal selectWholeParagraph As Boolean, Silent As Boolean) As System.Threading.Tasks.Task
+
+        Dim app As Word.Application = Globals.ThisAddIn.Application
+        Dim sel As Microsoft.Office.Interop.Word.Selection = app.Selection
+        Dim doc As Microsoft.Office.Interop.Word.Document = app.ActiveDocument
+
+        Dim activeComment As Microsoft.Office.Interop.Word.Comment = Nothing
+        Dim newtext As String = String.Empty
+
+        Try
+            '------------ 1) Find the comment the caret belongs to ------------------------
+            If sel.StoryType = WdStoryType.wdCommentsStory Then
+                For Each c As Microsoft.Office.Interop.Word.Comment In doc.Comments
+                    If sel.Range.Start >= c.Range.Start AndAlso
+                   sel.Range.End <= c.Range.End Then
+                        activeComment = c : Exit For
+                    End If
+                Next
+            Else
+                For Each c As Microsoft.Office.Interop.Word.Comment In doc.Comments
+                    Dim anchor As Range = c.Scope
+                    If sel.Range.End > anchor.Start AndAlso
+                   sel.Range.Start < anchor.End Then
+                        activeComment = c : Exit For
+                    End If
+                Next
+            End If
+
+            '------------ 2) Quit if we are not in / on a comment -------------------------
+            If activeComment Is Nothing Then
+                ShowCustomMessageBox(
+                "This command only works when the cursor is inside a comment " &
+                "balloon or on text that has a comment.")
+                Return
+            End If
+
+            '------------ 3) Determine what goes into newtext -----------------------------
+            Dim selectedText As String = SafeRangeText(sel.Range)
+
+            If sel.StoryType = WdStoryType.wdCommentsStory Then
+                ' Inside balloon
+                If selectedText.Trim().Length = 0 Then
+                    newtext = SafeRangeText(activeComment.Range)      ' whole balloon
+                    sel.SetRange(activeComment.Range.Start, activeComment.Range.End)
+                Else
+                    newtext = selectedText                            ' user selection
+                End If
+            Else
+                ' On anchor in main story
+                If selectedText.Trim().Length = 0 Then
+                    newtext = SafeRangeText(activeComment.Range)      ' whole balloon
+                Else
+                    newtext = selectedText                            ' user selection
+                End If
+            End If
+
+            '------------ 4) Adjust the selection in the main story -----------------------
+            Dim anchorRange As Range = activeComment.Scope
+            Dim targetRange As Range
+
+            If selectWholeParagraph Then
+                If anchorRange.Paragraphs.Count > 0 Then
+                    '–– The anchor spans ≥ 1 paragraphs → select them ALL ––
+                    Dim firstPara As Range = anchorRange.Paragraphs(1).Range
+                    Dim lastPara As Range = anchorRange.Paragraphs(anchorRange.Paragraphs.Count).Range
+                    targetRange = doc.Range(firstPara.Start, lastPara.End)
+                Else
+                    '–– Collapsed anchor (no text selected when comment was made) ––
+                    '   Select the paragraph where the anchor is located.
+                    targetRange = doc.Range(anchorRange.Start, anchorRange.Start).Paragraphs(1).Range
+                End If
+            Else
+                ' Only the exact anchor text
+                targetRange = anchorRange
+            End If
+
+            targetRange.Select()
+
+            '------------ 5) Your downstream processing -----------------------------------
+            If Not Silent Or String.IsNullOrWhiteSpace(SP_MergePrompt2) Then
+                OtherPrompt = SLib.ShowCustomInputBox(
+                "If you want, you can amend the prompt that will be used to " &
+                "intelligently merge your comment into your document:",
+                $"{AN} Intelligent Merge", False, SP_MergePrompt2).Trim()
+                If String.IsNullOrEmpty(OtherPrompt) OrElse OtherPrompt = "ESC" Then Return
+            Else
+                OtherPrompt = SP_MergePrompt2
+            End If
+
+            Dim items = {
+                New SelectionItem("Word", 1),
+                New SelectionItem("Diff", 2),
+                New SelectionItem("Diff Window", 3),
+                New SelectionItem("Regex", 4),
+                New SelectionItem("None", 5)
+                }
+
+            Dim DefaultItem As Integer = 5
+            If INI_DoMarkupWord Then DefaultItem = Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride)
+            Dim picked As Integer = SelectValue(items, DefaultItem, "Choose markup method ...")
+
+            If picked < 1 Then Return
+
+            Dim result As String = Await ProcessSelectedText(
+            OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" &
+            newtext & "</INSERT> ",
+            True, INI_KeepFormat2, INI_KeepParaFormatInline,
+            Override(INI_ReplaceText2, INI_ReplaceText2Override), If(picked < 5, True, False), If(picked < 5, picked, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride)),
+            False, False, True, False, INI_KeepFormatCap)
+
+        Catch ex As System.Exception
+            MessageBox.Show(
+            $"Error in BalloonMerge:{Environment.NewLine}{ex.Message}",
+            "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        End Try
+    End Function
+
+    ''' <summary>Returns <c>r.Text</c> or an empty string when Word gives back Nothing.</summary>
+    Private Function SafeRangeText(r As Word.Range) As String
+        If r Is Nothing Then Return String.Empty
+        Try
+            Dim t As String = r.Text          ' can be Nothing in edge-cases
+            If t Is Nothing Then t = String.Empty
+            Return t
+        Catch
+            ' extremely rare: r.Text itself can throw in corrupt docs
+            Return String.Empty
+        End Try
+    End Function
+
+
+    Public Async Sub IntelligentMergeBalloon(newtext As String)
+        Dim application As Word.Application = Globals.ThisAddIn.Application
+        Dim selection As Microsoft.Office.Interop.Word.Selection = application.Selection
+        If selection.Type = WdSelectionType.wdSelectionIP Then
+            ShowCustomMessageBox("Please select the text in your document with which your selection in the pane shall be merged.")
+            Return
+        End If
+        OtherPrompt = SLib.ShowCustomInputBox("If you want, you can amend the prompt that will be used to intelligently merge your selection into your document:", $"{AN} Intelligent Merge", False, SP_MergePrompt_Cached).Trim()
+        If String.IsNullOrEmpty(OtherPrompt) Or OtherPrompt = "ESC" Then Return
+        Dim result As String = Await ProcessSelectedText(OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" & newtext & "</INSERT> ", True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap)
+    End Sub
+
+    Public ONNX_initialized As Boolean = False
+
+    Private Function EnsureInitialized() As Boolean
+
+        If Not ONNX_initialized AndAlso Not String.IsNullOrEmpty(Globals.ThisAddIn.INI_LocalModelPath) Then
+            ' Pfade an dein Add-In anpassen oder aus der Config laden
+            Try
+                Dim modelpath As String = System.IO.Path.Combine(ExpandEnvironmentVariables(Globals.ThisAddIn.INI_LocalModelPath), NER_Model)
+                Dim vocabpath As String = System.IO.Path.Combine(ExpandEnvironmentVariables(Globals.ThisAddIn.INI_LocalModelPath), NER_Token)
+                Dim labelpath As String = System.IO.Path.Combine(ExpandEnvironmentVariables(Globals.ThisAddIn.INI_LocalModelPath), NER_Label)
+
+                OnnxAnonymizer.Initialize(modelpath, vocabpath, labelpath, 128)
+                ONNX_initialized = True
+                Return True
+            Catch ex As Exception
+                SLib.ShowCustomMessageBox($"Error loading And initializing the NER model ({ex.Message}).")
+                ONNX_initialized = False
+                Return False
+            End Try
+        Else
+            Return ONNX_initialized
+        End If
+    End Function
+
+End Class

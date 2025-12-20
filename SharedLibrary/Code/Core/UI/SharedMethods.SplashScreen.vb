@@ -1,0 +1,69 @@
+﻿' Part of: Red Ink Shared Library
+' Copyright by David Rosenthal, david.rosenthal@vischer.com
+' May only be used under with an appropriate license (see vischer.com/redink)
+
+Option Strict On
+Option Explicit On
+
+Imports System.Drawing
+Imports System.Windows.Forms
+
+Namespace SharedLibrary
+
+    Partial Public Class SharedMethods
+        Public Class SplashScreen
+
+            Inherits Form
+
+            Private Label As System.Windows.Forms.Label
+
+            Public Sub New(Optional customText As String = "Please wait ...", Optional formWidth As Integer = 300, Optional formHeight As Integer = 100)
+                ' Set the form properties
+                Me.Text = $"{SharedMethods.AN}"
+                Me.FormBorderStyle = FormBorderStyle.None
+                Me.StartPosition = FormStartPosition.CenterScreen
+                Me.Top -= 40
+                Me.BackColor = ColorTranslator.FromWin32(&H8000000F)
+
+                ' Set a predefined font for consistency
+                Dim standardFont As New System.Drawing.Font("Segoe UI", 10.0F, FontStyle.Regular, GraphicsUnit.Point)
+
+                ' Create the PictureBox
+                Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
+                Dim pictureBox As New PictureBox()
+                pictureBox.Image = bmp
+                pictureBox.SizeMode = PictureBoxSizeMode.Zoom
+                pictureBox.SetBounds(10, 10, 30, 30)
+
+                ' Create the Label with updated font
+                Label = New System.Windows.Forms.Label()
+                Label.Text = customText
+                Label.Font = standardFont
+                Label.AutoSize = True
+                Label.TextAlign = System.Drawing.ContentAlignment.MiddleLeft
+
+                ' Dynamically calculate the label width
+                Dim labelSize As Size = TextRenderer.MeasureText(Label.Text, standardFont)
+                Label.SetBounds(pictureBox.Right + 10, 15, labelSize.Width, labelSize.Height)
+
+                ' Adjust the form size dynamically based on the provided dimensions
+                Dim contentWidth As Integer = pictureBox.Width + Label.Width + 40 ' Add padding for spacing
+                Dim contentHeight As Integer = Math.Max(pictureBox.Height + 20, Label.Height + 30) ' Align to bottom of logo
+                Me.ClientSize = New System.Drawing.Size(Math.Max(formWidth, contentWidth), contentHeight)
+                pictureBox.Top = (Me.ClientSize.Height - pictureBox.Height) \ 2
+
+                ' Add the controls to the form
+                Me.Controls.Add(pictureBox)
+                Me.Controls.Add(Label)
+            End Sub
+
+            Public Sub UpdateMessage(newMessage As String)
+                Label.Text = newMessage
+                Dim newSize As Size = TextRenderer.MeasureText(newMessage, Label.Font)
+                Label.Size = newSize
+                Label.Refresh()
+            End Sub
+
+        End Class
+    End Class
+End Namespace
