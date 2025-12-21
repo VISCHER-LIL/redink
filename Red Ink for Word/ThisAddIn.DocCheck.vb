@@ -1,6 +1,26 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.DocCheck.vb
+' Purpose: Coordinates the DocCheck workflow for Microsoft Word, including text
+'          acquisition, rule-set management, LLM invocations, and presentation
+'          of findings as Word comments or panes.
+'
+' Architecture:
+'  - Configuration: Expands and validates DocCheck paths, manages optional
+'    secondary model loading, and honors INI-driven defaults.
+'  - Input Acquisition: Captures text from the selection, entire document, or
+'    external files and gathers optional supporting documents.
+'  - Rule Set Management: Enumerates *.txt rule files, parses metadata
+'    (prompts, notices, Markdown overrides), and builds DocCheckRuleSet objects.
+'  - Execution Flow: Collects runtime parameters, runs isolated or multi-clause
+'    analyses, and streams record prompts to the LLM with cancellation support.
+'  - Output Handling: Applies comment bubbles, summaries, notices, and UI panes
+'    while guarding Word selections and respecting Markdown settings.
+'  - Utilities: Provides JSON extraction, display-name uniqueness, and selection
+'    redirection helpers to keep the process stable for reviewers.
+' =============================================================================
 
 Option Explicit On
 Option Strict Off
@@ -12,9 +32,14 @@ Imports SharedLibrary.SharedLibrary
 Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
+''' <summary>
+''' Provides DocCheck orchestration for the Word add-in, covering selection capture, rule-set handling, and LLM integration.
+''' </summary>
 Partial Public Class ThisAddIn
 
-
+    ''' <summary>
+    ''' Asynchronously runs the DocCheck workflow from text gathering through rule-set execution and output presentation.
+    ''' </summary>
     Public Async Sub RunDocCheck()
 
         If INILoadFail() Then Return
@@ -117,12 +142,13 @@ Partial Public Class ThisAddIn
 
 
                     DragDropFormLabel = "Document files (.txt, .docx, .pdf) or Powerpoint (.pptx)."
-                    DragDropFormFilter = "Supported Files|*.txt;*.rtf;*.doc;*.docx;*.pdf;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm)|*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm;*.pptx||" &
-                                 "Text Files (*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm)|*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm|" &
-                                 "Rich Text Files (*.rtf)|*.rtf|" &
-                                 "Word Documents (*.doc;*.docx)|*.doc;*.docx|" &
-                                 "PDF Files (*.pdf)|*.pdf" &
-                                 "Powerpoint Files (*.pptx)|*.pptx"
+                    DragDropFormFilter =
+                            "Supported Files (*.txt;*.rtf;*.doc;*.docx;*.pdf;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm;*.pptx)|*.txt;*.rtf;*.doc;*.docx;*.pdf;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm;*.pptx|" &
+                            "Text Files (*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm)|*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm|" &
+                            "Rich Text Files (*.rtf)|*.rtf|" &
+                            "Word Documents (*.doc;*.docx)|*.doc;*.docx|" &
+                            "PDF Files (*.pdf)|*.pdf|" &
+                            "PowerPoint Files (*.pptx)|*.pptx"
 
                     Dim FilePath As String = GetFileName()
                     DragDropFormLabel = ""
@@ -335,8 +361,13 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-
     ' ========================= RuleSet Loading =========================
+    ''' <summary>
+    ''' Loads DocCheck rule sets from the provided global and local directories.
+    ''' </summary>
+    ''' <param name="pathGlobal">Expanded global DocCheck path.</param>
+    ''' <param name="pathLocal">Expanded local DocCheck path.</param>
+    ''' <returns>Combined list of parsed DocCheckRuleSet instances.</returns>
     Private Function LoadRuleSets(ByVal pathGlobal As System.String, ByVal pathLocal As System.String) As System.Collections.Generic.List(Of DocCheckRuleSet)
         Dim list As System.Collections.Generic.List(Of DocCheckRuleSet) = New System.Collections.Generic.List(Of DocCheckRuleSet)()
 
@@ -362,6 +393,11 @@ Partial Public Class ThisAddIn
         Return list
     End Function
 
+    ''' <summary>
+    ''' Enumerates DocCheck script files within the given folder.
+    ''' </summary>
+    ''' <param name="folder">Folder to scan for AN2-dc-*.txt files.</param>
+    ''' <returns>File paths matching the DocCheck naming pattern.</returns>
     Private Function EnumerateDocCheckFiles(ByVal folder As System.String) As System.Collections.Generic.IEnumerable(Of System.String)
         Dim matches As System.Collections.Generic.List(Of System.String) = New System.Collections.Generic.List(Of System.String)()
         Try
@@ -375,6 +411,12 @@ Partial Public Class ThisAddIn
     End Function
 
     ' ==== 2) ParseDocCheckFile: add file/segment-level variables & logic ====
+    ''' <summary>
+    ''' Parses a DocCheck rules file and yields rule sets for each segment declared in the file.
+    ''' </summary>
+    ''' <param name="filePath">Full path to the *.txt rule script.</param>
+    ''' <param name="isLocal">Indicates whether the source file came from the local override directory.</param>
+    ''' <returns>List of DocCheckRuleSet instances extracted from the file.</returns>
     Private Function ParseDocCheckFile(ByVal filePath As System.String, ByVal isLocal As System.Boolean) As System.Collections.Generic.List(Of DocCheckRuleSet)
         Dim sets As New System.Collections.Generic.List(Of DocCheckRuleSet)()
 
@@ -451,7 +493,7 @@ Partial Public Class ThisAddIn
                     If currentTitle IsNot Nothing Then
                         If k.Equals("SP_DocCheck_Clause", StringComparison.OrdinalIgnoreCase) Then
                             segClausePrompt = v
-                        ElseIf k.Equals("SP_DocCheck_MultiClause", StringComparison.OrdinalIgnoreCase) Then
+                        ElseIf k.Equals("SP_Docheck_MultiClause", StringComparison.OrdinalIgnoreCase) Then
                             segMultiPrompt = v
                         ElseIf k.Equals("SP_DocCheck_MultiClauseSum", StringComparison.OrdinalIgnoreCase) Then
                             segSummaryPrompt = v
@@ -504,7 +546,12 @@ Partial Public Class ThisAddIn
         Return sets
     End Function
 
-
+    ''' <summary>
+    ''' Parses a MarkdownBubbles directive and maps the value to a nullable Boolean.
+    ''' </summary>
+    ''' <param name="line">Line of text possibly containing the MarkdownBubbles setting.</param>
+    ''' <param name="valueOut">Receives True/False when parsing succeeds.</param>
+    ''' <returns>True when the switch is recognized; otherwise False.</returns>
     Private Function TryParseMarkdownBubblesLine(ByVal line As System.String, ByRef valueOut As System.Nullable(Of System.Boolean)) As System.Boolean
         valueOut = Nothing
         If line Is Nothing Then Return False
@@ -537,8 +584,12 @@ Partial Public Class ThisAddIn
         End Select
     End Function
 
-
-
+    ''' <summary>
+    ''' Parses a Notice directive and extracts its string value.
+    ''' </summary>
+    ''' <param name="line">Line that might contain a Notice assignment.</param>
+    ''' <param name="noticeOut">Receives the trimmed notice text.</param>
+    ''' <returns>True when a notice is found, False otherwise.</returns>
     Private Function TryParseNoticeLine(ByVal line As System.String, ByRef noticeOut As System.String) As System.Boolean
         noticeOut = Nothing
         If line Is Nothing Then
@@ -560,7 +611,20 @@ Partial Public Class ThisAddIn
         Return False
     End Function
 
-
+    ''' <summary>
+    ''' Creates a DocCheckRuleSet populated with prompts, notice text, and Markdown overrides.
+    ''' </summary>
+    ''' <param name="title">Display title of the rule set segment.</param>
+    ''' <param name="rawJson">Raw JSON payload provided to the LLM.</param>
+    ''' <param name="sourcePath">Path of the originating script file.</param>
+    ''' <param name="isLocal">Marks the rule as coming from the local directory.</param>
+    ''' <param name="fileOrSegmentClausePrompt">Effective clause prompt override.</param>
+    ''' <param name="fileOrSegmentMultiPrompt">Effective multi-clause prompt override.</param>
+    ''' <param name="fileOrSegmentNotice">Effective notice message.</param>
+    ''' <param name="fileOrSegmentSummaryPrompt">Effective textual summary prompt.</param>
+    ''' <param name="fileOrSegmentSummaryPromptBubbles">Effective bubble summary prompt.</param>
+    ''' <param name="fileOrSegmentMarkdownBubbles">Markdown override flag.</param>
+    ''' <returns>An initialized DocCheckRuleSet.</returns>
     Private Function CreateRuleSet(ByVal title As System.String,
                                ByVal rawJson As System.String,
                                ByVal sourcePath As System.String,
@@ -591,8 +655,13 @@ Partial Public Class ThisAddIn
         Return rs
     End Function
 
-
-
+    ''' <summary>
+    ''' Parses prompt override lines and extracts the key/value pair for DocCheck prompt settings.
+    ''' </summary>
+    ''' <param name="line">Line that might contain an SP_DocCheck assignment.</param>
+    ''' <param name="keyOut">Receives the matched key.</param>
+    ''' <param name="valueOut">Receives the trimmed value.</param>
+    ''' <returns>True if the pattern matches, False otherwise.</returns>
     Private Function TryParsePromptLine(ByVal line As System.String,
                                     ByRef keyOut As System.String,
                                     ByRef valueOut As System.String) As System.Boolean
@@ -615,8 +684,17 @@ Partial Public Class ThisAddIn
         Return False
     End Function
 
-
     ' ========================= Execution =========================
+    ''' <summary>
+    ''' Executes an isolated clause run using the selected rule set and returns the LLM response.
+    ''' </summary>
+    ''' <param name="ruleSet">Rule set providing prompts and notices.</param>
+    ''' <param name="textToAnalyze">Text being analyzed.</param>
+    ''' <param name="insertDocs">Additional context appended to the user prompt.</param>
+    ''' <param name="Selection">Active Word selection, required for bubble insertion.</param>
+    ''' <param name="PutinBubbles">True to insert comment bubbles; False to show a window.</param>
+    ''' <param name="UseSecondAPI">True to route the request through the secondary model/API.</param>
+    ''' <returns>LLM response text (possibly empty when aborted).</returns>
     Private Async Function RunIsolatedClause(ByVal ruleSet As DocCheckRuleSet,
                                          ByVal textToAnalyze As System.String,
                                          ByVal insertDocs As System.String,
@@ -686,7 +764,6 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-
     ' Multi clause:
 
     ' Place inside Class ThisAddIn (near other private fields)
@@ -698,6 +775,9 @@ Partial Public Class ThisAddIn
     Private _handlingSelectionChange As Boolean = False
     Private _docCheckAnchorDoc As Word.Document
 
+    ''' <summary>
+    ''' Redirects the Word selection back to the guarded anchor range when balloon clicks are suppressed.
+    ''' </summary>
     Private Sub RedirectSelectionToAnchor()
         Try
             If _docCheckAnchorDoc Is Nothing Then Exit Sub
@@ -710,6 +790,10 @@ Partial Public Class ThisAddIn
     End Sub
 
     ' Keep selection out of the comment balloons while a guarded run is active
+    ''' <summary>
+    ''' Handles Word selection changes to keep focus out of the comments pane when DocCheck protections are active.
+    ''' </summary>
+    ''' <param name="Sel">Current Word selection supplied by the event.</param>
     Private Sub WordApp_WindowSelectionChange(ByVal Sel As Word.Selection) Handles wordApp.WindowSelectionChange
         If _handlingSelectionChange Then Exit Sub
 
@@ -735,6 +819,19 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
+    ''' <summary>
+    ''' Runs the multi-clause pipeline, iterating over each record JSON and optionally inserting bubbles or generating summaries.
+    ''' </summary>
+    ''' <param name="ruleSet">Rule set containing the record JSON collection.</param>
+    ''' <param name="textToAnalyze">Full text block to evaluate.</param>
+    ''' <param name="insertDocs">Additional context text gathered from other documents.</param>
+    ''' <param name="Selection">Word selection guiding bubble placement.</param>
+    ''' <param name="PutInBubbles">True to emit comment bubbles for each response.</param>
+    ''' <param name="UseSecondAPI">True when the request should use the secondary model/API.</param>
+    ''' <param name="DoSummary">True to request a summary bubble or report.</param>
+    ''' <param name="DocCheckPath">Configured global DocCheck path (used for UI callbacks).</param>
+    ''' <param name="DocCheckPathLocal">Configured local DocCheck path (used for UI callbacks).</param>
+    ''' <returns>Concatenated LLM responses prior to optional summarization.</returns>
     Private Async Function RunSetOfClauses(ByVal ruleSet As DocCheckRuleSet,
                                        ByVal textToAnalyze As System.String,
                                        ByVal insertDocs As System.String,
@@ -954,10 +1051,14 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-
-
-
     ' Helper to add a zero-length comment at a specific position
+    ''' <summary>
+    ''' Adds a Markdown-enabled notice bubble at the specified document position.
+    ''' </summary>
+    ''' <param name="doc">Target Word document.</param>
+    ''' <param name="endPos">Character index where the zero-length comment is anchored.</param>
+    ''' <param name="noticeText">Notice content inserted into the bubble.</param>
+    ''' <param name="Prefix">Optional prefix prepended to the notice.</param>
     Private Sub AddNoticeBubbleAt(doc As Word.Document, endPos As Integer, noticeText As String, Optional Prefix As String = "")
         If Not INI_MarkdownBubbles Then
             LegacyAddNoticeBubbleAt(doc, endPos, noticeText)
@@ -985,7 +1086,13 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-
+    ''' <summary>
+    ''' Adds a legacy plaintext notice bubble anchored to the main document story.
+    ''' </summary>
+    ''' <param name="doc">Target Word document.</param>
+    ''' <param name="endPos">Ignored when seeking, retained for signature parity.</param>
+    ''' <param name="noticeText">Notice content inserted as plain text.</param>
+    ''' <param name="Prefix">Optional prefix prepended to the notice.</param>
     Private Sub LegacyAddNoticeBubbleAt(doc As Word.Document, endPos As Integer, noticeText As String, Optional Prefix As String = "")
         Try
             If doc Is Nothing OrElse String.IsNullOrWhiteSpace(noticeText) Then Return
@@ -1010,8 +1117,10 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-
-
+    ''' <summary>
+    ''' Shows DocCheck results through the configured UI surfaces (markdown pane, clipboard, or modal window).
+    ''' </summary>
+    ''' <param name="answer">LLM response assembled from the DocCheck run.</param>
     Private Sub ShowDocCheckResult(ByVal answer As System.String)
         Dim result As String = SLib.ShowCustomWindow("The DocCheck resulted in the following findings:", answer, "", AN, False, True, True, True)
         If result <> "" And result <> "Pane" Then
@@ -1061,7 +1170,6 @@ Partial Public Class ThisAddIn
         Return
     End Sub
 
-
     ' Record schema:
     '   {
     '     "Topic": "String",
@@ -1082,6 +1190,11 @@ Partial Public Class ThisAddIn
     '   2) [ {record}, {record}, ... ]
     '   3) {record}
 
+    ''' <summary>
+    ''' Extracts compact JSON strings for each rule record contained in the raw JSON payload.
+    ''' </summary>
+    ''' <param name="rawJson">Raw JSON text copied from the rule set file.</param>
+    ''' <returns>List of per-record JSON strings; empty when parsing fails.</returns>
     Private Function ExtractRecordJsonStrings(ByVal rawJson As System.String) As System.Collections.Generic.List(Of System.String)
         Dim list As New System.Collections.Generic.List(Of System.String)()
         If System.String.IsNullOrWhiteSpace(rawJson) Then Return list
@@ -1214,7 +1327,12 @@ Partial Public Class ThisAddIn
         Return list
     End Function
 
-
+    ''' <summary>
+    ''' Wraps Newtonsoft parsing to safely obtain a JToken while shielding callers from exceptions.
+    ''' </summary>
+    ''' <param name="s">JSON string to parse.</param>
+    ''' <param name="t">Receives the parsed token on success.</param>
+    ''' <returns>True when parsing succeeds; otherwise False.</returns>
     Private Function TryParseJsonToken(ByVal s As System.String, ByRef t As Newtonsoft.Json.Linq.JToken) As System.Boolean
         Try
             t = Newtonsoft.Json.Linq.JToken.Parse(s)
@@ -1225,6 +1343,9 @@ Partial Public Class ThisAddIn
     End Function
 
     ' ========================= Types =========================
+    ''' <summary>
+    ''' Represents a DocCheck rule set, storing prompts, notices, and extracted record JSON payloads.
+    ''' </summary>
     Private Class DocCheckRuleSet
         Public Property Title As System.String
         Public Property SourcePath As System.String
@@ -1240,6 +1361,12 @@ Partial Public Class ThisAddIn
     End Class
 
     ' ========================= Small utility =========================
+    ''' <summary>
+    ''' Ensures display names shown to users remain unique by appending a numeric suffix as needed.
+    ''' </summary>
+    ''' <param name="baseText">Original display text.</param>
+    ''' <param name="existing">Existing collection of display names to compare against.</param>
+    ''' <returns>A unique display string.</returns>
     Private Function MakeUniqueDisplay(ByVal baseText As System.String, ByVal existing As System.Collections.Generic.ICollection(Of System.String)) As System.String
         If existing Is Nothing OrElse existing.Contains(baseText) = False Then
             Return baseText
@@ -1250,6 +1377,5 @@ Partial Public Class ThisAddIn
         End While
         Return baseText & " [" & i & "]"
     End Function
-
 
 End Class

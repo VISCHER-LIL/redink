@@ -1,6 +1,28 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: DiscussInky.vb
+' Purpose: Hosts the "Discuss Inky" multi-persona chat surface inside Word,
+'          wiring persona selection, knowledge loading, transcript persistence,
+'          and LLM invocation with optional alternate models.
+'
+' Architecture:
+'  - UI Composition: Builds a WinForms surface composed of WebBrowser transcript,
+'    multiline input box, and action buttons (Send, Persona, Knowledge, etc.).
+'  - Session State: Persists persona choice, chat transcript, window geometry,
+'    active-document flag, and knowledge file references via My.Settings plus
+'    process-level caches.
+'  - Personas & Knowledge: Loads persona prompts from local/global libraries,
+'    opens arbitrary knowledge files (TXT/RTF/DOC/PDF/…), and caches their text.
+'  - LLM Pipeline: Constructs prompts with persona instructions, knowledge text,
+'    optional active-document excerpts, and prior conversation; routes calls
+'    through SharedLibrary LLM helpers with optional alternate/secondary models.
+'  - HTML Transcript: Renders chat history via Markdig HTML, keeps "thinking"
+'    placeholders, restores transcripts on startup, and persists DOM fragments.
+'  - External Dependencies: Relies on SharedLibrary.SharedMethods for model
+'    management, file dialogs, message boxes, PDF parsing, and selection UI.
+' =============================================================================
 
 Option Strict On
 Option Explicit On
@@ -20,8 +42,7 @@ Imports SharedLibrary.SharedLibrary.SharedContext
 Imports SharedLibrary.SharedLibrary.SharedMethods
 
 ''' <summary>
-''' Multi-persona chatbot that discusses documents with users based on a knowledge file
-''' and configurable persona prompts loaded from central/local library files.
+''' WinForms surface for persona-driven LLM discussions tied to knowledge files.
 ''' </summary>
 Public Class DiscussInky
     Inherits System.Windows.Forms.Form
@@ -85,7 +106,9 @@ Public Class DiscussInky
     Private _alternateModelDisplayName As String = Nothing
     Private ReadOnly _modelSemaphore As New Threading.SemaphoreSlim(1, 1)
 
-    ' Persona definitions
+    ''' <summary>
+    ''' Holds a persona definition loaded from a file, including its prompt and display metadata.
+    ''' </summary>
     Private Structure PersonaEntry
         Public Name As String
         Public Prompt As String
@@ -98,6 +121,10 @@ Public Class DiscussInky
 
 #Region "Constructor"
 
+    ''' <summary>
+    ''' Initializes UI, loads configuration references, and wires event handlers.
+    ''' </summary>
+    ''' <param name="context">Shared configuration context providing INI settings and model configuration.</param>
     Public Sub New(context As ISharedContext)
         MyBase.New()
         _context = context
@@ -184,6 +211,10 @@ Public Class DiscussInky
 
 #Region "Utility Methods"
 
+    ''' <summary>
+    ''' Executes an action on the UI thread, marshaling via BeginInvoke when required.
+    ''' </summary>
+    ''' <param name="action">Action to execute on the UI thread.</param>
     Private Sub Ui(action As System.Action)
         If Me.IsDisposed Then Return
         If Me.InvokeRequired Then
@@ -193,6 +224,9 @@ Public Class DiscussInky
         End If
     End Sub
 
+    ''' <summary>
+    ''' Builds the window caption to reflect persona, knowledge file, and model state.
+    ''' </summary>
     Private Sub UpdateWindowTitle()
         Dim title = $"Discuss this, {_currentPersonaName}"
         If Not String.IsNullOrEmpty(_knowledgeFilePath) Then
@@ -207,14 +241,25 @@ Public Class DiscussInky
         Ui(Sub() Me.Text = title)
     End Sub
 
+    ''' <summary>
+    ''' Refreshes the Send button label with the current persona name.
+    ''' </summary>
     Private Sub UpdateSendButtonText()
         Ui(Sub() _btnSend.Text = $"Send to {_currentPersonaName}")
     End Sub
 
+    ''' <summary>
+    ''' Returns a random adverb used to vary assistant tone.
+    ''' </summary>
+    ''' <returns>Randomly selected adverb string.</returns>
     Private Function GetRandomModifier() As String
         Return _randomModifiers(_rng.Next(_randomModifiers.Length))
     End Function
 
+    ''' <summary>
+    ''' Formats the current date for inclusion in LLM prompts.
+    ''' </summary>
+    ''' <returns>Formatted date string.</returns>
     Private Function GetDateContext() As String
         Dim now = DateTime.Now
         Return $"Today is {now:dd-MMM-yyyy}."
@@ -224,6 +269,10 @@ Public Class DiscussInky
 
 #Region "Form Events"
 
+    ''' <summary>
+    ''' Shows (or brings forward) the form and focuses the input box.
+    ''' </summary>
+    ''' <param name="owner">Optional owner window.</param>
     Public Sub ShowRaised(Optional owner As IWin32Window = Nothing)
         If Me.WindowState = FormWindowState.Minimized Then Me.WindowState = FormWindowState.Normal
         If Not Me.Visible Then
@@ -234,10 +283,20 @@ Public Class DiscussInky
         _txtInput.SelectAll()
     End Sub
 
+    ''' <summary>
+    ''' Handles form activation; TopMost behavior is disabled.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Sub OnActivated(sender As Object, e As EventArgs)
         ' No longer applying TopMost behavior
     End Sub
 
+    ''' <summary>
+    ''' Persists the 'include active document' checkbox state when changed.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Sub OnIncludeActiveDocChanged(sender As Object, e As EventArgs)
         Try
             My.Settings.DiscussIncludeActiveDoc = _chkIncludeActiveDoc.Checked
@@ -246,6 +305,11 @@ Public Class DiscussInky
         End Try
     End Sub
 
+    ''' <summary>
+    ''' Restores persisted settings, persona, knowledge cache, transcript, and optionally triggers a welcome.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Async Sub OnLoadForm(sender As Object, e As EventArgs)
         ' Restore window position/size
         Try
@@ -362,6 +426,11 @@ Public Class DiscussInky
         End If
     End Sub
 
+    ''' <summary>
+    ''' Persists geometry, transcript, persona, knowledge path, and checkbox state on close.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments containing form-closing details.</param>
     Private Sub OnFormClosing(sender As Object, e As FormClosingEventArgs)
         Try
             PersistTranscriptLimited()
@@ -385,7 +454,9 @@ Public Class DiscussInky
 
 #Region "Alternate Model Handling"
 
-    ' Sets the alternate model button text depending on current state and availability
+    ''' <summary>
+    ''' Sets the alternate-model button caption according to availability and selection state.
+    ''' </summary>
     Private Sub UpdateAlternateModelButtonText()
         If Not String.IsNullOrWhiteSpace(_context.INI_AlternateModelPath) Then
             _btnAlternateModel.Text = If(_alternateModelSelected, "Primary Model", "Alternate Model")
@@ -394,7 +465,11 @@ Public Class DiscussInky
         End If
     End Sub
 
-    ' Handles alternate model button click - matches Form1.vb pattern exactly
+    ''' <summary>
+    ''' Handles alternate model toggling or selection, mirroring Form1 pattern.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Sub OnAlternateModelClick(sender As Object, e As EventArgs)
         If Not String.IsNullOrWhiteSpace(_context.INI_AlternateModelPath) Then
             ' If an alternate is already active -> switch back to primary without dialog
@@ -474,8 +549,12 @@ Public Class DiscussInky
         End If
     End Sub
 
-    ' Executes an LLM call while temporarily applying any selected alternate model.
-    ' Always restores the original config afterwards - matches Form1.vb pattern.
+    ''' <summary>
+    ''' Runs an LLM request while temporarily applying any selected alternate model, restoring afterward.
+    ''' </summary>
+    ''' <param name="systemPrompt">System instruction for the LLM.</param>
+    ''' <param name="userPrompt">User message payload.</param>
+    ''' <returns>LLM-generated response text.</returns>
     Private Async Function CallLlmWithSelectedModelAsync(systemPrompt As String, userPrompt As String) As Task(Of String)
         Await _modelSemaphore.WaitAsync().ConfigureAwait(False)
         Dim backupConfig As ModelConfig = Nothing
@@ -522,6 +601,9 @@ Public Class DiscussInky
 
 #Region "Persona Management"
 
+    ''' <summary>
+    ''' Loads persona definitions from configured local and global files into memory.
+    ''' </summary>
     Private Sub LoadPersonas()
         _personas.Clear()
 
@@ -549,6 +631,12 @@ Public Class DiscussInky
         End If
     End Sub
 
+    ''' <summary>
+    ''' Parses a persona file, appending entries and marking whether they are local.
+    ''' </summary>
+    ''' <param name="filePath">Path to the persona file.</param>
+    ''' <param name="isLocal">Whether the file is local (vs. global).</param>
+    ''' <returns>True if any persona entries were loaded.</returns>
     Private Function LoadPersonasFromFile(filePath As String, isLocal As Boolean) As Boolean
         ' Must be a file, not a directory
         If String.IsNullOrWhiteSpace(filePath) Then
@@ -605,6 +693,12 @@ Public Class DiscussInky
         Return loadedAny
     End Function
 
+    ''' <summary>
+    ''' Ensures persona display names are unique by appending numeric suffixes.
+    ''' </summary>
+    ''' <param name="baseText">Initial display name.</param>
+    ''' <param name="existing">Collection of existing display names.</param>
+    ''' <returns>Unique display name.</returns>
     Private Function MakeUniqueDisplay(baseText As String, existing As ICollection(Of String)) As String
         If Not existing.Contains(baseText) Then Return baseText
         Dim n = 2
@@ -615,6 +709,11 @@ Public Class DiscussInky
         End While
     End Function
 
+    ''' <summary>
+    ''' Shows persona picker and applies the chosen persona prompt.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Sub OnSelectPersona(sender As Object, e As EventArgs)
         If _personas.Count = 0 Then
             ShowCustomMessageBox("No personas configured. Please configure INI_DiscussInkyPath or INI_DiscussInkyPathLocal in your settings.",
@@ -658,6 +757,11 @@ Public Class DiscussInky
         End If
     End Sub
 
+    ''' <summary>
+    ''' Ensures the local persona file exists and opens it in the shared text editor.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Sub OnEditLocalPersona(sender As Object, e As EventArgs)
         Dim localPath = ExpandEnvironmentVariables(If(_context?.INI_DiscussInkyPathLocal, ""))
 
@@ -701,10 +805,18 @@ Public Class DiscussInky
 
 #Region "Knowledge File Management"
 
+    ''' <summary>
+    ''' Button handler that launches the knowledge file picker.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Async Sub OnLoadKnowledge(sender As Object, e As EventArgs)
         Await PromptForKnowledgeFileAsync()
     End Sub
 
+    ''' <summary>
+    ''' Prompts the user for a knowledge file, loads its text, caches it, and updates state.
+    ''' </summary>
     Private Async Function PromptForKnowledgeFileAsync() As Task
         Try
             Globals.ThisAddIn.DragDropFormLabel = "Drag & drop a knowledge file (PDF, Word, TXT, etc.) or click Browse"
@@ -754,6 +866,11 @@ Public Class DiscussInky
         End Try
     End Function
 
+    ''' <summary>
+    ''' Reads supported file formats into plain text, delegating to specialized readers when needed.
+    ''' </summary>
+    ''' <param name="filePath">Path to the knowledge file.</param>
+    ''' <returns>Plain text content of the file.</returns>
     Private Async Function LoadKnowledgeFileAsync(filePath As String) As Task(Of String)
         If String.IsNullOrWhiteSpace(filePath) OrElse Not File.Exists(filePath) Then
             Return ""
@@ -788,6 +905,11 @@ Public Class DiscussInky
 
 #Region "Chat Actions"
 
+    ''' <summary>
+    ''' Captures the user's message, adds it to history, and starts asynchronous LLM processing.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Sub OnSend(sender As Object, e As EventArgs)
         Dim userText = _txtInput.Text.Trim()
         If userText.Length = 0 Then Return
@@ -799,6 +921,11 @@ Public Class DiscussInky
         Dim __ = SendAsync(userText)
     End Sub
 
+    ''' <summary>
+    ''' Clears transcript and history, then regenerates the welcome sequence.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Async Sub OnClear(sender As Object, e As EventArgs)
         Try
             _history.Clear()
@@ -813,10 +940,20 @@ Public Class DiscussInky
         End Try
     End Sub
 
+    ''' <summary>
+    ''' Closes the DiscussInky form.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Sub OnClose(sender As Object, e As EventArgs)
         Me.Close()
     End Sub
 
+    ''' <summary>
+    ''' Handles Enter/Escape shortcuts for sending and closing.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Key event arguments.</param>
     Private Sub OnInputKeyDown(sender As Object, e As KeyEventArgs)
         If e.KeyCode = Keys.Enter AndAlso Not e.Shift Then
             e.SuppressKeyPress = True
@@ -830,6 +967,9 @@ Public Class DiscussInky
 
 #Region "Welcome Message"
 
+    ''' <summary>
+    ''' Serializes welcome generation and surfaces any failures in the chat.
+    ''' </summary>
     Private Async Function SafeGenerateWelcomeAsync() As Task
         If Interlocked.CompareExchange(_welcomeInProgress, 1, 0) <> 0 Then
             Return
@@ -847,7 +987,7 @@ Public Class DiscussInky
     End Function
 
     ''' <summary>
-    ''' Displays the current persona and knowledge document info so the user knows the chat basis.
+    ''' Posts a system message summarizing the active persona and knowledge file.
     ''' </summary>
     Private Sub ShowSessionInfo()
         Dim sb As New StringBuilder()
@@ -867,6 +1007,9 @@ Public Class DiscussInky
         AppendSystemMessage(sb.ToString())
     End Sub
 
+    ''' <summary>
+    ''' Requests a short persona-aware welcome message from the LLM.
+    ''' </summary>
     Private Async Function GenerateWelcomeAsync() As Task
         Dim langName = System.Globalization.CultureInfo.CurrentUICulture.DisplayName
         Dim partOfDay = GetPartOfDay()
@@ -913,6 +1056,10 @@ Public Class DiscussInky
 
 #Region "Send Message"
 
+    ''' <summary>
+    ''' Builds the full prompt (persona, knowledge, history, document) and sends it to the LLM.
+    ''' </summary>
+    ''' <param name="userText">User's message text.</param>
     Private Async Function SendAsync(userText As String) As Task
         Try
             ' Build system prompt from persona or default
@@ -978,6 +1125,10 @@ Public Class DiscussInky
         End Try
     End Function
 
+    ''' <summary>
+    ''' Extracts the current Word document and selection details for prompt inclusion.
+    ''' </summary>
+    ''' <returns>Formatted string with document name, selected paragraph, and full text.</returns>
     Private Function GetActiveDocumentContent() As String
         Try
             Dim app = Globals.ThisAddIn.Application
@@ -1018,6 +1169,12 @@ Public Class DiscussInky
         End Try
     End Function
 
+    ''' <summary>
+    ''' Limits long strings to the configured cap and annotates truncation.
+    ''' </summary>
+    ''' <param name="text">Input text.</param>
+    ''' <param name="maxLen">Maximum length.</param>
+    ''' <returns>Truncated or original text with annotation if truncated.</returns>
     Private Function TruncateForPrompt(text As String, maxLen As Integer) As String
         If String.IsNullOrEmpty(text) Then Return ""
         If text.Length <= maxLen Then Return text
@@ -1028,6 +1185,9 @@ Public Class DiscussInky
 
 #Region "HTML Chat Display"
 
+    ''' <summary>
+    ''' Creates the base HTML document and CSS used by the WebBrowser control.
+    ''' </summary>
     Private Sub InitializeChatHtml()
         Ui(Sub()
                _htmlQueue.Clear()
@@ -1074,7 +1234,11 @@ Public Class DiscussInky
            End Sub)
     End Sub
 
-
+    ''' <summary>
+    ''' Flushes queued HTML fragments once the browser document is ready.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Event arguments.</param>
     Private Sub Chat_DocumentCompleted(sender As Object, e As WebBrowserDocumentCompletedEventArgs)
         _htmlReady = True
         If _htmlQueue.Count > 0 Then
@@ -1089,6 +1253,11 @@ Public Class DiscussInky
         End If
     End Sub
 
+    ''' <summary>
+    ''' Intercepts navigation to open http/https/mailto links externally.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Navigation event arguments.</param>
     Private Sub Chat_Navigating(sender As Object, e As WebBrowserNavigatingEventArgs)
         Try
             Dim scheme = e.Url?.Scheme?.ToLowerInvariant()
@@ -1100,10 +1269,19 @@ Public Class DiscussInky
         End Try
     End Sub
 
+    ''' <summary>
+    ''' Prevents the WebBrowser control from spawning new windows.
+    ''' </summary>
+    ''' <param name="sender">Event source.</param>
+    ''' <param name="e">Cancel event arguments.</param>
     Private Sub Chat_NewWindow(sender As Object, e As CancelEventArgs)
         e.Cancel = True
     End Sub
 
+    ''' <summary>
+    ''' Appends HTML to the chat DOM, queuing if the document is not ready.
+    ''' </summary>
+    ''' <param name="fragment">HTML fragment to append.</param>
     Private Sub AppendHtml(fragment As String)
         If String.IsNullOrEmpty(fragment) Then Return
         Ui(Sub()
@@ -1119,23 +1297,37 @@ Public Class DiscussInky
            End Sub)
     End Sub
 
+    ''' <summary>
+    ''' Adds a user message block to the transcript and persists HTML.
+    ''' </summary>
+    ''' <param name="text">User message text.</param>
     Private Sub AppendUserHtml(text As String)
         Dim encoded = WebUtility.HtmlEncode(text).Replace(vbCrLf, "<br>").Replace(vbLf, "<br>").Replace(vbCr, "<br>")
         AppendHtml($"<div class='msg user'><span class='who'>You:</span><span class='content'>{encoded}</span></div>")
         PersistChatHtml()
     End Sub
 
+    ''' <summary>
+    ''' Adds a system message block and persists HTML.
+    ''' </summary>
+    ''' <param name="text">System message text.</param>
     Private Sub AppendSystemMessage(text As String)
         Dim encoded = WebUtility.HtmlEncode(text)
         AppendHtml($"<div class='msg system'>{encoded}</div>")
         PersistChatHtml()
     End Sub
 
+    ''' <summary>
+    ''' Inserts a temporary 'thinking' placeholder for the assistant.
+    ''' </summary>
     Private Sub ShowAssistantThinking()
         _lastThinkingId = "thinking-" & Guid.NewGuid().ToString("N")
         AppendHtml($"<div id=""{_lastThinkingId}"" class='msg assistant thinking'><span class='who'>{WebUtility.HtmlEncode(_currentPersonaName)}:</span><span class='content'>Thinking...</span></div>")
     End Sub
 
+    ''' <summary>
+    ''' Removes the current thinking placeholder if present.
+    ''' </summary>
     Private Sub RemoveAssistantThinking()
         If String.IsNullOrEmpty(_lastThinkingId) Then Return
         Ui(Sub()
@@ -1150,6 +1342,10 @@ Public Class DiscussInky
            End Sub)
     End Sub
 
+    ''' <summary>
+    ''' Converts assistant markdown to HTML and appends it to the transcript.
+    ''' </summary>
+    ''' <param name="md">Markdown text from assistant.</param>
     Private Sub AppendAssistantMarkdown(md As String)
         md = If(md, "")
         Dim body = Markdig.Markdown.ToHtml(md, _mdPipeline)
@@ -1186,6 +1382,9 @@ Public Class DiscussInky
 
 #Region "Persistence"
 
+    ''' <summary>
+    ''' Saves the current chat DOM fragment to settings for restoration.
+    ''' </summary>
     Private Sub PersistChatHtml()
         Ui(Sub()
                Try
@@ -1200,8 +1399,9 @@ Public Class DiscussInky
     End Sub
 
     ''' <summary>
-    ''' Restores the _history list from a plain text transcript so the LLM sees the previous conversation.
+    ''' Rebuilds the history list from the plain-text transcript copy.
     ''' </summary>
+    ''' <param name="transcript">Plain text transcript to parse.</param>
     Private Sub RestoreHistoryFromTranscript(transcript As String)
         _history.Clear()
         If String.IsNullOrEmpty(transcript) Then Return
@@ -1241,6 +1441,10 @@ Public Class DiscussInky
         flush()
     End Sub
 
+    ''' <summary>
+    ''' Recreates chat HTML from the stored transcript text.
+    ''' </summary>
+    ''' <param name="transcript">Plain text transcript to convert to HTML.</param>
     Private Sub AppendTranscriptToHtml(transcript As String)
         If String.IsNullOrEmpty(transcript) Then Return
         Dim lines = transcript.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf).Split({vbLf}, StringSplitOptions.None)
@@ -1278,6 +1482,9 @@ Public Class DiscussInky
         PersistChatHtml()
     End Sub
 
+    ''' <summary>
+    ''' Truncates and saves the plain transcript respecting the configured cap.
+    ''' </summary>
     Private Sub PersistTranscriptLimited()
         Dim transcript = BuildTranscriptPlain()
         Dim cap = Math.Max(5000, If(_context IsNot Nothing, _context.INI_ChatCap, 0))
@@ -1287,6 +1494,10 @@ Public Class DiscussInky
         My.Settings.DiscussLastChat = transcript
     End Sub
 
+    ''' <summary>
+    ''' Returns the current chat history in 'You:/Persona:' text format.
+    ''' </summary>
+    ''' <returns>Plain text transcript of all messages.</returns>
     Private Function BuildTranscriptPlain() As String
         Dim sb As New StringBuilder()
         For Each m In _history
@@ -1299,6 +1510,10 @@ Public Class DiscussInky
         Return sb.ToString()
     End Function
 
+    ''' <summary>
+    ''' Builds a capped, reversed conversation snippet for prompt injection.
+    ''' </summary>
+    ''' <returns>Truncated conversation history for LLM context.</returns>
     Private Function BuildConversationForLlm() As String
         Dim sb As New StringBuilder()
         Dim cap = Math.Max(5000, If(_context IsNot Nothing, _context.INI_ChatCap, 0))
@@ -1321,6 +1536,10 @@ Public Class DiscussInky
 
 #Region "Helpers"
 
+    ''' <summary>
+    ''' Determines 'Morning/Afternoon/Evening' from the current hour.
+    ''' </summary>
+    ''' <returns>Part of day string.</returns>
     Private Shared Function GetPartOfDay() As String
         Dim h = DateTime.Now.Hour
         If h < 12 Then Return "Morning"
@@ -1329,10 +1548,10 @@ Public Class DiscussInky
     End Function
 
     ''' <summary>
-    ''' Checks if the saved chat HTML contains a message indicating an alternate or secondary model was active.
-    ''' Looks for system messages that say "Switched to alternate model" or "Switched to secondary model"
-    ''' without a subsequent "Switched back to primary" message.
+    ''' Detects whether the restored HTML ended on an alternate-model state by checking for model switch messages.
     ''' </summary>
+    ''' <param name="html">Saved HTML content from chat transcript.</param>
+    ''' <returns>True if an alternate model was active when the chat was saved.</returns>
     Private Function ChatHtmlIndicatesAlternateModel(html As String) As Boolean
         If String.IsNullOrEmpty(html) Then Return False
 

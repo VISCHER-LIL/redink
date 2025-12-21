@@ -1,6 +1,31 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.WordHelpers.vb
+' Purpose: Provides Word document helper utilities including document comparison,
+'          revision/comment extraction and analysis, content control management,
+'          regex-based search/replace, and markup time span calculation.
+'
+' Architecture:
+'  - Document Comparison: Compares active document with another open document using
+'    Word.CompareDocuments API; exports result as filtered HTML with optional LLM summarization.
+'  - Change Extraction: Extracts revisions (insertions, deletions, moves) and comments
+'    with XML-like markup tags (<ins>, <del>, <comment>) for LLM processing.
+'  - LLM Integration: Calls SharedMethods.LLM with SP_Markup system prompt to generate
+'    change summaries; converts Markdown results to HTML via Markdig pipeline.
+'  - Content Control Removal: Removes Word content controls while preserving text/formatting;
+'    handles document-wide or selection-based scope with protection checks.
+'  - Regex Operations: Multi-pattern regex search/replace with validation and persistent
+'    pattern memory across sessions.
+'  - Markup Analysis: Calculates time spans between first/last revision or comment by author;
+'    supports date filtering and selection/document scope.
+'  - UI Threading: Async operations use STA threads for ShowHTMLCustomMessageBox compatibility;
+'    progress feedback via SplashScreen with ESC cancellation.
+'  - Encoding Detection: Filtered HTML encoding detected via BOM or meta charset tag fallback.
+'  - External Dependencies: SharedLibrary.SharedMethods provides LLM, UI dialogs, text editors;
+'    Markdig handles Markdown-to-HTML conversion.
+' =============================================================================
 
 Option Explicit On
 Option Strict Off
@@ -16,7 +41,9 @@ Imports Slib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
-    ' Shared CSS styling for HTML summary windows
+    ''' <summary>
+    ''' CSS styling applied to all HTML summary windows for consistent formatting of LLM-generated content.
+    ''' </summary>
     Private Const SummaryHtmlStyle As String =
         "<style>" &
         "body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 10pt; line-height: 1.5; padding: 20px; margin: 0; }" &
@@ -28,8 +55,18 @@ Partial Public Class ThisAddIn
         "pre { background: #f6f8fa; padding: 10px; border-radius: 4px; overflow-x: auto; }" &
         "</style>"
 
-    ' Compares the currently active Word document with another open Word document,
-    ' exports the comparison to filtered HTML, and shows it via ShowHTMLCustomMessageBox().
+    ''' <summary>
+    ''' Compares the active Word document with another open document selected by the user.
+    ''' Generates a comparison document, exports it to filtered HTML, and displays the result
+    ''' with an optional "Summarize Changes" button that triggers LLM-based analysis.
+    ''' </summary>
+    ''' <remarks>
+    ''' Acquires Word application via COM → validates active document → prompts user to select
+    ''' comparison document if multiple are open → creates Word comparison with all tracking options →
+    ''' extracts changes with markup tags → exports to temporary filtered HTML → detects encoding
+    ''' via BOM or meta charset → injects base href and meta charset → displays in custom HTML viewer.
+    ''' Temporary files are deleted after 3 seconds via background thread to avoid file locking issues.
+    ''' </remarks>
     Public Shared Sub CompareActiveDocWithOtherOpenDoc()
         ' Acquire the running Word instance
         Dim wordAppObj As Object = Nothing
@@ -100,7 +137,7 @@ Partial Public Class ThisAddIn
             docToCompare = indexToDoc(chosenIdx)
         End If
 
-        ' Compare and export -> filtered HTML
+        ' Compare and export to filtered HTML
         Dim compareDoc As Microsoft.Office.Interop.Word.Document = Nothing
         Dim tempHtmlPath As String = Nothing
         Dim tempFolder As String = Nothing
@@ -118,7 +155,7 @@ Partial Public Class ThisAddIn
             wordApp.DisplayAlerts = Microsoft.Office.Interop.Word.WdAlertLevel.wdAlertsNone
             prevWindow = wordApp.ActiveWindow
 
-            ' Create comparison (returns a Document)
+            ' Create comparison document
             compareDoc = wordApp.CompareDocuments(
                 OriginalDocument:=activeDoc,
                 RevisedDocument:=docToCompare,
@@ -265,7 +302,7 @@ Partial Public Class ThisAddIn
             wordApp.DisplayAlerts = prevAlerts
             wordApp.ScreenUpdating = prevScreenUpdating
 
-            ' Cleanup temp (delayed, best effort)
+            ' Cleanup temp files (delayed, best effort)
             If Not String.IsNullOrEmpty(tempFolder) Then
                 Try
                     Dim t As New Threading.Thread(
@@ -296,21 +333,24 @@ Partial Public Class ThisAddIn
     ''' Extracts text from a comparison document with revisions marked using &lt;ins&gt; and &lt;del&gt; tags,
     ''' comments marked with &lt;comment&gt; tags, and footnotes/endnotes included.
     ''' </summary>
+    ''' <param name="compareDoc">The comparison document produced by Word.CompareDocuments.</param>
+    ''' <returns>XML-tagged string with revisions and comments; empty string if compareDoc is Nothing.</returns>
+    ''' <remarks>
+    ''' Iterates paragraphs and extracts revision-marked text. Unchanged paragraphs are included as plain text.
+    ''' Comments, footnotes, and endnotes are appended in separate XML-like sections.
+    ''' </remarks>
     Private Shared Function ExtractChangesWithMarkupTags(compareDoc As Microsoft.Office.Interop.Word.Document) As String
         If compareDoc Is Nothing Then Return String.Empty
 
         Dim sb As New System.Text.StringBuilder()
 
         Try
-            ' Process main document content with revisions
-            Dim content As Microsoft.Office.Interop.Word.Range = compareDoc.Content
-
             ' Build text with revision markup
             For Each para As Microsoft.Office.Interop.Word.Paragraph In compareDoc.Paragraphs
                 Dim paraText As New System.Text.StringBuilder()
                 Dim rng As Microsoft.Office.Interop.Word.Range = para.Range
 
-                ' Check each character/word for revisions
+                ' Process revisions in this paragraph
                 For Each rev As Microsoft.Office.Interop.Word.Revision In rng.Revisions
                     Try
                         Dim revText As String = If(rev.Range.Text, String.Empty)
@@ -326,14 +366,13 @@ Partial Public Class ThisAddIn
                             Case WdRevisionType.wdRevisionMovedTo
                                 paraText.Append($"<ins>[moved to:]{revText}</ins>")
                             Case Else
-                                ' For formatting and other changes, note them but include the text
                                 paraText.Append($"<ins>[{rev.Type}:]{revText}</ins>")
                         End Select
                     Catch
                     End Try
                 Next
 
-                ' If no revisions in this paragraph, just add the plain text
+                ' If no revisions in this paragraph, add the plain text
                 If paraText.Length = 0 Then
                     Try
                         paraText.Append(If(rng.Text, String.Empty))
@@ -401,9 +440,14 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Calls the LLM to summarize the extracted changes and displays the result in a new HTML window.
-    ''' This method spawns its own async operation and ShowHTMLCustomMessageBox call.
+    ''' Submits extracted changes to the LLM for summarization and displays the result in a new HTML window.
+    ''' Runs on a separate STA thread to avoid blocking the UI.
     ''' </summary>
+    ''' <param name="extractedChangesText">XML-tagged text containing revisions and comments extracted from comparison document.</param>
+    ''' <remarks>
+    ''' Uses SP_Markup system prompt. LLM result (Markdown format) is converted to HTML via Markdig.
+    ''' Thread is configured as STA (Single-Threaded Apartment) for ShowHTMLCustomMessageBox compatibility.
+    ''' </remarks>
     Private Shared Sub SummarizeComparisonChangesAsync(extractedChangesText As String)
         ' Run the LLM call and display on a new thread to avoid blocking
         Dim t As New Threading.Thread(
@@ -506,7 +550,7 @@ Partial Public Class ThisAddIn
             If Not String.IsNullOrEmpty(userDateInput) Then
                 Dim parsed As System.DateTime
                 If System.DateTime.TryParse(userDateInput, System.Globalization.CultureInfo.CurrentCulture, System.Globalization.DateTimeStyles.None, parsed) Then
-                    filterDate = parsed.Date ' Use start of day
+                    filterDate = parsed.Date
                     filterByDate = True
                 Else
                     ShowCustomMessageBox("Invalid date format. Operation aborted.", AN)
@@ -526,7 +570,7 @@ Partial Public Class ThisAddIn
             ' Build the prompt
             Dim userPrompt As String = "<TEXTTOPROCESS>" & vbCrLf & extractedText & vbCrLf & "</TEXTTOPROCESS>"
 
-            ' System prompt for change analysis (same as SummarizeComparisonChangesAsync)
+            ' System prompt for change analysis
             Dim systemPrompt As String = SP_Markup
 
             Dim llmResult As String = String.Empty
@@ -772,6 +816,16 @@ Partial Public Class ThisAddIn
         Return If(hasContent, sb.ToString(), String.Empty)
     End Function
 
+    ''' <summary>
+    ''' Removes Word content controls from the current selection or entire document while preserving text and formatting.
+    ''' Prompts user if no selection exists.
+    ''' </summary>
+    ''' <remarks>
+    ''' If selection exists: Removes controls overlapping the selection.
+    ''' If no selection: Prompts user to confirm document-wide removal.
+    ''' Unlocks LockContentControl and LockContents properties before deletion.
+    ''' Temporarily disables TrackRevisions during removal to avoid tracked changes.
+    ''' </remarks>
     Public Sub RemoveContentControlsRespectSelection()
         Try
             Dim app As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
@@ -798,6 +852,16 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
+    ''' <summary>
+    ''' Removes all content controls from the active document while preserving contents and formatting.
+    ''' </summary>
+    ''' <param name="app">The Word Application instance.</param>
+    ''' <returns>The number of content controls successfully removed.</returns>
+    ''' <exception cref="System.Exception">Thrown if document is protected.</exception>
+    ''' <remarks>
+    ''' Controls are sorted inner-first (by descending start position) to handle nested controls correctly.
+    ''' TrackRevisions is temporarily disabled during removal.
+    ''' </remarks>
     Public Function RemoveAllContentControlsKeepContents(app As Microsoft.Office.Interop.Word.Application) As System.Int32
         Dim doc As Microsoft.Office.Interop.Word.Document = app.ActiveDocument
         If doc Is Nothing Then Return 0
@@ -825,7 +889,7 @@ Partial Public Class ThisAddIn
                     If cc.LockContents Then cc.LockContents = False
                     cc.Delete(False) ' keep contents/formatting
                 Catch
-                    ' continue with other controls
+                    ' Continue with other controls
                 End Try
             Next
         Finally
@@ -836,8 +900,17 @@ Partial Public Class ThisAddIn
         Return System.Math.Max(0, beforeCount - afterCount)
     End Function
 
-
-
+    ''' <summary>
+    ''' Removes content controls that overlap with the specified range while preserving contents and formatting.
+    ''' </summary>
+    ''' <param name="rng">The Word range defining the scope for content control removal.</param>
+    ''' <returns>The number of content controls successfully removed.</returns>
+    ''' <exception cref="System.Exception">Thrown if range is Nothing or document is protected.</exception>
+    ''' <remarks>
+    ''' Only processes controls in the same story type as the range.
+    ''' Controls are sorted inner-first to handle nested controls correctly.
+    ''' TrackRevisions is temporarily disabled during removal.
+    ''' </remarks>
     Public Function RemoveContentControlsInRangeKeepContents(ByVal rng As Microsoft.Office.Interop.Word.Range) As System.Int32
         If rng Is Nothing Then Throw New System.Exception("Selection range is not available.")
         Dim doc As Microsoft.Office.Interop.Word.Document = rng.Document
@@ -876,7 +949,7 @@ Partial Public Class ThisAddIn
                     cc.Delete(False)
                     removed += 1
                 Catch
-                    ' ignore and continue
+                    ' Ignore and continue
                 End Try
             Next
         Finally
@@ -886,31 +959,46 @@ Partial Public Class ThisAddIn
         Return removed
     End Function
 
-
+    ''' <summary>
+    ''' Prompts user to select a text file and inserts its content at the current cursor position.
+    ''' </summary>
+    ''' <remarks>
+    ''' Uses GetFileContent helper with optional object detection based on INI_APICall_Object configuration.
+    ''' Collapses selection to end point before insertion.
+    ''' </remarks>
     Public Async Sub ImportTextFile()
         Dim sel As Word.Range = Globals.ThisAddIn.Application.Selection.Range
         Dim Doc = Await GetFileContent(Nothing, False, Not String.IsNullOrWhiteSpace(INI_APICall_Object))
         sel.Collapse(Direction:=Word.WdCollapseDirection.wdCollapseEnd)
         sel.Text = Doc
-        'sel.End = sel.Start + Doc.Length
         sel.Select()
     End Sub
 
+    ''' <summary>
+    ''' Accepts formatting-only revisions (style, paragraph properties, etc.) in the current selection or document
+    ''' while leaving text insertion/deletion/move revisions unchanged. Displays progress splash screen with ESC cancellation.
+    ''' </summary>
+    ''' <remarks>
+    ''' Formatting revision types accepted: wdRevisionProperty, wdRevisionParagraphNumber, wdRevisionParagraphProperty,
+    ''' wdRevisionSectionProperty, wdRevisionStyle, wdRevisionStyleDefinition, wdRevisionTableProperty.
+    ''' Structural revisions (insert/delete/move) may contain embedded formatting that cannot be separated.
+    ''' User can abort by pressing ESC key during processing.
+    ''' </remarks>
     Public Sub AcceptFormatting()
 
         Dim sel As Word.Range = Globals.ThisAddIn.Application.Selection.Range
         Dim formatChangeCount As Integer = 0
-        Dim DocRef As String = "in the selected text"
+        Dim docRef As String = "in the selected text"
 
         ' Ensure a selection is made (use content if selection empty)
         If sel Is Nothing OrElse sel.Start = sel.End Then
             sel = Globals.ThisAddIn.Application.ActiveDocument.Content
-            DocRef = "in the document"
+            docRef = "in the document"
         End If
 
         ' Quick exit if no revisions at all
         If sel.Revisions.Count = 0 Then
-            ShowCustomMessageBox($"No revisions found {DocRef}. Note: Formatting embedded in insert/delete revisions would also count as those insert/delete changes.")
+            ShowCustomMessageBox($"No revisions found {docRef}. Note: Formatting embedded in insert/delete revisions would also count as those insert/delete changes.")
             Return
         End If
 
@@ -931,7 +1019,7 @@ Partial Public Class ThisAddIn
 
         Dim formattingSet As New HashSet(Of Integer)(formattingTypes.Select(Function(t) CInt(t)))
 
-        ' Structural revision types that may carry embedded formatting the user asked NOT to accept
+        ' Structural revision types that may carry embedded formatting
         Dim structuralTypes As Word.WdRevisionType() = {
             Word.WdRevisionType.wdRevisionInsert,
             Word.WdRevisionType.wdRevisionDelete,
@@ -981,9 +1069,9 @@ Partial Public Class ThisAddIn
             End If
         Else
             If formatChangeCount > 0 Then
-                msg.AppendLine($"{formatChangeCount} formatting revision(s) {DocRef} (including paragraph numbering) have been accepted.")
+                msg.AppendLine($"{formatChangeCount} formatting revision(s) {docRef} (including paragraph numbering) have been accepted.")
             Else
-                msg.AppendLine($"No pure formatting revisions were found {DocRef}.")
+                msg.AppendLine($"No pure formatting revisions were found {docRef}.")
             End If
         End If
 
@@ -999,54 +1087,67 @@ Partial Public Class ThisAddIn
         ShowCustomMessageBox(msg.ToString())
     End Sub
 
-
-
-
+    ''' <summary>Cached regex pattern from previous RegexSearchReplace invocation.</summary>
     Private Shared LastRegexPattern As String = String.Empty
+
+    ''' <summary>Cached regex options from previous RegexSearchReplace invocation.</summary>
     Private Shared LastRegexOptions As String = String.Empty
+
+    ''' <summary>Cached replacement text from previous RegexSearchReplace invocation.</summary>
     Private Shared LastRegexReplace As String = String.Empty
 
+    ''' <summary>
+    ''' Performs multi-pattern regex search and replace operations on the current selection or entire document.
+    ''' Supports persistent pattern memory and validation before execution.
+    ''' </summary>
+    ''' <remarks>
+    ''' Workflow: Prompts for patterns (one per line) → prompts for options (i/m/s/c/r/e flags) →
+    ''' prompts for replacements (one per line, matching pattern count) → validates all patterns →
+    ''' performs replacements or highlights first match if no replacement provided.
+    ''' Previous patterns/options/replacements are cached in static fields (LastRegexPattern, LastRegexOptions, LastRegexReplace).
+    ''' Aborts without changes if pattern count mismatches replacement count or any pattern is invalid.
+    ''' </remarks>
     Public Sub RegexSearchReplace()
         Dim sel As Word.Range = Globals.ThisAddIn.Application.Selection.Range
-        Dim DocRef As String = "in the selected text"
+        Dim docRef As String = "in the selected text"
 
         ' Ensure a selection is made
         If sel Is Nothing OrElse String.IsNullOrWhiteSpace(sel.Text) Then
             Globals.ThisAddIn.Application.ActiveDocument.Content.Select()
             sel = Globals.ThisAddIn.Application.Selection.Range
-            DocRef = "in the document"
+            docRef = "in the document"
         End If
 
         ' Step 1: Get regex patterns
-        Dim RegexPattern As String = ShowCustomInputBox("Step 1: Enter your Regex pattern(s), one per line (more info about Regex: vischerlnk.com/regexinfo):", "Regex Search & Replace", False, LastRegexPattern)?.Trim()
-        If String.IsNullOrEmpty(RegexPattern) Then Return
+        Dim regexPattern As String = ShowCustomInputBox("Step 1: Enter your Regex pattern(s), one per line (more info about Regex: vischerlnk.com/regexinfo):", "Regex Search & Replace", False, LastRegexPattern)?.Trim()
+        If String.IsNullOrEmpty(regexPattern) Then Return
 
         ' Step 2: Get regex options
         Dim optionsInput As String = ShowCustomInputBox("Enter regex option(s) (i for IgnoreCase, m for Multiline, s for Singleline, c for Compiled, r for RightToLeft, e for ExplicitCapture):", "Regex Search & Replace", True, LastRegexOptions)
 
-        Dim regexOptions As RegexOptions = regexOptions.None
+        Dim regexOptions As RegexOptions = RegexOptions.None
 
         If Not String.IsNullOrEmpty(optionsInput) Then
             ' Add specific options based on user input
-            If optionsInput.Contains("i") Then regexOptions = regexOptions Or regexOptions.IgnoreCase
-            If optionsInput.Contains("m") Then regexOptions = regexOptions Or regexOptions.Multiline
-            If optionsInput.Contains("s") Then regexOptions = regexOptions Or regexOptions.Singleline
-            If optionsInput.Contains("c") Then regexOptions = regexOptions Or regexOptions.Compiled
-            If optionsInput.Contains("r") Then regexOptions = regexOptions Or regexOptions.RightToLeft
-            If optionsInput.Contains("e") Then regexOptions = regexOptions Or regexOptions.ExplicitCapture
+            If optionsInput.Contains("i") Then regexOptions = regexOptions Or RegexOptions.IgnoreCase
+            If optionsInput.Contains("m") Then regexOptions = regexOptions Or RegexOptions.Multiline
+            If optionsInput.Contains("s") Then regexOptions = regexOptions Or RegexOptions.Singleline
+            If optionsInput.Contains("c") Then regexOptions = regexOptions Or RegexOptions.Compiled
+            If optionsInput.Contains("r") Then regexOptions = regexOptions Or RegexOptions.RightToLeft
+            If optionsInput.Contains("e") Then regexOptions = regexOptions Or RegexOptions.ExplicitCapture
         End If
 
         ' Step 3: Get replacement text
-        Dim Replacementtext As String = ShowCustomInputBox("Step 2: Enter your replacement text(s), one on each line, matching to your pattern(s) (leave empty or cancel to only search for the first hit):", "Regex Search & Replace", False, LastRegexReplace)
+        Dim replacementText As String = ShowCustomInputBox("Step 2: Enter your replacement text(s), one on each line, matching to your pattern(s) (leave empty or cancel to only search for the first hit):", "Regex Search & Replace", False, LastRegexReplace)
 
         ' Update the last-used regex pattern and options
-        LastRegexPattern = RegexPattern
+        LastRegexPattern = regexPattern
         LastRegexOptions = optionsInput
-        LastRegexReplace = Replacementtext
+        LastRegexReplace = replacementText
 
         ' Split patterns and replacements into lines
-        Dim patterns() As String = RegexPattern.Split(New String() {Environment.NewLine}, StringSplitOptions.RemoveEmptyEntries)
-        Dim replacements() As String = If(Not String.IsNullOrEmpty(Replacementtext), Replacementtext.Split(New String() {Environment.NewLine}, StringSplitOptions.None), Nothing)
+        Dim patterns() As String = regexPattern.Split(New String() {Environment.NewLine}, StringSplitOptions.RemoveEmptyEntries)
+        Dim replacements() As String = If(Not String.IsNullOrEmpty(replacementText), replacementText.Split(New String() {Environment.NewLine}, StringSplitOptions.None), Nothing)
 
         ' Check if patterns and replacements match
         If replacements IsNot Nothing AndAlso patterns.Length <> replacements.Length Then
@@ -1092,19 +1193,30 @@ Partial Public Class ThisAddIn
                     Globals.ThisAddIn.Application.ActiveWindow.ScrollIntoView(sel, True)
                     Return
                 Else
-                    ShowCustomMessageBox($"No matches found for '{pattern}' {DocRef}.")
+                    ShowCustomMessageBox($"No matches found for '{pattern}' {docRef}.")
                     Return
                 End If
             End If
         Next
 
         If replacements IsNot Nothing Then
-            ShowCustomMessageBox($"{totalReplacements} replacement(s) made {DocRef}.")
+            ShowCustomMessageBox($"{totalReplacements} replacement(s) made {docRef}.")
         Else
             ShowCustomMessageBox("Search complete. No replacements were made.")
         End If
     End Sub
 
+    ''' <summary>
+    ''' Calculates the time span between the first and last revision or comment by a specified user
+    ''' (or all users) in the current selection or document. Supports optional earliest date filtering.
+    ''' </summary>
+    ''' <remarks>
+    ''' Workflow: Prompts for user name (empty = all users) → prompts for earliest date filter →
+    ''' iterates revisions and comments in scope → tracks min/max timestamps → displays time span breakdown
+    ''' (days/hours/minutes) and user list if processing all users.
+    ''' If no selection: Operates on entire document.
+    ''' If date filter provided: Only considers revisions/comments on or after that date.
+    ''' </remarks>
     Public Sub CalculateUserMarkupTimeSpan()
 
         Try
@@ -1119,23 +1231,19 @@ Partial Public Class ThisAddIn
             Dim userNames As New Microsoft.VisualBasic.Collection
             Dim selRange As Word.Range
             Dim outputUserNames As String
-            Dim DocRef As String = "in the selected text"
+            Dim docRef As String = "in the selected text"
 
             ' Initialize
             found = False
-            firstTimestamp = #1/1/1900# ' Default initialization
-            lastTimestamp = #1/1/1900# ' Default initialization
+            firstTimestamp = #1/1/1900#
+            lastTimestamp = #1/1/1900#
 
-            ' Prompt for user input
+            ' Prompt for user name
             userName = Globals.ThisAddIn.Application.UserName
-
-            ' Prompt for user input
             userInput = ShowCustomInputBox("Please enter the name of the user (leave empty for all users):", "Markup Time Span", True, userName)
             userInput = userInput.Trim()
 
-
-            ' ————————————————————————————————————————————————————————————
-            ' Prompt für earliest date
+            ' Prompt for earliest date
             Dim userDateInput As String
             Dim earliestDate As System.DateTime = System.DateTime.MinValue
             Dim earliestDateFiltered As Boolean = False
@@ -1164,17 +1272,13 @@ Partial Public Class ThisAddIn
                 Exit Sub
             End If
 
-            ' ————————————————————————————————————————————————————————————
-
-
             ' Check selection
             If Globals.ThisAddIn.Application.Selection Is Nothing OrElse String.IsNullOrWhiteSpace(Globals.ThisAddIn.Application.Selection.Range.Text) Then
-                ' If no selection, select the entire document
                 Globals.ThisAddIn.Application.ActiveDocument.Content.Select()
-                DocRef = "in the document"
+                docRef = "in the document"
             End If
             selRange = Globals.ThisAddIn.Application.Selection.Range
-            docRevisions = selRange.Revisions ' Only consider changes in the selected range
+            docRevisions = selRange.Revisions
 
             ' Process revisions
             For Each rev In docRevisions
@@ -1225,7 +1329,7 @@ Partial Public Class ThisAddIn
             If found Then
                 Dim timeSpan As String
                 Dim timeDiff As Double
-                timeDiff = DateDiff(DateInterval.Minute, firstTimestamp, lastTimestamp) ' Time difference in minutes
+                timeDiff = DateDiff(DateInterval.Minute, firstTimestamp, lastTimestamp)
                 timeSpan = System.Math.Floor(timeDiff / 1440).ToString() & " days, " &
                        ((timeDiff Mod 1440) \ 60).ToString("00") & " hours, " &
                        (timeDiff Mod 60).ToString("00") & " minutes"
@@ -1250,9 +1354,9 @@ Partial Public Class ThisAddIn
     "Time span: " & timeSpan)
             Else
                 If String.IsNullOrEmpty(userInput) Then
-                    ShowCustomMessageBox($"No markups or comments found {DocRef}.")
+                    ShowCustomMessageBox($"No markups or comments found {docRef}.")
                 Else
-                    ShowCustomMessageBox("No markups or comments found for user '" & userInput & $"' {DocRef}.")
+                    ShowCustomMessageBox("No markups or comments found for user '" & userInput & $"' {docRef}.")
                 End If
             End If
 
@@ -1260,6 +1364,17 @@ Partial Public Class ThisAddIn
             MessageBox.Show("Error in CalculateUserMarkupTimeSpan: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
         End Try
     End Sub
+
+    ''' <summary>
+    ''' Splits the selected paragraphs into two halves and compares them using the configured comparison method.
+    ''' Requires an even number of non-empty paragraphs in the selection.
+    ''' </summary>
+    ''' <remarks>
+    ''' Process: Counts non-empty paragraphs → validates even count → splits at midpoint →
+    ''' extracts text (excluding final paragraph marks) → calls CompareAndInsert or CompareAndInsertComparedoc
+    ''' based on INI_MarkupMethodHelper setting (1 = CompareDoc method, other = direct insert method).
+    ''' Empty paragraphs (length ≤ 1 after trim) are ignored in counting.
+    ''' </remarks>
     Public Sub CompareSelectionHalves()
 
         Dim sel As Word.Range
@@ -1302,7 +1417,6 @@ Partial Public Class ThisAddIn
         secondRange = sel.Paragraphs(paraIndices(halfParaCount)).Range
         secondRange.End = sel.Paragraphs(paraIndices(nonEmptyParaCount - 1)).Range.End
 
-
         ' Get text from the first and second range without the final paragraph marks
         Dim text1 As String = Left(firstRange.Text, Len(firstRange.Text) - 1)
         Dim text2 As String = Left(secondRange.Text, Len(secondRange.Text) - 1)
@@ -1313,5 +1427,4 @@ Partial Public Class ThisAddIn
             CompareAndInsertComparedoc(text1, text2, secondRange)
         End If
     End Sub
-
 End Class

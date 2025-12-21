@@ -1,4 +1,7 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: BridgeSubs.vb
 ' Part of: Red Ink for Excel
 ' Purpose: COM-visible bridge exposing selected ThisAddIn functionality (primarily
@@ -6,9 +9,6 @@
 '          helpers) for consumption from Excel VBA or other COM automation. Needed
 '          for context menu and shortcut key functionality (requires the VBA
 '          helper)
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - Class BridgeSubs (COM-visible): Thin wrapper delegating each public member to
@@ -34,12 +34,15 @@ Imports System.Threading.Tasks
 Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
+''' <summary>
+''' COM-visible bridge that exposes selected ThisAddIn automation helpers to VBA and other COM callers.
+''' </summary>
 <ComVisible(True)>
 Public Class BridgeSubs
     ''' <summary>
     ''' Asynchronously invokes Globals.ThisAddIn.InLanguage1.
     ''' </summary>
-    Public Async Function DoInLanguage1() As Task(Of Boolean)
+    Public Async Function DoInLanguage1() As Task
         Dim Result As Boolean = Await Globals.ThisAddIn.InLanguage1()
     End Function
 

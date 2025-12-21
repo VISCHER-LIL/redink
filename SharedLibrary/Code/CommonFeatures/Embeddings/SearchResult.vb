@@ -1,11 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: SearchResult.vb
 ' Part of: Red Ink Shared Library
 ' Purpose: Lightweight data model representing a single search result from embedding
 '          similarity search. Contains match location, matched text, and similarity score.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' -------------

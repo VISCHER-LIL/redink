@@ -1,6 +1,24 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Processing.FileRAG.vb
+' Purpose: Loads the configured instruction library, queries an LLM for relevant
+'          guidance, and prepares the system prompt that governs subsequent Word
+'          processing operations.
+'
+' Architecture:
+'  - Library Acquisition: Resolves the library file path (INI_Lib_File), reads the
+'    content into LibraryText, and validates availability.
+'  - Retrieval Prompting: Builds the library-search system prompt via
+'    InterpolateAtRuntime(INI_Lib_Find_SP) and invokes LLM with the current selection.
+'  - Result Application: Validates LibResult and selects the apply prompt (markup or
+'    plain) via InterpolateAtRuntime before downstream processing.
+'  - User Feedback: Utilizes InfoBox for progress updates and ShowCustomMessageBox for
+'    blocking error notifications; exception paths surface MessageBox alerts.
+'  - External Dependencies: Relies on SharedLibrary.SharedLibrary.SharedMethods for
+'    interpolation, file IO, InfoBox, message boxes, and LLM invocation helpers.
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -11,6 +29,12 @@ Imports SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
+    ''' <summary>
+    ''' Consults the configured instruction library, queries the LLM for matching content,
+    ''' and prepares the appropriate apply system prompt for later processing.
+    ''' </summary>
+    ''' <param name="DoMarkup">True to use the markup-specific apply prompt; otherwise, False.</param>
+    ''' <returns>True when the library content is loaded and the LLM returns a result; otherwise, False.</returns>
     Public Async Function ConsultLibrary(DoMarkup As Boolean) As Task(Of Boolean)
 
         Try

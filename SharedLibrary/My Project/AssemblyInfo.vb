@@ -10,9 +10,9 @@ Imports System.Runtime.InteropServices
 
 <Assembly: AssemblyTitle("SharedLibrary")>
 <Assembly: AssemblyDescription("")>
-<Assembly: AssemblyCompany("VISCHER Ltd.")>
+<Assembly: AssemblyCompany("LawDigital Ltd.")>
 <Assembly: AssemblyProduct("SharedLibrary")>
-<Assembly: AssemblyCopyright("Copyright © David Rosenthal, VISCHER Ltd. (david.rosenthal@vischer.com)")>
+<Assembly: AssemblyCopyright("Copyright © LawDigital Ltd., Switzerland")>
 <Assembly: AssemblyTrademark("")>
 
 <Assembly: ComVisible(False)>

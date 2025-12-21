@@ -1,22 +1,23 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.Helpers.vb
-' Part of: Red Ink for Excel
 ' Purpose: Helper functions for the Excel Add-In including cell protection detection,
 '          text extraction from ranges, undo functionality for cell modifications,
 '          runtime string interpolation, and VBA module validation.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - GetSelectedText: Extracts text/formulas from a range, respecting cell protection
 ' - AreAllCellsBlocked/CellProtected: Determines if cells are protected considering
 '   worksheet protection, cell lock status, and AllowEditRanges
+' - GetNumberOfWords: Counts Unicode word tokens, ignoring purely numeric or symbol entries
 ' - UndoAction: Restores cell states from undoStates collection using multiple fallback
 '   strategies for formulas (Formula, Formula2, FormulaR1C1) and values
 ' - InterpolateAtRuntime: Replaces placeholders in templates with ThisAddIn field/property values
 ' - VBAModuleWorking: Validates VBA helper module availability and version
 ' =============================================================================
+
 
 Option Strict Off   ' Late binding required for Formula2
 Option Explicit On
@@ -76,7 +77,8 @@ Partial Public Class ThisAddIn
     End Function
 
 
-    ''' Returns count of real words: sequences of letters (A–Z, unicode letters) optionally containing internal apostrophes or hyphens; numbers/symbol-only tokens are ignored.
+    ''' <summary>
+    ''' Returns the count of real words: sequences of letters (A–Z, unicode letters) that may include internal apostrophes or hyphens; numeric or symbol-only tokens are ignored.
     ''' </summary>
     ''' <param name="text">Text to evaluate.</param>
     ''' <returns>Real word count.</returns>

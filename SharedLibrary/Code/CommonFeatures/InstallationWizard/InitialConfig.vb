@@ -1,13 +1,13 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: InitialConfig.vb
 ' Part of: Red Ink Shared Library
 ' Purpose: First-run installation wizard form for configuring Red Ink LLM API access.
 '          Provides provider-specific templates (OpenAI, Azure, Google Vertex, etc.),
 '          validates user input, supports remote configuration updates, and generates
 '          INI files for Word/Excel/Outlook add-ins.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture Overview:
 ' ----------------------

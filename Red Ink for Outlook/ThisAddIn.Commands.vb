@@ -1,14 +1,13 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Outlook"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.Commands.vb
-' Part of: Red Ink for Outlook
 ' Purpose: Dispatches ribbon and menu commands for the Outlook add‑in. Provides
 '          LLM-driven transformations (translate, summarize, improve, style,
 '          shorten, answer, freestyle) on selected email text with optional
 '          markup, formatting preservation, model switching, clipboard/object
 '          insertion, and personal style application.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - Reentrancy control: inMainMenu single-entry guard in MainMenu prevents concurrent execution.
@@ -205,7 +204,7 @@ Partial Public Class ThisAddIn
                             SLib.ShowCustomMessageBox("Please enter a valid percentage between 1 And 99.")
                         End If
                     Loop
-                    ShortenLength = (Textlength * (100 - ShortenPercent) / 100)
+                    ShortenLength = (Textlength * (100 - ShortenPercentValue) / 100)
                     Command_InsertAfter(InterpolateAtRuntime(SP_Shorten), INI_DoMarkupOutlook, INI_KeepFormat2, Override(INI_ReplaceText2, INI_ReplaceText2Override), Override(INI_MarkupMethodOutlook, INI_MarkupMethodOutlookOverride))
                 Case "Sumup"
 
@@ -2029,7 +2028,7 @@ Partial Public Class ThisAddIn
                         {"Language1", "The language (in English) that will be used for the quick access button in the ribbon"},
                         {"PromptLibPath", "The filename (including path, support environmental variables) for your prompt library (if any)"},
                         {"PromptLibPathLocal", "The filename (including path, support environmental variables) for your local prompt library (if any)"},
-                        {"DefaultPrefix", "You can define here the default prefix to use within 'Freestyle' if no other prefix is used (will be added authomatically)."}
+                        {"DefaultPrefix", "You can define here the default prefix to use within 'Freestyle' if no other prefix is used (will be added automatically)."}
                     }
 
         ShowSettingsWindow(Settings, SettingsTips)

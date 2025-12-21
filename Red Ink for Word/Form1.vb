@@ -1,6 +1,5 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 
 Imports System.ComponentModel
 Imports System.Data
@@ -84,26 +83,40 @@ Imports SharedLibrary.SharedLibrary.SharedMethods
 
 Public Class frmAIChat
 
+
+    ' Windows API function to check async key state (used for ESC key detection during command execution)
     <DllImport("user32.dll")>
     Private Shared Function GetAsyncKeyState(vKey As Integer) As Short
     End Function
 
-    Const AN As String = "Red Ink"
-    Const AN5 As String = "Inky"   ' for Chatbox
-    Const AN6 As String = "RI"
+    ' Application name constants for UI display
+    Const AN As String = "Red Ink"          ' Full application name
+    Const AN5 As String = "Inky"            ' Chat assistant name
+    Const AN6 As String = "RI"              ' Abbreviated name for comments
 
+    ' Special marker character used during text replacement operations to prevent infinite loops
     Const MarkerChar As String = ChrW(&HE000)
+
+    ' Number of characters to show before/after cursor for context extraction
     Const CursorPositionCount As Integer = 25
 
+    ' Tracks newline prefix for chat history formatting
     Private PreceedingNewline As String = ""
+
+    ' Stores older chat history for context preservation during model switches
     Private OldChat As String = ""
+
+    ' Word's default UI language (used for localized LLM responses)
     Private UserLanguage As String = Globals.ThisAddIn.GetWordDefaultInterfaceLanguage()
+
+    ' Current system prompt constructed based on active checkboxes and capabilities
     Private SystemPrompt As String = ""
 
-    ' Tracks a user-chosen alternate model for temporary use per-call.
-    Private _alternateModelSelected As Boolean = False
-    Private _alternateModelConfig As ModelConfig = Nothing
-    Private _alternateModelDisplayName As String = Nothing
+    ' Alternate model selection state and configuration
+    Private _alternateModelSelected As Boolean = False          ' True when user selected alternate model
+    Private _alternateModelConfig As ModelConfig = Nothing      ' Snapshot of alternate model config
+    Private _alternateModelDisplayName As String = Nothing      ' Display name for title bar
+
 
     Private WithEvents btnCopy As New Button() With {.Text = "Copy All", .AutoSize = True}
     Private WithEvents btnCopyLastAnswer As New Button() With {.Text = "Copy Last Answer", .AutoSize = True}
@@ -135,16 +148,22 @@ Public Class frmAIChat
         .Height = 40
     }
 
+    ' Shared context for INI settings and LLM configuration
     Private _context As ISharedContext = New SharedContext()
 
-    ' Tracks whether we are using the second model/API.
+    ' Flags whether secondary API is active (disables document checkboxes)
     Private _useSecondApi As Boolean = False
 
-    ' We keep the entire conversation in a List of (role, content).
+    ' Complete conversation history as (role, content) tuples for context window management
     Private _chatHistory As New List(Of (Role As String, Content As String))
 
 
-
+    ''' <summary>
+    ''' Initializes the chat form with shared context and constructs the UI layout.
+    ''' Creates a TableLayoutPanel with 5 rows: instructions label, chat history,
+    ''' user input, checkboxes panel, and buttons panel.
+    ''' </summary>
+    ''' <param name="context">Shared context providing INI settings and LLM configuration</param>
     Public Sub New(context As ISharedContext)
         ' This call is required by the designer.
         InitializeComponent()
@@ -154,36 +173,36 @@ Public Class frmAIChat
         txtChatHistory.Multiline = True
         txtUserInput.Multiline = True
 
-        ' 1) TableLayoutPanel anlegen
+        ' 1) Create TableLayoutPanel
         Dim mainLayout As New TableLayoutPanel() With {
         .ColumnCount = 1,
         .RowCount = 5,
         .Dock = DockStyle.Fill,
         .AutoSize = False,
-        .Padding = New Padding(10)   ' wird gleich überschrieben
+        .Padding = New Padding(10)   ' will be overridden below
     }
 
-        ' 2) Spalten‑Breite auf 100 % setzen
+        ' 2) Set column width to 100%
         mainLayout.ColumnStyles.Clear()
         mainLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
 
-        ' 3) Rechts 20 px Innenabstand
+        ' 3) 20px right padding
         mainLayout.Padding = New Padding(left:=10, top:=10, right:=20, bottom:=10)
 
-        ' 4) Zeilen definieren
+        ' 4) Define row styles
         mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         mainLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F))
         mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
         mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))
 
-        ' 5) Controls konfigurieren
+        ' 5) Configure controls
         lblInstructions.AutoSize = True
         lblInstructions.Dock = DockStyle.Top
         txtChatHistory.Dock = DockStyle.Fill
         txtUserInput.Dock = DockStyle.Fill
 
-        ' 6) Controls in die Tabelle packen
+        ' 6) Add controls to table
         mainLayout.Controls.Add(lblInstructions, 0, 0)
         mainLayout.Controls.Add(txtChatHistory, 0, 1)
         mainLayout.Controls.Add(txtUserInput, 0, 2)
@@ -192,7 +211,7 @@ Public Class frmAIChat
 
         InitChatHtmlUI(mainLayout)
 
-        ' 7) Form neu befüllen
+        ' 7) Repopulate form
         Me.Controls.Clear()
         Me.Controls.Add(mainLayout)
 
@@ -201,7 +220,12 @@ Public Class frmAIChat
 
 
 
-    ' Runs once when form loads.
+    ''' <summary>
+    ''' Handles form initialization after all controls are created.
+    ''' Restores previous chat history (HTML preferred, plain text fallback),
+    ''' positions window from saved settings, configures UI elements,
+    ''' and displays welcome message if no prior chat exists.
+    ''' </summary>
     Private Async Sub frmAIChat_Load(sender As Object, e As EventArgs) Handles MyBase.Load
 
         Me.StartPosition = FormStartPosition.Manual
@@ -302,7 +326,10 @@ Public Class frmAIChat
         If String.IsNullOrEmpty(txtUserInput.Text) Then txtUserInput.Focus()
     End Sub
 
-    ' Centralized title updater: shows primary/second/alternate model name.
+    ''' <summary>
+    ''' Updates form title to show currently active model name.
+    ''' Priority: alternate model display name > second API model > primary model.
+    ''' </summary>
     Private Sub UpdateTitle()
         Dim titleModel As String
         If Not String.IsNullOrWhiteSpace(_context.INI_AlternateModelPath) AndAlso _alternateModelSelected AndAlso Not String.IsNullOrWhiteSpace(_alternateModelDisplayName) Then
@@ -313,8 +340,14 @@ Public Class frmAIChat
         Me.Text = $"Chat (using {titleModel})"
     End Sub
 
-    ' Executes an LLM call while temporarily applying any selected alternate model.
-    ' Always restores the original config afterwards.
+    ''' <summary>
+    ''' Executes LLM call with temporary alternate model configuration if selected.
+    ''' Backs up current config, applies alternate, runs LLM, then restores original.
+    ''' Ensures global context remains pristine between calls.
+    ''' </summary>
+    ''' <param name="systemPrompt">System prompt with capabilities and instructions</param>
+    ''' <param name="fullPrompt">Complete user prompt including context and conversation</param>
+    ''' <returns>LLM response text</returns>
     Private Async Function CallLlmWithSelectedModelAsync(systemPrompt As String, fullPrompt As String) As Task(Of String)
         Dim backupConfig As ModelConfig = Nothing
         Dim appliedAlternate As Boolean = False
@@ -344,9 +377,11 @@ Public Class frmAIChat
         End Try
     End Function
 
-    ' When the user clicks Send, we call the LLM with context.
-    ' Then append the AI response to the conversation.
-
+    ''' <summary>
+    ''' Main handler for Send button. Constructs system and user prompts based on selected
+    ''' checkboxes (document, selection, other docs, commands), calls LLM, displays response,
+    ''' executes any bot commands, and updates chat history. Handles errors and reports them.
+    ''' </summary>
     Private Async Sub btnSend_Click(sender As Object, e As EventArgs)
         Dim userPrompt As String = txtUserInput.Text.Trim()
         If userPrompt = "" Then Return
@@ -356,7 +391,7 @@ Public Class frmAIChat
 
         Try
             ' Build entire conversation so far into one string for context
-            SystemPrompt = _context.SP_ChatWord().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("dd-MMM-yyyy hh:mm tt", CultureInfo.GetCultureInfo("en-US"))}. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland." & If(chkIncludeDocText.Checked, "\nYou have access to the user's document. \n", "") & If(chkIncludeselection.Checked, "\nYou have access to a selection of user's document. \n ", "") & If(My.Settings.DoCommands And (chkIncludeDocText.Checked Or chkIncludeselection.Checked), _context.SP_Add_ChatWord_Commands, _context.SP_Add_Chat_NoCommands)
+            SystemPrompt = _context.SP_ChatWord().Replace("{UserLanguage}", UserLanguage) & $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("dd-MMM-yyyy hh:mm tt", CultureInfo.GetCultureInfo("en-US"))}. " & If(chkIncludeDocText.Checked, "\nYou have access to the user's document. \n", "") & If(chkIncludeselection.Checked, "\nYou have access to a selection of user's document. \n ", "") & If(My.Settings.DoCommands And (chkIncludeDocText.Checked Or chkIncludeselection.Checked), _context.SP_Add_ChatWord_Commands, _context.SP_Add_Chat_NoCommands)
 
             SystemPrompt = _context.SP_ChatWord().
                         Replace("{UserLanguage}", UserLanguage) &
@@ -550,7 +585,13 @@ Public Class frmAIChat
         _chatHistory.Add(("assistant", $"System Error: {errorMessage}"))
     End Sub
 
-    ' Gets context around the cursor position (characters before and after) with cursor position marker
+    ''' <summary>
+    ''' Extracts text context around cursor position when no selection exists.
+    ''' Returns specified number of characters before/after cursor with "[cursor is here]" marker.
+    ''' Includes comments/bubbles if available in the context range.
+    ''' </summary>
+    ''' <param name="charCount">Number of characters to extract before and after cursor</param>
+    ''' <returns>Context string with cursor marker, or empty if selection exists</returns>
     Private Function GetCursorContext(charCount As Integer) As String
         Try
             Dim activeDoc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
@@ -1089,6 +1130,13 @@ Public Class frmAIChat
     End Sub
 
 
+    ''' <summary>
+    ''' Normalizes various paragraph mark encodings to Word's native format (vbCr).
+    ''' Handles: actual control chars, Word Find tokens (^p, ^13), literal escape sequences (\r\n, \n, \r).
+    ''' Used to ensure LLM-generated text matches Word's internal paragraph representation.
+    ''' </summary>
+    ''' <param name="raw">Text potentially containing mixed paragraph mark encodings</param>
+    ''' <returns>Normalized text with consistent vbCr paragraph marks</returns>
     Private Function DecodeParagraphMarks(raw As String) As String
         If String.IsNullOrEmpty(raw) Then Return ""
 
@@ -1134,10 +1182,13 @@ Public Class frmAIChat
         Public Property Argument2 As String
     End Class
 
-    ' Parses the input string for embedded commands of the format:
-    ' [#command: @@argument1@@ §§argument2§§ #]
-    ' Returns a List of ParsedCommand objects.
-    ' argument2 is optional; if not present, it defaults to "".
+    ''' <summary>
+    ''' Parses embedded bot commands from LLM response using pattern: [#verb: @@arg1@@ §§arg2§§ #]
+    ''' Supports tempered-greedy matching: single @ or § allowed inside args, only @@ or §§ terminate.
+    ''' Second argument is optional (defaults to empty string for delete operations).
+    ''' </summary>
+    ''' <param name="input">Text potentially containing command blocks</param>
+    ''' <returns>List of parsed commands with verb and arguments</returns>
     Private Function ParseCommands(input As String) As List(Of ParsedCommand)
         Dim results As New List(Of ParsedCommand)
         Try
@@ -1242,6 +1293,14 @@ Public Class frmAIChat
     Private CommandsList As String = ""
     Private FailedCommandsList As New List(Of String)() ' Add this to track failed commands
 
+    ''' <summary>
+    ''' Executes parsed bot commands on the active Word document.
+    ''' Ensures cursor is in main text story, sets revisions view to Final,
+    ''' tracks success/failure for each command, removes marker characters,
+    ''' and reports failures to chat. Supports ESC to abort.
+    ''' </summary>
+    ''' <param name="teststring">LLM response containing embedded commands</param>
+    ''' <param name="OnlySelection">True to restrict operations to current selection</param>
     Public Sub ExecuteAnyCommands(teststring As String, OnlySelection As Boolean)
 
         Dim commands = ParseCommands(teststring)
@@ -1424,8 +1483,13 @@ Public Class frmAIChat
     End Sub
 
 
-    ' Returns the end position of the TOC that contains (or overlaps) the given range.
-    ' 0 means: not inside/overlapping any TOC.
+    ''' <summary>
+    ''' Checks if a range overlaps any Table of Contents in the document.
+    ''' Used to skip TOC areas during command execution to prevent corruption.
+    ''' </summary>
+    ''' <param name="foundRange">Range to check for TOC overlap</param>
+    ''' <param name="doc">Active Word document</param>
+    ''' <returns>End position of overlapping TOC, or 0 if not inside/overlapping any TOC</returns>
     Private Function TocEndIfInside(foundRange As Word.Range, doc As Word.Document) As Integer
         If foundRange Is Nothing OrElse doc Is Nothing Then Return 0
         For Each toc As Word.TableOfContents In doc.TablesOfContents
@@ -1516,18 +1580,16 @@ Public Class frmAIChat
     End Sub
 
 
-    ' Adds a threaded reply to an existing Word comment identified by a single LLM-friendly token.
-    ' Token formats accepted (order of precedence):
-    '  - "1234|abcdef..."              (id|hash)
-    '  - "id=1234;hash=abcdef..."      (labels; separators ; , | or whitespace)
-    '  - "wid:1234 ph:abcdef..."       (labels with ':' and whitespace)
-    '  - "1234"                        (id only)
-    '  - "abcdef..."                   (hash only)
 
-    Private Function ExecuteReplyToCommentByIdToken(
-    ByVal idToken As String,
-    ByVal replyText As String
-) As Boolean
+    ''' <summary>
+    ''' Adds threaded reply to existing Word comment using LLM-friendly token formats.
+    ''' Accepts: "id|hash", "id=123;hash=abc", "wid:123 ph:abc", "123" (id only), "abcdef" (hash only).
+    ''' Restores selection to main story after operation to avoid leaving caret in comment.
+    ''' </summary>
+    ''' <param name="idToken">Combined identifier token for target comment</param>
+    ''' <param name="replyText">Reply text to add (prefixed with AN6)</param>
+    ''' <returns>True if reply added successfully</returns>
+    Private Function ExecuteReplyToCommentByIdToken(ByVal idToken As String, ByVal replyText As String) As Boolean
 
         Dim app As Microsoft.Office.Interop.Word.Application = Nothing
         Dim doc As Microsoft.Office.Interop.Word.Document = Nothing
@@ -1600,13 +1662,15 @@ Public Class frmAIChat
 
 
 
-    ' Parses a combined ID token into Word comment Index (WordID) and/or PseudoHash.
-    ' Returns True if at least one identifier could be extracted.
-    Private Function TryParseCommentIdToken(
-    ByVal raw As String,
-    ByRef wordId As System.Nullable(Of Integer),
-    ByRef pseudoHash As String
-) As Boolean
+    ''' <summary>
+    ''' Parses combined comment ID token into Word comment Index and/or PseudoHash.
+    ''' Tries formats in order: pipe-separated, labeled (id=/wid:/hash=/ph:), plain number, plain hash.
+    ''' </summary>
+    ''' <param name="raw">Token string to parse</param>
+    ''' <param name="wordId">Output: Word comment index if found</param>
+    ''' <param name="pseudoHash">Output: Pseudo-hash identifier if found</param>
+    ''' <returns>True if at least one identifier extracted</returns>
+    Private Function TryParseCommentIdToken(ByVal raw As String, ByRef wordId As System.Nullable(Of Integer), ByRef pseudoHash As String) As Boolean
         wordId = Nothing
         pseudoHash = Nothing
         If String.IsNullOrWhiteSpace(raw) Then Return False
@@ -2354,6 +2418,10 @@ Public Class frmAIChat
 
 End Class
 
+''' <summary>
+''' HTML/Markdown rendering section for chat display.
+''' Uses WebBrowser control for rich formatting with Markdig pipeline.
+''' </summary>
 Partial Public Class frmAIChat
 
     ' Add a field
@@ -2401,7 +2469,10 @@ Partial Public Class frmAIChat
     End Sub
 
 
-    ' HTML renderer for the chat history: an overlay WebBrowser on top of the hidden txtChatHistory.
+    ''' <summary>
+    ''' WebBrowser control for HTML chat display. Overlays txtChatHistory.
+    ''' Configured to suppress script errors and enable context menu.
+    ''' </summary>
     Private ReadOnly wbChat As New WebBrowser() With {
     .Dock = DockStyle.Fill,
     .AllowWebBrowserDrop = False,
@@ -2414,7 +2485,11 @@ Partial Public Class frmAIChat
     Private _htmlReady As Boolean = False
     Private ReadOnly _htmlQueue As New List(Of String)()
 
-    ' Extended Markdown pipeline for chat (advanced features + emoji + soft line breaks).
+
+    ''' <summary>
+    ''' Markdig pipeline with advanced extensions, emoji support, and soft line breaks.
+    ''' Used for converting assistant responses from Markdown to HTML.
+    ''' </summary>
     Private ReadOnly _mdPipeline As MarkdownPipeline =
         New MarkdownPipelineBuilder().
             UseAdvancedExtensions().
@@ -2424,7 +2499,10 @@ Partial Public Class frmAIChat
 
     Private _lastThinkingId As String = Nothing
 
-    ' Bridge to open links in the default browser from inside the WebBrowser control
+    ''' <summary>
+    ''' COM-visible bridge class for opening links from WebBrowser in default browser.
+    ''' Exposed via ObjectForScripting to allow JavaScript interaction.
+    ''' </summary>
     <System.Runtime.InteropServices.ComVisible(True)>
     Public Class BrowserBridge
         Public Sub OpenLink(url As String)
@@ -2583,6 +2661,13 @@ function removeById(id) {{
                  Replace("""", "&quot;")
     End Function
 
+    ''' <summary>
+    ''' Instruments anchor tags in HTML to open externally via BrowserBridge.
+    ''' Adds onclick handler calling window.external.OpenLink and prevents default navigation.
+    ''' Forces target="_self" to avoid popup behavior in legacy IE engines.
+    ''' </summary>
+    ''' <param name="html">HTML fragment potentially containing anchor tags</param>
+    ''' <returns>HTML with instrumented links</returns>
     Private Shared Function InstrumentLinks(html As String) As String
         If String.IsNullOrEmpty(html) Then Return html
         Try

@@ -1,12 +1,12 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: MlNetTokenizer.vb
 ' Part of: Red Ink Shared Library
 ' Purpose: SentencePiece-based subword tokenization using Microsoft.ML.Tokenizers
 '          for embedding model input preparation. Converts text to token IDs with
 '          padding/truncation and tracks token offsets for alignment with source text.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   - MlNetTokenizer (Module): Stateful wrapper around ML.NET LlamaTokenizer.

@@ -1,6 +1,27 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.FindClause.vb
+' Purpose: Provides the FindClause and AddClause workflows for the Word add-in, handling
+'          clause retrieval via LLM and maintenance of clause library files.
+'
+' Architecture:
+'  - ClauseLibrary parsing: Scans global/local folders for AN2-lib-*.txt files, splits them into
+'    segments, and resolves prompt overrides at file or segment scope.
+'  - UI parameter collection: Uses SharedMethods input forms for library selection, search text,
+'    and optional library editing entry points.
+'  - LLM interaction: Builds system/user prompts (with selected text, explicit queries, and JSON
+'    segments), optionally swaps model configuration, and parses the LLM response into Markdown.
+'  - Markdown rendering: Cleans LLM JSON, tolerates malformed payloads, and produces pane-ready
+'    Markdown with metadata.
+'  - Library maintenance: AddClause appends text into the chosen segment while preserving the
+'    original JSON layout (wrapper object, array, or standalone objects) and enforces duplicate
+'    checks.
+'  - Helper utilities: Include directory enumeration, INI path expansion, JSON cleanup/fallback
+'    parsing, segment range tracking, and duplicate detection across clause formats.
+' =============================================================================
+
 
 Option Explicit On
 Option Strict On
@@ -15,10 +36,14 @@ Imports Newtonsoft.Json.Linq
 Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
+''' <summary>
+''' Encapsulates clause discovery and clause library maintenance workflows for Red Ink for Word.
+''' </summary>
 Partial Public Class ThisAddIn
 
-
-    ' Data container for a clause library segment
+    ''' <summary>
+    ''' Represents a clause library segment loaded from a library file, including resolved prompt overrides.
+    ''' </summary>
     Private Class ClauseLibrary
         Public Property Title As String
         Public Property SourcePath As String
@@ -28,7 +53,9 @@ Partial Public Class ThisAddIn
         Public Property EffectiveMergePrompt As String     ' MergePrompt override (file or segment)  << NEW
     End Class
 
-
+    ''' <summary>
+    ''' Executes the Clause Finder workflow: gathers user input, calls the LLM, and displays matching clauses.
+    ''' </summary>
     Public Async Sub FindClause()
         Try
             If INILoadFail() Then Return
@@ -86,7 +113,7 @@ Partial Public Class ThisAddIn
             Dim defaultDisplay As String = If(options.Count > 0, options(0), "")
             Dim defaultUseSelected As Boolean = Not String.IsNullOrWhiteSpace(selectedText)
             ' OtherPrompt (global) will hold the search query
-            Dim p0 As New SLib.InputParameter("Clause Library", defaultDisplay) With {.options = New List(Of String)(options)}
+            Dim p0 As New SLib.InputParameter("Clause Library", defaultDisplay) With {.Options = New List(Of String)(options)}
             Dim p1 As New SLib.InputParameter("Search for", "") ' text to search (query)
             Dim paramArr() As SLib.InputParameter
             If selectedText <> "" Then
@@ -261,7 +288,12 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-    ' Load all clause libraries from both paths
+    ''' <summary>
+    ''' Loads all clause library segments from both global and local paths.
+    ''' </summary>
+    ''' <param name="pathGlobal">Expanded path to the global library folder.</param>
+    ''' <param name="pathLocal">Expanded path to the local library folder.</param>
+    ''' <returns>List of clause segments discovered in the configured paths.</returns>
     Private Function LoadClauseLibraries(pathGlobal As String, pathLocal As String) As List(Of ClauseLibrary)
         Dim list As New List(Of ClauseLibrary)()
         Dim candidates As New List(Of Tuple(Of String, Boolean))()
@@ -284,6 +316,11 @@ Partial Public Class ThisAddIn
         Return list
     End Function
 
+    ''' <summary>
+    ''' Enumerates clause library files inside the provided folder.
+    ''' </summary>
+    ''' <param name="folder">Target directory to scan.</param>
+    ''' <returns>Enumerable of absolute file paths that match the AN2-lib-*.txt pattern.</returns>
     Private Function EnumerateClauseLibraryFiles(folder As String) As IEnumerable(Of String)
         Dim matches As New List(Of String)
         Try
@@ -296,11 +333,12 @@ Partial Public Class ThisAddIn
         Return matches
     End Function
 
-    ' Parses a clause library file. Supports:
-    '   - Lines starting with ';' are comments
-    '   - "SP_FindClause = <prompt>" lines (file-level before any [Title] or segment-level after a [Title])
-    '   - "SP_MergePrompt = <prompt>" lines (file-level before any [Title] or segment-level after a [Title])
-    '   - Segments delimited by [Title] ... (JSON content lines gathered)
+    ''' <summary>
+    ''' Parses a clause library file into ClauseLibrary instances, capturing prompt overrides per segment.
+    ''' </summary>
+    ''' <param name="filePath">Library file to read.</param>
+    ''' <param name="isLocal">Indicates whether the file resides in the local directory.</param>
+    ''' <returns>List of segments discovered within the file.</returns>
     Private Function ParseClauseLibraryFile(filePath As String, isLocal As Boolean) As List(Of ClauseLibrary)
         Dim libs As New List(Of ClauseLibrary)()
         Try
@@ -378,6 +416,12 @@ Partial Public Class ThisAddIn
         Return libs
     End Function
 
+    ''' <summary>
+    ''' Attempts to parse a FindClause prompt override line.
+    ''' </summary>
+    ''' <param name="line">Line content to evaluate.</param>
+    ''' <param name="valueOut">Outputs the parsed prompt text.</param>
+    ''' <returns>True when the line contains an SP_FindClause assignment.</returns>
     Private Function TryParseFindClauseLine(line As String, ByRef valueOut As String) As Boolean
         valueOut = Nothing
         If line Is Nothing Then Return False
@@ -389,6 +433,12 @@ Partial Public Class ThisAddIn
         Return False
     End Function
 
+    ''' <summary>
+    ''' Attempts to parse a MergePrompt override line.
+    ''' </summary>
+    ''' <param name="line">Line content to evaluate.</param>
+    ''' <param name="valueOut">Outputs the parsed prompt text.</param>
+    ''' <returns>True when the line contains an SP_MergePrompt assignment.</returns>
     Private Function TryParseMergePromptLine(line As String, ByRef valueOut As String) As Boolean
         valueOut = Nothing
         If line Is Nothing Then Return False
@@ -417,7 +467,11 @@ Partial Public Class ThisAddIn
     ' Replace the previous BuildMarkdownFromClauseResponse with the improved, more robust version below.
     ' Add the two new helper functions (CleanAndExtractJson, FallbackExtractRecords) anywhere in the class.
 
-    ' Cleans LLM output (removes surrounding code fences, stray text) and extracts the most likely JSON payload.
+    ''' <summary>
+    ''' Cleans LLM output and extracts the most probable JSON payload for downstream parsing.
+    ''' </summary>
+    ''' <param name="raw">Raw LLM response.</param>
+    ''' <returns>String containing the cleaned JSON region or an empty string.</returns>
     Private Function CleanAndExtractJson(raw As String) As String
         If String.IsNullOrWhiteSpace(raw) Then Return ""
         Dim s = raw.Trim()
@@ -447,7 +501,11 @@ Partial Public Class ThisAddIn
         Return s
     End Function
 
-    ' Very lenient fallback extraction if JSON parsing fails (returns list of minimal JObject-like dictionaries).
+    ''' <summary>
+    ''' Extracts record-like dictionaries from malformed JSON as a last resort.
+    ''' </summary>
+    ''' <param name="raw">Raw or partially cleaned response string.</param>
+    ''' <returns>List of dictionaries resembling clause records.</returns>
     Private Function FallbackExtractRecords(raw As String) As List(Of Dictionary(Of String, String))
         Dim list As New List(Of Dictionary(Of String, String))()
         If String.IsNullOrWhiteSpace(raw) Then Return list
@@ -494,6 +552,11 @@ Partial Public Class ThisAddIn
         Return list
     End Function
 
+    ''' <summary>
+    ''' Converts the LLM JSON response into Markdown, using fallback parsing if required.
+    ''' </summary>
+    ''' <param name="responseJson">Response string returned by the model.</param>
+    ''' <returns>Markdown representation of the discovered clauses.</returns>
     Private Function BuildMarkdownFromClauseResponse(responseJson As String) As String
         Dim sb As New System.Text.StringBuilder()
 
@@ -656,7 +719,12 @@ Partial Public Class ThisAddIn
         Return sb.ToString().Trim()
     End Function
 
-
+    ''' <summary>
+    ''' Retrieves the first available string value from a JObject using the provided key order.
+    ''' </summary>
+    ''' <param name="obj">JObject to inspect.</param>
+    ''' <param name="keys">Key preference order.</param>
+    ''' <returns>The first non-empty string value or Nothing.</returns>
     Private Function GetFirstString(obj As JObject, keys As IEnumerable(Of String)) As String
         For Each k In keys
             Dim p = obj.Properties().FirstOrDefault(Function(pr) pr.Name.Equals(k, StringComparison.OrdinalIgnoreCase))
@@ -685,6 +753,23 @@ Partial Public Class ThisAddIn
     '   (C) Sequence of standalone objects:  { ... }\r\n{ ... }\r\n{ ... }
     ' The field name used for clause text is determined from the LAST existing object’s first string property;
     ' if none exists, it falls back to "Text".  Duplicate detection uses that dynamic field.
+
+
+    ''' <summary>
+    ''' Adds the current Word selection (or optionally edited text) to a chosen clause library segment.
+    ''' When no text is selected, allows direct editing of a library file. Supports three JSON storage
+    ''' formats and preserves the original structure when appending new records.
+    ''' </summary>
+    ''' <remarks>
+    ''' This method performs the following steps:
+    ''' 1. Acquires the current Word selection.
+    ''' 2. Loads all available clause library segments from configured paths.
+    ''' 3. Prompts user to choose a target segment and optional text cleaning.
+    ''' 4. Optionally invokes an LLM to clean/anonymize the selected text.
+    ''' 5. Parses the target segment's JSON content.
+    ''' 6. Appends the new clause while preserving the original JSON layout (wrapper object, array, or standalone objects).
+    ''' 7. Performs duplicate detection and writes changes back to the library file with retry logic on file locks.
+    ''' </remarks>
     Public Async Sub AddClause()
         Try
             If INILoadFail() Then Return
@@ -845,11 +930,11 @@ Partial Public Class ThisAddIn
                 Try
                     ' Try to obtain exclusive lock
                     Using fs As New IO.FileStream(targetFile,
-                                                  IO.FileMode.Open,
-                                                  IO.FileAccess.ReadWrite,
-                                                  IO.FileShare.None)
+                                              IO.FileMode.Open,
+                                              IO.FileAccess.ReadWrite,
+                                              IO.FileShare.None)
 
-                        ' Read file content THROUGH THE SAME LOCKED STREAM (avoid File.ReadAllLines re-open)
+                        ' Read file content through the same locked stream
                         Dim rawText As String
                         Using sr As New IO.StreamReader(fs, New System.Text.UTF8Encoding(False), True, 4096, True)
                             rawText = sr.ReadToEnd()
@@ -865,7 +950,7 @@ Partial Public Class ThisAddIn
                             allLines = norm.Split(New String() {vbLf}, StringSplitOptions.None).ToList()
                         End If
 
-                        ' Parse segments WITH line positions so we can replace only chosen segment content
+                        ' Parse segments with line positions so we can replace only chosen segment content
                         Dim segments = ParseSegmentsWithPositions(allLines)
                         Dim segInfo = segments.FirstOrDefault(Function(s) s.Title.Equals(chosenSegment.Title, StringComparison.OrdinalIgnoreCase))
                         If segInfo Is Nothing Then
@@ -908,14 +993,13 @@ Partial Public Class ThisAddIn
 
                     success = True
                     ShowCustomMessageBox($"Clause added to segment '{chosenSegment.Title}' of your library file.",
-                                                                    extraButtonText:="Edit file",
-                                                                    extraButtonAction:=Sub()
-                                                                                           ' Your code here
-                                                                                           SLib.ShowTextFileEditor(targetFile, $"Edit your library file ('{targetFile}'):", True, _context)
-                                                                                       End Sub)
+                                                                extraButtonText:="Edit file",
+                                                                extraButtonAction:=Sub()
+                                                                                       SLib.ShowTextFileEditor(targetFile, $"Edit your library file ('{targetFile}'):", True, _context)
+                                                                                   End Sub)
 
                 Catch ioEx As IO.IOException
-                    ' True sharing violation only happens on opening, not during internal re-read now.
+                    ' Sharing violation only happens on opening, not during internal re-read.
                     Dim choice = ShowCustomYesNoBox($"Could not acquire exclusive access (attempt {attempt}). Retry?", "Retry", "Abort")
                     If choice <> 1 Then
                         ShowCustomMessageBox("Operation aborted - could not acquire lock.")
@@ -929,22 +1013,30 @@ Partial Public Class ThisAddIn
                 End Try
             End While
 
-        Catch ex As system.Exception
+        Catch ex As System.Exception
 #If DEBUG Then
-            System.Diagnostics.Debug.WriteLine("AddClause error: " & ex.Message)
-            System.Diagnostics.Debug.WriteLine(ex.StackTrace)
+        System.Diagnostics.Debug.WriteLine("AddClause error: " & ex.Message)
+        System.Diagnostics.Debug.WriteLine(ex.StackTrace)
 #End If
             ShowCustomMessageBox("Error in AddClause: " & ex.Message)
         End Try
     End Sub
 
-    ' ----- Helper: parse the entire library file into segments with line positions -----
+    ''' <summary>
+    ''' Parses the entire library file content (provided as a list of lines) into segments with precise line positions.
+    ''' </summary>
+    ''' <param name="lines">List of text lines from the library file.</param>
+    ''' <returns>List of SegmentInfo objects describing each segment's title and content range.</returns>
+    ''' <remarks>
+    ''' This function ignores SP_FindClause and SP_MergePrompt override lines when calculating content boundaries.
+    ''' Segments are delimited by lines matching the pattern [SegmentTitle].
+    ''' </remarks>
     Private Function ParseSegmentsWithPositions(lines As List(Of String)) As List(Of SegmentInfo)
         Dim result As New List(Of SegmentInfo)()
         Dim currentTitle As String = Nothing
         Dim contentStart As Integer = -1
 
-        ' We must ignore SP_FindClause / SP_MergePrompt lines from content (same logic as original parser)
+        ' Ignore SP_FindClause / SP_MergePrompt lines from content (same logic as original parser)
         Dim i As Integer = 0
         While i < lines.Count
             Dim rawLine = lines(i)
@@ -957,10 +1049,10 @@ Partial Public Class ThisAddIn
                     Dim segEndLineExclusive = i ' current header line starts next segment
                     Dim contentCount = System.Math.Max(0, segEndLineExclusive - contentStart)
                     result.Add(New SegmentInfo With {
-                        .Title = currentTitle,
-                        .ContentStartLine = contentStart,
-                        .ContentLineCount = contentCount
-                    })
+                    .Title = currentTitle,
+                    .ContentStartLine = contentStart,
+                    .ContentLineCount = contentCount
+                })
                 End If
 
                 currentTitle = line.Substring(1, line.Length - 2).Trim()
@@ -971,9 +1063,9 @@ Partial Public Class ThisAddIn
 
             ' Skip prompt override lines from segment content (they are not part of JSON)
             If currentTitle IsNot Nothing AndAlso
-               (Regex.IsMatch(line, "^\s*SP_FindClause\s*=", RegexOptions.IgnoreCase) OrElse
-                Regex.IsMatch(line, "^\s*SP_MergePrompt\s*=", RegexOptions.IgnoreCase)) Then
-                ' ensure contentStart moves forward if prompt lines appear at the beginning
+           (Regex.IsMatch(line, "^\s*SP_FindClause\s*=", RegexOptions.IgnoreCase) OrElse
+            Regex.IsMatch(line, "^\s*SP_MergePrompt\s*=", RegexOptions.IgnoreCase)) Then
+                ' Ensure contentStart moves forward if prompt lines appear at the beginning
                 If contentStart = i Then contentStart = i + 1
             End If
 
@@ -985,22 +1077,40 @@ Partial Public Class ThisAddIn
             Dim segEnd = lines.Count
             Dim contentCount = System.Math.Max(0, segEnd - contentStart)
             result.Add(New SegmentInfo With {
-                .Title = currentTitle,
-                .ContentStartLine = contentStart,
-                .ContentLineCount = contentCount
-            })
+            .Title = currentTitle,
+            .ContentStartLine = contentStart,
+            .ContentLineCount = contentCount
+        })
         End If
 
         Return result
     End Function
 
+    ''' <summary>
+    ''' Contains metadata about a clause library segment's position within the library file.
+    ''' </summary>
     Private Class SegmentInfo
+        ''' <summary>Gets or sets the segment title.</summary>
         Public Property Title As String
-        Public Property ContentStartLine As Integer   ' index of first JSON content line
-        Public Property ContentLineCount As Integer   ' number of lines belonging to JSON content
+        ''' <summary>Gets or sets the zero-based line index where JSON content begins.</summary>
+        Public Property ContentStartLine As Integer
+        ''' <summary>Gets or sets the number of lines belonging to JSON content.</summary>
+        Public Property ContentLineCount As Integer
     End Class
 
-    ' ----- Helper: Append clause text to segment JSON (lenient formats) -----
+    ''' <summary>
+    ''' Appends the provided clause text to the existing segment JSON, preserving the original format.
+    ''' </summary>
+    ''' <param name="originalJson">The JSON content of the target segment.</param>
+    ''' <param name="finalText">The clause text to append.</param>
+    ''' <returns>Updated JSON string with the new clause appended, or Nothing if the operation fails or is cancelled.</returns>
+    ''' <remarks>
+    ''' Supports three storage formats:
+    ''' (A) Wrapper object with a "Records" array.
+    ''' (B) Pure JSON array.
+    ''' (C) Sequence of standalone objects separated by blank lines.
+    ''' Performs duplicate checking based on the dynamically detected field name.
+    ''' </remarks>
     Private Function AppendClauseToSegment(originalJson As String, finalText As String) As String
         Dim trimmed = (If(originalJson, "")).Trim()
 
@@ -1028,7 +1138,7 @@ Partial Public Class ThisAddIn
                 arr.Add(newRec)
                 Return obj.ToString(Formatting.Indented)
             Catch
-                ' fall through to next styles
+                ' Fall through to next styles
             End Try
         End If
 
@@ -1048,7 +1158,7 @@ Partial Public Class ThisAddIn
                 arr.Add(New JObject From {{fieldName, finalText}})
                 Return arr.ToString(Formatting.Indented)
             Catch
-                ' fall through
+                ' Fall through
             End Try
         End If
 
@@ -1082,7 +1192,7 @@ Partial Public Class ThisAddIn
             Return "{""Records"":" & arr.ToString(Formatting.None) & "}"
         End If
 
-        ' Fallback: treat entire content as single object? Try parse then convert to Records.
+        ' Fallback: treat entire content as single object and convert to Records array
         Try
             Dim singleObj = JObject.Parse(trimmed)
             Dim fieldName As String = singleObj.Properties().FirstOrDefault(Function(p) p.Value.Type = JTokenType.String)?.Name
@@ -1090,17 +1200,29 @@ Partial Public Class ThisAddIn
             Dim arr As New JArray(singleObj, New JObject From {{fieldName, finalText}})
             Return "{""Records"":" & arr.ToString(Formatting.None) & "}"
         Catch
-            ' give up
+            ' Unable to process
         End Try
 
         Return Nothing
     End Function
 
+    ''' <summary>
+    ''' Determines whether the provided string appears to be a JSON object containing a "Records" array.
+    ''' </summary>
+    ''' <param name="s">JSON string to inspect.</param>
+    ''' <returns>True if the string starts with "{" and contains a "Records" property.</returns>
     Private Function LooksLikeWrapperWithRecords(s As String) As Boolean
         Return s.StartsWith("{") AndAlso s.IndexOf("""Records""", StringComparison.OrdinalIgnoreCase) >= 0
     End Function
 
-    ' For JArray or List(Of JObject)
+    ''' <summary>
+    ''' Detects the clause field name by examining the last object in the provided container.
+    ''' </summary>
+    ''' <param name="container">IEnumerable of JObjects (JArray or List(Of JObject)).</param>
+    ''' <returns>The name of the first string property in the last object, or Nothing if not found.</returns>
+    ''' <remarks>
+    ''' This method is used to determine the dynamic field name for clause text storage.
+    ''' </remarks>
     Private Function DetectFieldNameFromLast(container As IEnumerable) As String
         Dim lastObj As JObject = Nothing
         For Each o In container
@@ -1113,28 +1235,43 @@ Partial Public Class ThisAddIn
         Return Nothing
     End Function
 
+    ''' <summary>
+    ''' Checks whether the specified JObject has a string property with the given field name and value.
+    ''' </summary>
+    ''' <param name="o">JObject to inspect.</param>
+    ''' <param name="fieldName">Property name to check.</param>
+    ''' <param name="value">Expected string value.</param>
+    ''' <returns>True if the object contains the field with an exact string match (ordinal comparison).</returns>
     Private Function HasStringValue(o As JObject, fieldName As String, value As String) As Boolean
         Dim tok = o(fieldName)
         Return tok IsNot Nothing AndAlso tok.Type = JTokenType.String AndAlso String.Equals(CStr(tok), value, StringComparison.Ordinal)
     End Function
 
-    ' Parse a sequence of standalone objects (no array / wrapper). Returns List(Of JObject) or Nothing.
+    ''' <summary>
+    ''' Attempts to parse a sequence of standalone JSON objects separated by blank lines.
+    ''' </summary>
+    ''' <param name="raw">Raw JSON string potentially containing multiple objects.</param>
+    ''' <returns>List of parsed JObjects, or Nothing if the content is not a valid standalone sequence.</returns>
+    ''' <remarks>
+    ''' A valid sequence contains multiple objects separated by one or more blank lines. Single-object
+    ''' content is treated as a fallback case and returns Nothing.
+    ''' </remarks>
     Private Function ParseStandaloneObjectSequence(raw As String) As List(Of JObject)
         If String.IsNullOrWhiteSpace(raw) Then Return New List(Of JObject)()
         Dim parts As New List(Of String)()
 
-        ' Split on blank-line boundaries that separate top-level objects OR naive closing brace followed by line(s) then opening brace
+        ' Split on blank-line boundaries that separate top-level objects
         Dim regexSplit = New Regex("(?<=\})(?:\s*\r?\n){1,}(?=\{)", RegexOptions.Singleline)
         Dim rawParts = regexSplit.Split(raw)
 
         ' If only one part, ensure it is NOT just a single object (then it's not a sequence style)
         If rawParts.Length = 1 Then
-            ' If it parses as object, we treat that in fallback, so return Nothing here (not sequence)
+            ' If it parses as object, we treat that in fallback, so return Nothing here
             Try
                 JObject.Parse(rawParts(0))
                 Return Nothing
             Catch
-                ' not valid JSON => maybe malformed -> ignore
+                ' Not valid JSON => maybe malformed -> ignore
                 Return Nothing
             End Try
         End If
@@ -1146,7 +1283,7 @@ Partial Public Class ThisAddIn
             Try
                 list.Add(JObject.Parse(t))
             Catch
-                ' If anyone fails -> not reliable -> abort
+                ' If any object fails to parse -> not reliable -> abort
                 Return Nothing
             End Try
         Next

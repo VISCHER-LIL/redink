@@ -1,13 +1,12 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Outlook"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.Processing.vb
-' Part of: Red Ink for Outlook
 ' Purpose: Text processing helpers for the Outlook add-in: Word-based document comparison
 '          (tracked changes flattened), inline diff (DiffPlex) with custom markup tags,
 '          Markdown conversion from Word formatting, formatted insertion routines,
 '          RTF to plain text conversion, parsing of markup tag sequences, and word count.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - CompareAndInsertTextCompareDocs: uses Word CompareDocuments API to build formatting markup, applies static styling, pastes into current compose window.
@@ -713,6 +712,7 @@ Partial Public Class ThisAddIn
 
     End Sub
 
+
     ''' <summary>
     ''' Parses tagged markup text into arrays of plain text segments and associated formatting codes:
     ''' 0 = normal, 1 = insertion span, 2 = deletion span.
@@ -732,21 +732,23 @@ Partial Public Class ThisAddIn
             If inputText.Substring(pos - 1, System.Math.Min(11, lenText - pos + 1)) = "[INS_START]" Then
                 pos += 11
                 tagType = 1 ' Insert formatting
-                tagEndPos = inputText.IndexOf("[INS_END]", pos - 1) + 1
-                If tagEndPos = -1 Then
+                Dim rawIndex As Integer = inputText.IndexOf("[INS_END]", pos - 1)
+                If rawIndex = -1 Then
                     MessageBox.Show("Error in ParseText: Missing [INS_END] tag.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
                     Exit Sub
                 End If
+                tagEndPos = rawIndex + 1
                 tagText = inputText.Substring(pos - 1, tagEndPos - pos)
                 pos = tagEndPos + 9
             ElseIf inputText.Substring(pos - 1, System.Math.Min(11, lenText - pos + 1)) = "[DEL_START]" Then
                 pos += 11
                 tagType = 2 ' Delete formatting
-                tagEndPos = inputText.IndexOf("[DEL_END]", pos - 1) + 1
-                If tagEndPos = -1 Then
+                Dim rawIndex As Integer = inputText.IndexOf("[DEL_END]", pos - 1)
+                If rawIndex = -1 Then
                     MessageBox.Show("Error in ParseText: Missing [DEL_END] tag.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
                     Exit Sub
                 End If
+                tagEndPos = rawIndex + 1
                 tagText = inputText.Substring(pos - 1, tagEndPos - pos)
                 pos = tagEndPos + 9
             Else

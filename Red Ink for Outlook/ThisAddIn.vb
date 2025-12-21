@@ -1,6 +1,5 @@
-﻿' Red Ink for Outlook
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under the Red Ink License. See License.txt or https://vischer.com/redink for more information.
+﻿' Part of "Red Ink for Outlook"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 '
 ' 21.12.2025
 '
@@ -30,7 +29,10 @@
 ' Includes System.Interactive.Async in unchanged form; Copyright (c) 2025 by .NET Foundation and Contributors; licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/dotnet/reactive
 ' Includes also various Microsoft distributables and libraries copyrighted by Microsoft Corporation and available, among others, under the Microsoft EULA and the MIT License (including Microsoft.Bcl.*, Microsoft.Extensions.*, System.*, System.Security.*, System.CodeDom, DocumentFormat.OpenXml.*, Microsoft.ml.*, CommunityToolkit.HighPerformance licensed under MIT License) (https://licenses.nuget.org/MIT); Copyright (c) 2016- Microsoft Corp.'
 '
-' For documentation overview see at the end of the file
+' Licenses of Red Ink and of third-party components and further legal terms/notices are available in the installation folder and via https://redink.ai.
+'
+' Documentation for developers: See at the end of this file, throughout the code and the manual (https://redink.ai).
+
 
 Option Explicit On
 Option Strict Off

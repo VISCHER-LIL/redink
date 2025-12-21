@@ -1,8 +1,5 @@
-' Red Ink Ribbon Code
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under the Red Ink License. See https://vischer.com/redink for more information.
-'
-' 8.11.2025
+' Part of "Red Ink for Outlook"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 
 Imports Microsoft.Office.Tools.Ribbon
 Imports Microsoft.Win32

@@ -1,15 +1,14 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.FactExtractor.vb
-' Part of: Red Ink for Excel
 ' Purpose:
 '   Orchestrates fact extraction from one or multiple documents into Excel.
 '   Loads prepared instruction/schema entries, applies manual overrides,
 '   resolves merge rules, optional secondary model usage, performs extraction,
 '   and writes a normalized fact table with optional date clamping, sorting,
 '   formatting, and summary metadata.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   - Instruction/Schema Library: Text files (local/global) enumerated; each line pipe-delimited:
@@ -622,9 +621,11 @@ Partial Public Class ThisAddIn
                                                        mergeInstruction,
                                                        cancellationRequested:=cancelFunc)
 
+                ' Capture cancellation state before closing progress bar
+                Dim wasCancelled As Boolean = ProgressBarModule.CancelOperation
                 ProgressBarModule.CancelOperation = True
 
-                If ProgressBarModule.CancelOperation AndAlso res.Rows.Count = 0 AndAlso res.ProcessedFiles = 0 Then
+                If wasCancelled AndAlso res.Rows.Count = 0 AndAlso res.ProcessedFiles = 0 Then
                     ShowCustomMessageBox("Operation cancelled.")
                     Return
                 End If
