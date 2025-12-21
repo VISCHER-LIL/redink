@@ -328,7 +328,6 @@
     <Compile Include="Code\Core\Config\SharedMethods.Settings.vb" />
     <Compile Include="Code\Core\Definitions\SharedContext.vb" />
     <Compile Include="Code\Core\Converter\MarkdownToRtfConverter.vb" />
-    <Compile Include="Code\Core\Definitions\SharedMethods.Constants.OwnBuild.UpdateURLs.private.vb" />
     <Compile Include="Code\Core\Definitions\SharedMethods.Constants.vb" />
     <Compile Include="Code\Core\Definitions\SharedMethods.Constants.OwnBuild.Security.vb" />
     <Compile Include="Code\Core\Definitions\SharedMethods.Constants.OwnBuild.UpdateURLs.vb" />
