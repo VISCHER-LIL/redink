@@ -46,23 +46,21 @@
   </PropertyGroup>
 	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
 		<ApplicationVersion>1.0.0.700</ApplicationVersion>
-		<PublishUrl>..\clickonce\redink\apps\develop\outlook\</PublishUrl>
+		<PublishUrl>..\clickonce\apps\develop\outlook\</PublishUrl>
 		<InstallUrl>https://redink.ai/apps/develop/outlook/</InstallUrl>
 		<ProductName>Red Ink for Outlook %28Develop%29</ProductName>
 		<FriendlyName>Red Ink for Outlook %28Develop%29</FriendlyName>
 	</PropertyGroup>
-
 	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
 		<ApplicationVersion>1.0.0.200</ApplicationVersion>
-		<PublishUrl>..\clickonce\redink\apps\preview\outlook\</PublishUrl>
+		<PublishUrl>..\clickonce\apps\preview\outlook\</PublishUrl>
 		<InstallUrl>https://redink.ai/apps/preview/outlook/</InstallUrl>
 		<ProductName>Red Ink for Outlook %28Preview%29</ProductName>
 		<FriendlyName>Red Ink for Outlook %28Preview%29</FriendlyName>
 	</PropertyGroup>
-
 	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'GA'">
 		<ApplicationVersion>1.0.0.0</ApplicationVersion>
-		<PublishUrl>..\clickonce\redink\apps\ga\outlook\</PublishUrl>
+		<PublishUrl>..\clickonce\apps\ga\outlook\</PublishUrl>
 		<InstallUrl>https://redink.ai/apps/ga/outlook/</InstallUrl>
 		<ProductName>Red Ink for Outlook</ProductName>
 		<FriendlyName>Red Ink for Outlook</FriendlyName>
