@@ -8,11 +8,6 @@ Namespace SharedLibrary
 
     Partial Public Class SharedMethods
 
-        ' Amend the following two values to hard code the encryption key and permitted domains (otherwise the values are taken from the registry at the path below)
-
-        Private Const Int_CodeBasis As String = ""
-        Public Const alloweddomains As String = ""
-
         Public Const AN As String = "Red Ink"
         Public Const AN2 As String = "redink"
         Public Const AN3 As String = "Red Ink" ' Name used for Visual Studio Project 
@@ -68,7 +63,7 @@ Namespace SharedLibrary
 
         ' App Updating and Download Urls and VersionQualifier (will be added to the version string in the add-ins and the About box)
 
-        ' Note: The DEVELOP property is defined at SharedMethods.DevelopURLs.vb, so you can keep it untouched if you update your codebase with code from the repo
+        ' Note: The properties for DEVELOP are defined at SharedMethods.OwnBuild.UpdateURLs.vb, so you can keep it untouched if you update your codebase with code from the repo
 
 #If PREVIEW Then
 

@@ -329,7 +329,8 @@
     <Compile Include="Code\Core\Definitions\SharedContext.vb" />
     <Compile Include="Code\Core\Converter\MarkdownToRtfConverter.vb" />
     <Compile Include="Code\Core\Definitions\SharedMethods.Constants.vb" />
-    <Compile Include="Code\Core\Definitions\SharedMethods.DevelopURLs.vb" />
+    <Compile Include="Code\Core\Definitions\SharedMethods.Constants.OwnBuild.Security.vb" />
+    <Compile Include="Code\Core\Definitions\SharedMethods.Constants.OwnBuild.UpdateURLs.vb" />
     <Compile Include="Code\Core\LLM\ModelSelection\SharedMethods.AlternateModels.vb" />
     <Compile Include="Code\Core\LLM\SharedMethods.GoogleOAuthHelper.vb" />
     <Compile Include="Code\Core\LLM\SharedMethods.MainLLM.vb" />

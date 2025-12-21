@@ -856,6 +856,8 @@ Namespace SharedLibrary
                 UIInvokeMessage(
                     $"The update could not be completed: {ex.Message}. Please inform your administrator. You can always try a manual install by visiting {AppsUrl}.",
                     $"{SharedMethods.AN} Updater")
+            Finally
+                CloseUpdatingSplash()
             End Try
         End Sub
 

@@ -36,7 +36,7 @@ Namespace SharedLibrary
                 File.Move(filePath, bakFilePath)
                 Return True
             Catch ex As Exception
-                MessageBox.Show($"Error renaming file to .bak: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                ShowCustomMessageBox($"Error renaming file to .bak: {ex.Message}")
                 Return False
             End Try
 

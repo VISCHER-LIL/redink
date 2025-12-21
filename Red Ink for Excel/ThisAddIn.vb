@@ -1,7 +1,7 @@
 ﻿' Part of "Red Ink for Excel"
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 '
-' 21.12.2025
+' 22.12.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -33,7 +33,6 @@
 '
 ' Documentation for developers: See at the end of this file, throughout the code and the manual (https://redink.ai).
 
-
 Option Strict On
 Option Explicit On
 
@@ -56,7 +55,7 @@ Partial Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Shared Version As String = "V.201225" & SharedMethods.VersionQualifier
+    Public Shared Version As String = "V.211225" & SharedMethods.VersionQualifier
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"

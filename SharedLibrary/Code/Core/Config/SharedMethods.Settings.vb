@@ -168,6 +168,7 @@ Namespace SharedLibrary
 
             Dim CentralConfigAvailable As Boolean = System.IO.File.Exists(System.IO.Path.Combine(ExpandEnvironmentVariables(GetFromRegistry(RegPath_Base, RegPath_IniPath, True)), $"{AN2}.ini"))
             Dim delLocalConfigButton As New System.Windows.Forms.Button()
+            Dim LocalConfigAvailable As Boolean = System.IO.File.Exists(GetDefaultINIPath(context.RDV))
             If CentralConfigAvailable Then
                 delLocalConfigButton.Text = "Give Up Local Config"
             Else
@@ -177,6 +178,9 @@ Namespace SharedLibrary
             delLocalConfigButton.Size = New System.Drawing.Size(delLocalButtonSize.Width + 20, delLocalButtonSize.Height + 10)
             delLocalConfigButton.Location = New System.Drawing.Point(saveConfigButton.Right + buttonSpacing, buttonYPos)
             settingsForm.Controls.Add(delLocalConfigButton)
+            If Not LocalConfigAvailable Then
+                delLocalConfigButton.Enabled = False
+            End If
 
             Dim delLocalConfigToolTip As New System.Windows.Forms.ToolTip()
             If CentralConfigAvailable Then

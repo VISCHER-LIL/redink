@@ -13,6 +13,39 @@ Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "Red Ink for Outlook", "Red 
 EndProject
 Project("{54A90642-561A-4BB1-A94E-469ADEE60C69}") = "Red Ink Browser Extension", "Red_Ink_Browser_Extension\Red Ink Browser Extension.esproj", "{754534D6-E816-4476-8CF6-4FE5F6E868FD}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Documentation and more", "Documentation and more", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+	ProjectSection(SolutionItems) = preProject
+		Documentation and more\allmodels.ini = Documentation and more\allmodels.ini
+		Documentation and more\API config samples for redink.ini = Documentation and more\API config samples for redink.ini
+		Documentation and more\extractorlib.txt = Documentation and more\extractorlib.txt
+		Documentation and more\license.txt = Documentation and more\license.txt
+		Documentation and more\personalib.txt = Documentation and more\personalib.txt
+		Documentation and more\personaliblocal.txt = Documentation and more\personaliblocal.txt
+		Documentation and more\promptlib-transcript.txt = Documentation and more\promptlib-transcript.txt
+		Documentation and more\promptlib.txt = Documentation and more\promptlib.txt
+		Documentation and more\redactionlib.txt = Documentation and more\redactionlib.txt
+		Documentation and more\redink-ag-bger.json = Documentation and more\redink-ag-bger.json
+		Documentation and more\redink-dc-AI_Act.txt = Documentation and more\redink-dc-AI_Act.txt
+		Documentation and more\redink-dc-DPA.txt = Documentation and more\redink-dc-DPA.txt
+		Documentation and more\redink-defaultconfig.ini = Documentation and more\redink-defaultconfig.ini
+		Documentation and more\redink-lib-samplecorp.txt = Documentation and more\redink-lib-samplecorp.txt
+		Documentation and more\redink.ini = Documentation and more\redink.ini
+		Documentation and more\Red_Ink_Anleitung.pdf = Documentation and more\Red_Ink_Anleitung.pdf
+		Documentation and more\Red_Ink_Guide.pdf = Documentation and more\Red_Ink_Guide.pdf
+		Documentation and more\Red_Ink_Guide.txt = Documentation and more\Red_Ink_Guide.txt
+		Documentation and more\Red_Ink_Kurzanleitung.pdf = Documentation and more\Red_Ink_Kurzanleitung.pdf
+		Documentation and more\Red_Ink_Quick_Reference.pdf = Documentation and more\Red_Ink_Quick_Reference.pdf
+		Documentation and more\Red_Ink_UseCases.pdf = Documentation and more\Red_Ink_UseCases.pdf
+		Documentation and more\renamelib.txt = Documentation and more\renamelib.txt
+		Documentation and more\specialservices.ini = Documentation and more\specialservices.ini
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}"
+	ProjectSection(SolutionItems) = preProject
+		license.txt = license.txt
+		README.md = README.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
