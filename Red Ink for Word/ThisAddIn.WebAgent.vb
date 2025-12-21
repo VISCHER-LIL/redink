@@ -1,6 +1,34 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.WebAgent.vb
+' Purpose: Implements WebAgent script selection, execution, and authoring capabilities
+'          for automated web interaction workflows driven by JSON scripts.
+'
+' Architecture:
+'  - Script Discovery: Scans local and global directories (INI_WebAgentPathLocal, INI_WebAgentPath)
+'    for script files matching pattern '{AN2}-ag-*.json'. Local scripts take precedence.
+'  - Parameter & Secret Substitution: Pre-execution processing via ProcessParameterPlaceholders
+'    (handled by SharedLibrary) and ProcessWebAgentSecretPlaceholders (prompts user for secret values
+'    matching {{secret:Description; type}} pattern in env.secrets).
+'  - Pre-flight Validation: JSON parsing, confirmation dialogs for email send steps (ConfirmEmailSendSteps),
+'    relative URL warnings when base_url missing.
+'  - Interpreter Execution: WebAgentInterpreter.RunAsync executes script steps sequentially with support
+'    for retries, error handling, conditional branching, loops, LLM calls, HTTP operations, file I/O,
+'    templating, and email reporting.
+'  - Cancellation: ESC key monitoring via PollEscForCancel runs in background thread; cancels CancellationTokenSource
+'    on key press (debounced to prevent accidental triggers).
+'  - Output Handling: Final Markdown report displayed in custom dialog; user can insert into document,
+'    transfer to pane, or copy to clipboard (with optional Markdown-to-RTF conversion via InsertTextWithMarkdown).
+'  - Script Authoring (CreateModifyWebAgentScript): LLM-assisted creation or amendment of scripts.
+'    Provides WebAgentJSONInstruct and WebAgentParameterSpec as system prompts. Supports JSON validation
+'    with optional auto-correction loop. Saves to configured directories with .bak backup on overwrite.
+'  - Model Selection: Optional secondary API/model usage via INI_SecondAPI and INI_AlternateModelPath.
+'  - External Dependencies: WebAgentInterpreter class (interpreter logic), SharedLibrary.SharedMethods
+'    (UI dialogs, clipboard, text editor, model selection), Newtonsoft.Json (JSON parsing), Markdig
+'    (Markdown rendering for email HTML conversion).
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -17,6 +45,11 @@ Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
+    ''' <summary>
+    ''' Discovers and prompts user to select a WebAgent script file from configured local/global directories.
+    ''' Local scripts (INI_WebAgentPathLocal) are listed first, followed by global (INI_WebAgentPath).
+    ''' </summary>
+    ''' <returns>Full path to selected script file, or Nothing if canceled or no scripts found.</returns>
     Private Function GetWebAgentScriptFile() As String
         Dim globalPath As String = ExpandEnvironmentVariables(INI_WebAgentPath)
         Dim localPath As String = ExpandEnvironmentVariables(INI_WebAgentPathLocal)
@@ -68,15 +101,21 @@ Partial Public Class ThisAddIn
     End Function
 
 
+    ''' <summary>
+    ''' Detects secret placeholders in script's env.secrets section (pattern: {{secret:Description; type}}).
+    ''' Prompts user for secret values via ShowCustomVariableInputForm (values not logged).
+    ''' Substitutes raw values into JSON tree before interpreter sees the script.
+    ''' </summary>
+    ''' <param name="script">JSON script string passed by reference; mutated in place with secret values.</param>
+    ''' <returns>True if successful or no secrets found; False if user cancels or processing fails.</returns>
     Private Function ProcessWebAgentSecretPlaceholders(ByRef script As String) As Boolean
-        ' Looks for:  "env": { "secrets": { "key": "{{secret:Description; type(optional)}}" ... } }
-        ' Prompts user and substitutes the raw value before interpreter sees the script.
         Try
             Dim root As JObject = Nothing
             Try
                 root = JObject.Parse(script)
             Catch
-                Return True ' let normal JSON error handling later handle issues
+                ' Let normal JSON error handling later handle issues
+                Return True
             End Try
             Dim envObj = TryCast(root("env"), JObject)
             If envObj Is Nothing Then Return True
@@ -91,7 +130,7 @@ Partial Public Class ThisAddIn
                 Dim m = rx.Match(v)
                 If m.Success Then
                     Dim meta = m.Groups(1).Value.Trim()
-                    ' Allow "Description; type" but we only really use description
+                    ' Metadata format supports "Description; type" segments; only description is used for prompts
                     Dim segs = meta.Split(";"c).Select(Function(s) s.Trim()).Where(Function(s) s <> "").ToArray()
                     Dim desc = segs(0)
                     secretDefs.Add((p.Name, v, desc))
@@ -125,12 +164,25 @@ Partial Public Class ThisAddIn
     End Function
 
 
+    ''' <summary>
+    ''' Cancellation token source for the currently running WebAgent execution.
+    ''' </summary>
     Private _webAgentRunCts As CancellationTokenSource
 
+    ''' <summary>
+    ''' Cancels the currently running WebAgent execution by triggering the cancellation token.
+    ''' Safe to call even if no run is active.
+    ''' </summary>
     Public Sub CancelWebAgentRun()
         Try : _webAgentRunCts?.Cancel() : Catch : End Try
     End Sub
 
+    ''' <summary>
+    ''' Background polling thread that monitors ESC key state via GetAsyncKeyState.
+    ''' Cancels provided CancellationTokenSource when ESC pressed (debounced to require key release).
+    ''' Runs until cancellation token signaled or ESC pressed.
+    ''' </summary>
+    ''' <param name="cts">CancellationTokenSource to cancel when ESC detected.</param>
     Private Sub PollEscForCancel(cts As CancellationTokenSource)
         Try
             Dim escLatched As Boolean = False
@@ -153,6 +205,13 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
+    ''' <summary>
+    ''' Scans script steps for 'send_email_report' commands and displays confirmation dialog
+    ''' listing recipients (to, subject, smtp_host) before execution proceeds.
+    ''' Security gate to prevent unintentional email sends.
+    ''' </summary>
+    ''' <param name="root">Parsed JSON root object of the script.</param>
+    ''' <returns>1 if user confirms or no email steps found; 0 if user cancels or error occurs.</returns>
     Private Function ConfirmEmailSendSteps(root As JObject) As Integer
         Try
             Dim stepsArr = TryCast(root("steps"), JArray)
@@ -166,9 +225,10 @@ Partial Public Class ThisAddIn
                     emailSteps.Add(st)
                 End If
             Next
-            If emailSteps.Count = 0 Then Return 1 ' no email steps -> OK
+            ' No email steps found
+            If emailSteps.Count = 0 Then Return 1
 
-            ' Collect recipient info (and optionally smtp_host) to display
+            ' Collect recipient info and optionally smtp_host to display
             Dim lines As New List(Of String)
             For Each st In emailSteps
                 Dim p = TryCast(st("params"), JObject)
@@ -178,7 +238,7 @@ Partial Public Class ThisAddIn
 
                 Dim recipients As String = ""
                 If Not String.IsNullOrWhiteSpace(toRaw) Then
-                    ' Normalize delimiters and trim each
+                    ' Normalize delimiters and trim each recipient
                     Dim parts = toRaw.Split(New String() {",", ";"}, StringSplitOptions.RemoveEmptyEntries).
                                       Select(Function(s) s.Trim()).
                                       Where(Function(s) s <> "")
@@ -214,6 +274,13 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
+    ''' <summary>
+    ''' Main entry point for WebAgent script execution workflow.
+    ''' Sequence: Script selection → Parameter/secret substitution → JSON validation → Pre-flight checks
+    ''' (email confirmation, relative URL warnings) → Interpreter execution with ESC cancellation monitoring
+    ''' → Output display with clipboard/insert/pane options.
+    ''' Handles errors and provides user feedback at each stage.
+    ''' </summary>
     Public Async Sub WebAgent()
 
         If INILoadFail() Then Return
@@ -246,7 +313,7 @@ Partial Public Class ThisAddIn
             Exit Sub
         End If
 
-        ' 3) Parse (after substitution) to validate + for pre-flight checks
+        ' 3) Parse (after substitution) to validate and for pre-flight checks
         Dim rootObj As JObject = Nothing
         Try
             rootObj = JObject.Parse(script)
@@ -301,7 +368,7 @@ Partial Public Class ThisAddIn
         Dim webAgentCompleted As Boolean = False
         Dim abortedByEsc As Boolean = False
 
-        _webAgentRunCts = New CancellationTokenSource()         ' no fixed timeout
+        _webAgentRunCts = New CancellationTokenSource()
         Dim ctsWeb = _webAgentRunCts
 
         ' Fully qualify Task to avoid ambiguity with Microsoft.Office.Interop.Word.Task
@@ -392,6 +459,13 @@ Partial Public Class ThisAddIn
         End If
     End Sub
 
+    ''' <summary>
+    ''' Complete specification document for WebAgent JSON script format, provided to LLMs for reliable authoring.
+    ''' Covers: top-level structure (meta/env/steps), variable system, condition syntax, command reference,
+    ''' retry mechanics, error handling, dynamic expansion, auto link extraction, template rendering,
+    ''' selector objects, LLM result sanitization, common pitfalls, and authoring guidelines.
+    ''' Version: Generated from current WebAgentInterpreter implementation.
+    ''' </summary>
     Public Const WebAgentJSONInstruct As String =
         "WEB AGENT SCRIPT SPECIFICATION (for WebAgentInterpreter) " & vbCrLf &
         "Version: Generated from current interpreter code. Provide this spec verbatim to an LLM so it can reliably author valid scripts." & vbCrLf &
@@ -808,12 +882,19 @@ Partial Public Class ThisAddIn
             "" & vbCrLf &
             "END OF PARAMETER SPEC"
 
+    ''' <summary>
+    ''' LLM-assisted WebAgent script creation or amendment workflow.
+    ''' Sequence: Directory validation → New/Amend mode selection → (if amend) Script editor for manual review
+    ''' → User instruction prompt → Model selection (primary/secondary) → LLM generation with spec prompts
+    ''' (WebAgentJSONInstruct + WebAgentParameterSpec) → JSON validation with optional auto-correction loop
+    ''' → Save with .bak backup → Final editor display for manual parameter definition.
+    ''' Supports overwrite confirmation and alternate model loading (INI_AlternateModelPath).
+    ''' </summary>
     Public Async Sub CreateModifyWebAgentScript()
 
         If INILoadFail() Then Return
 
         ' 0) Preconditions: paths configured?
-
         Dim globalPath As String = ExpandEnvironmentVariables(INI_WebAgentPath)
         Dim localPath As String = ExpandEnvironmentVariables(INI_WebAgentPathLocal)
 
@@ -852,8 +933,8 @@ Partial Public Class ThisAddIn
                 ' Read current script (initial content before possible user edits)
                 originalScriptText = IO.File.ReadAllText(existingScriptPath, System.Text.Encoding.UTF8)
 
-                ' Open in embedded text editor so user can review / edit.
-                ' (Editor saves directly to the same path when user clicks Save.)
+                ' Open in embedded text editor so user can review and edit
+                ' Editor saves directly to the same path when user clicks Save
                 SharedLibrary.SharedLibrary.SharedMethods.ShowTextFileEditor(existingScriptPath, $"{AN} WebAgent Script '{existingScriptPath}' (you can have it amended by the LLM once you close the editor):")
 
                 ' Ask whether to proceed with automatic LLM amendment after editor closes
@@ -864,9 +945,8 @@ Partial Public Class ThisAddIn
                     header:=$"{AN} WebAgent"
                 )
 
-                ' Convention: assuming ShowCustomYesNoBox returns 1 for first button ("Yes"), 2 for second.
+                ' ShowCustomYesNoBox returns 1 for first button ("Yes"), 2 for second ("No")
                 If amendChoice <> 1 Then
-                    ' User chose not to proceed with LLM amendment
                     Exit Sub
                 End If
 
@@ -884,7 +964,7 @@ Partial Public Class ThisAddIn
             End Try
         End If
 
-        ' 2) If new, gather filename
+        ' 2) If new, gather filename with validation and overwrite confirmation
         Dim newScriptPath As String = existingScriptPath
         If Not isAmend Then
             Dim defaultName As String = $"{AN2}-ag-newscript.json"
@@ -928,7 +1008,7 @@ Partial Public Class ThisAddIn
 
         Try
 
-            ' 4) Primary vs Secondary model
+            ' 4) Primary vs Secondary model selection
             If INI_SecondAPI Then
                 Dim modelChoice = ShowCustomYesNoBox("Select the model to generate or modify the script:", "Primary", "Secondary", $"{AN} WebAgent")
                 If modelChoice = 0 Then Exit Sub
@@ -937,18 +1017,16 @@ Partial Public Class ThisAddIn
 
                     ' Attempt to autoload alternate model (best effort, non-fatal)
                     If Not String.IsNullOrWhiteSpace(INI_AlternateModelPath) Then
-
                         If Not ShowModelSelection(_context, INI_AlternateModelPath) Then
                             originalConfigLoaded = False
                             Return
                         End If
-
                     End If
 
                 End If
             End If
 
-            ' 5) Build user prompt (with optional existing script)
+            ' 5) Build user prompt (with optional existing script for amendment)
             Dim userPromptBuilder As New System.Text.StringBuilder()
             userPromptBuilder.Append("<USERPROMPT>").Append(OtherPrompt).Append("</USERPROMPT>")
             If isAmend AndAlso Not String.IsNullOrWhiteSpace(originalScriptText) Then
@@ -956,7 +1034,7 @@ Partial Public Class ThisAddIn
             End If
             Dim userPromptFinal = userPromptBuilder.ToString()
 
-            ' 6) Call LLM to generate/amend script
+            ' 6) Call LLM to generate or amend script
             Dim generated As String = Nothing
             Try
                 generated = Await LLM(WebAgentJSONInstruct & " " & WebAgentParameterSpec, userPromptFinal, "", "", 0, useSecondAPI)
@@ -971,15 +1049,15 @@ Partial Public Class ThisAddIn
 
             generated = WebAgentInterpreter.SanitizeLlmResult(generated)
 
-            ' 7) Backup existing (only first time, not in auto-correct loop)
-            If IO.File.Exists(newScriptPath) AndAlso Not isAmend = False Then
-                ' If amending existing or overwriting, make backup
+            ' 7) Backup existing file before overwriting (only on first save, not during auto-correct loop)
+            If IO.File.Exists(newScriptPath) AndAlso isAmend Then
+                ' Amending existing file - make backup
                 Try
                     SharedLibrary.SharedLibrary.SharedMethods.RenameFileToBak(newScriptPath)
                 Catch
                 End Try
             ElseIf IO.File.Exists(newScriptPath) AndAlso Not isAmend Then
-                ' Overwriting a new-specified existing file
+                ' Overwriting a file in new mode - make backup
                 Try
                     SharedLibrary.SharedLibrary.SharedMethods.RenameFileToBak(newScriptPath)
                 Catch
@@ -995,9 +1073,9 @@ Partial Public Class ThisAddIn
                 Exit Sub
             End Try
 
-            ' 9) Validate JSON, with optional auto-correct loop
+            ' 9) Validate JSON, with optional auto-correction loop
             Dim keepLoop As Boolean = True
-            Dim firsttry As Boolean = True
+            Dim firstTry As Boolean = True
             While keepLoop
                 Dim parseOk As Boolean = True
                 Dim parseError As String = Nothing
@@ -1009,16 +1087,18 @@ Partial Public Class ThisAddIn
                 End Try
 
                 If parseOk Then
-                    keepLoop = False ' done
-                    If firsttry Then
+                    ' Validation successful
+                    keepLoop = False
+                    If firstTry Then
                         ShowCustomMessageBox("The JSON script created by the LLM has been tested for validity and was saved to:" & vbCrLf & vbCrLf & newScriptPath, $"{AN} WebAgent")
                     Else
                         ShowCustomMessageBox("The JSON script created by the LLM is now valid and was saved to:" & vbCrLf & vbCrLf & newScriptPath, $"{AN} WebAgent")
                     End If
                 Else
+                    ' Validation failed - offer auto-correction
                     Dim choice = ShowCustomYesNoBox($"The script JSON is invalid (it was saved anyway). Error:{vbCrLf}{parseError}{vbCrLf}{vbCrLf}Attempt auto-correction?", "Yes", "No", $"{AN} WebAgent")
                     If choice = 1 Then
-                        ' Auto-correct
+                        ' Attempt auto-correction via LLM
                         Dim brokenJson = IO.File.ReadAllText(newScriptPath, System.Text.Encoding.UTF8)
                         Dim correctionSystem =
                         "You are a strict JSON repair assistant. Fix structural JSON errors ONLY. Preserve semantic content & keys. Output EXACTLY one corrected JSON object, no comments, no prose."
@@ -1049,7 +1129,7 @@ Partial Public Class ThisAddIn
                     Else
                         keepLoop = False
                     End If
-                    firsttry = False
+                    firstTry = False
                 End If
             End While
 
@@ -1061,7 +1141,7 @@ Partial Public Class ThisAddIn
             End If
         End Try
 
-        ' 10) Show final file
+        ' 10) Show final file in editor for manual parameter definition
         Try
             ShowTextFileEditor(newScriptPath, $"{AN} WebAgent Script '{newScriptPath}'" & "(you can now add user parameters, e.g. '{{parameter1 = Date; String; 1.10.2025}}' - see user manual): ")
         Catch

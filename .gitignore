@@ -4,3 +4,8 @@ obj/
 *.user
 *.suo
 *.vs/
+/SharedLibrary/Code/Core/Definitions/apps-path.txt
+/SharedLibrary/Code/apps-path.txt
+/SharedLibrary/Code/Core/Definitions/SharedMethods.Constants.OwnBuild.UpdateURLs.vb
+/SharedLibrary/Code/Core/Definitions/SharedMethods.Constants.OwnBuild.UpdateURLs.private.vb
+/Directory.Build.props

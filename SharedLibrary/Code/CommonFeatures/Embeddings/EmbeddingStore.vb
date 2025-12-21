@@ -1,12 +1,12 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: EmbeddingStore.vb
 ' Part of: Red Ink Shared Library
 ' Purpose: ONNX-based neural embedding store for semantic similarity search.
 '          Loads Sentence-Transformer models (e.g., all-MiniLM-L6-v2) to compute
 '          dense vector embeddings and perform cosine similarity ranking.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   - ONNX inference session with pre-trained Sentence-Transformer model

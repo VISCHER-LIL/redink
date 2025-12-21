@@ -1,6 +1,18 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.TextToSpeech.Commands.vb
+' Purpose: Drives text-to-speech workflows for Word selections, imported documents, and PowerPoint speaker notes.
+'
+' Architecture:
+'  - Entry Points: CreateAudio orchestrates user prompts, file ingestion, and downstream audio generation paths.
+'  - File Import & Sanitization: Helper readers extract text from supported formats and insert sanitized content into a staging Word document.
+'  - Voice & Output Configuration: Custom dialogs plus TTSSelectionForm gather voice pairs, languages, and output targets, persisting defaults via My.Settings.
+'  - Conversation Normalization: NormalizeHostGuestConversation enforces deterministic H:/G: turn formatting for podcast-style transcripts.
+'  - Speaker Notes Pipeline: GenerateAndPlayAudioFromSpeakerNotes cleans notes, requests audio, embeds MP3 media, and configures slide transitions.
+'  - Progress & Cancellation: ProgressBarModule, ESC polling, and message boxes provide visibility and allow user-initiated aborts.
+' =============================================================================
 
 Option Explicit On
 Option Strict Off
@@ -20,6 +32,9 @@ Imports System.Windows.Forms
 
 Partial Public Class ThisAddIn
 
+    ''' <summary>
+    ''' Creates an audio rendition from the current Word selection, imported files, JSON TTS definitions, or PowerPoint speaker notes.
+    ''' </summary>
     Public Async Sub CreateAudio()
         If INILoadFail() Then Return
 
@@ -41,11 +56,11 @@ Partial Public Class ThisAddIn
             If answer <> 1 Then Return
 
             DragDropFormLabel = "Document files (.txt, .docx, .pdf) or Powerpoint (.pptx)."
-            DragDropFormFilter = "Supported Files|*.txt;*.rtf;*.doc;*.docx;*.pdf;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm)|*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm;*.pptx||" &
+            DragDropFormFilter = "Supported Files|*.txt;*.rtf;*.doc;*.docx;*.pdf;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm;*.pptx|" &
                              "Text Files (*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm)|*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm|" &
                              "Rich Text Files (*.rtf)|*.rtf|" &
                              "Word Documents (*.doc;*.docx)|*.doc;*.docx|" &
-                             "PDF Files (*.pdf)|*.pdf" &
+                             "PDF Files (*.pdf)|*.pdf|" &
                              "Powerpoint Files (*.pptx)|*.pptx"
 
             FilePath = GetFileName()
@@ -114,7 +129,6 @@ Partial Public Class ThisAddIn
                     ' Use default path (Desktop) with default filename
                     selectedoutputpath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), TTSDefaultFile)
                 ElseIf selectedoutputpath.EndsWith("\") OrElse selectedoutputpath.EndsWith("/") Then
-                ElseIf selectedoutputpath.EndsWith("\") OrElse selectedoutputpath.EndsWith("/") Then
                     ' If only a folder is given, append default filename
                     selectedoutputpath = System.IO.Path.Combine(selectedoutputpath, TTSDefaultFile)
                 Else
@@ -158,6 +172,11 @@ Partial Public Class ThisAddIn
         End If
     End Sub
 
+    ''' <summary>
+    ''' Normalizes an LLM result into alternating host (H) and guest (G) turns with clean spacing and blank-line separation.
+    ''' </summary>
+    ''' <param name="llmResult">Raw conversation text returned by the model.</param>
+    ''' <returns>Formatted conversation containing only populated turns with Windows line endings.</returns>
     Public Function NormalizeHostGuestConversation(llmResult As String) As String
         ' Ensures:
         ' 1) Conversation consists of turns starting with "H:" or "G:".
@@ -208,9 +227,13 @@ Partial Public Class ThisAddIn
         Return String.Join(vbCrLf & vbCrLf, turns)
     End Function
 
-
-
-
+    ''' <summary>
+    ''' Generates audio for each slide that contains speaker notes and embeds the resulting MP3 into the presentation.
+    ''' </summary>
+    ''' <param name="presentationFilePath">Full path to the PowerPoint file that will be updated.</param>
+    ''' <param name="languageCode">Language/locale identifier passed to the TTS provider.</param>
+    ''' <param name="voiceName">Primary voice used for the first applicable segment.</param>
+    ''' <param name="voiceNameAlt">Optional alternate voice, toggled on successive slides when supplied.</param>
     Public Async Function GenerateAndPlayAudioFromSpeakerNotes(
         presentationFilePath As String,
         Optional languageCode As String = "en-US",
@@ -222,7 +245,7 @@ Partial Public Class ThisAddIn
         Dim presentation As NetOffice.PowerPointApi.Presentation = Nothing
 
         Try
-            '––– Load/save TTS settings –––
+            '--- Load and save TTS settings ---
             Dim NoSSML As Boolean = My.Settings.NoSSML
             Dim Pitch As Double = My.Settings.Pitch
             Dim SpeakingRate As Double = My.Settings.Speakingrate
@@ -264,7 +287,7 @@ Partial Public Class ThisAddIn
             Dim currentVoice As String = voiceName
             Dim firstUsed As Boolean = False
 
-            '––– Open PowerPoint –––
+            '--- Open PowerPoint ---
             ppApp = New NetOffice.PowerPointApi.Application()
             presentation = ppApp.Presentations.Open(
                 presentationFilePath,
@@ -315,7 +338,6 @@ Partial Public Class ThisAddIn
                         End If
                     End If
 
-
                     If CleanText Then
                         ' Remove any unwanted characters from the paragraph text.
                         notesText = Await LLM(CleanTextPrompt, "<TEXTTOPROCESS>" & notesText & "</TEXTTOPROCESS>", "", "", 0, False, True)
@@ -324,7 +346,7 @@ Partial Public Class ThisAddIn
 
                     End If
 
-                    '––– Get audio bytes from TTS –––
+                    '--- Get audio bytes from TTS ---
                     Dim audioBytes As Byte() = Await GenerateAudioFromText(
                         notesText,
                         languageCode,
@@ -339,7 +361,7 @@ Partial Public Class ThisAddIn
                         Continue For
                     End If
 
-                    '––– Save raw bytes as MP3 –––
+                    '--- Save raw bytes as MP3 ---
                     Dim tempFile As String = System.IO.Path.Combine(
                         System.IO.Path.GetTempPath(),
                         $"ppt_audio_slide_{slideIndex}.mp3"
@@ -359,7 +381,7 @@ Partial Public Class ThisAddIn
                     Dim beforeCount = slide.Shapes.Count
                     Debug.WriteLine($"[Debug] Slide {slideIndex}: Shapes before insert = {beforeCount}")
 
-                    '––– Insert the MP3 –––
+                    '--- Insert the MP3 ---
                     Dim mediaShape As NetOffice.PowerPointApi.Shape = Nothing
                     Try
                         mediaShape = slide.Shapes.AddMediaObject2(
@@ -373,25 +395,24 @@ Partial Public Class ThisAddIn
 
                         If mediaShape IsNot Nothing Then
 
-                            '––– Ermittlung der Audio-Länge in Sekunden –––   ' Playback on entry + hide while not playing
+                            '--- Determine the audio length in seconds ---   ' Playback on entry + hide while not playing
                             With mediaShape.AnimationSettings.PlaySettings
                                 .PlayOnEntry = NetOffice.OfficeApi.Enums.MsoTriState.msoTrue
                                 .HideWhileNotPlaying = NetOffice.OfficeApi.Enums.MsoTriState.msoTrue
                             End With
 
-                            ' 1 Sekunde Verzögerung vor Start des Audio
+                            '--- Add a 1-second delay before audio playback ---
                             With mediaShape.AnimationSettings
                                 .AdvanceMode = NetOffice.PowerPointApi.Enums.PpAdvanceMode.ppAdvanceOnTime
-                                .AdvanceTime = 1     ' Sekunden bis zum Abspielen
+                                .AdvanceTime = 1     ' Seconds until playback
                             End With
 
-                            ' Slide automatisch advance nach (1s delay + Audio-Länge + 1s hold)
+                            '--- Auto-advance slide after (1s delay + audio length + 1s hold) ---
                             With slide.SlideShowTransition
                                 .AdvanceOnTime = NetOffice.OfficeApi.Enums.MsoTriState.msoTrue
-                                .AdvanceTime = CSng(audioDurationSeconds + 1.0)   ' 1s nach Ende
+                                .AdvanceTime = CSng(audioDurationSeconds + 1.0)   ' 1s after end
                                 .AdvanceOnClick = NetOffice.OfficeApi.Enums.MsoTriState.msoFalse
                             End With
-
 
                         End If
 
@@ -400,7 +421,7 @@ Partial Public Class ThisAddIn
                         Continue For
                     End Try
 
-                    '––– Configure play settings and initially hide upon play –––
+                    '--- Configure play settings and initially hide upon play ---
                     With mediaShape.AnimationSettings.PlaySettings
                         .PlayOnEntry = MsoTriState.msoTrue
                         .HideWhileNotPlaying = MsoTriState.msoTrue
@@ -432,7 +453,7 @@ Partial Public Class ThisAddIn
                     Debug.WriteLine("[Debug] Presentation.Save succeeded.")
                 Catch comSaveEx As System.Runtime.InteropServices.COMException
                     Debug.WriteLine($"[Debug] Presentation.Save failed: {comSaveEx.Message}")
-                    ' PowerPoint meldet schreibgeschützt → überschreibe per SaveAs
+                    ' PowerPoint reported write protection → overwrite via SaveAs
                     presentation.SaveAs(
                     presentationFilePath,
                     NetOffice.PowerPointApi.Enums.PpSaveAsFileType.ppSaveAsOpenXMLPresentation)
@@ -449,7 +470,6 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
-
         Catch ex As Exception
             Debug.WriteLine("[Error] Unexpected error: " & ex.ToString())
             ShowCustomMessageBox($"An unexpected error occurred when adding audio to the the slides ({ex.GetType().Name}): {ex.Message}")
@@ -458,7 +478,5 @@ Partial Public Class ThisAddIn
             If ppApp IsNot Nothing Then ppApp.Dispose()
         End Try
     End Function
-
-
 
 End Class

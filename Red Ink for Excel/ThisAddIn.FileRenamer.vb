@@ -1,11 +1,10 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.FileRenamer.vb
-' Part of: Red Ink for Excel
 ' Purpose: Renames supported files in a user-selected folder using an LLM-generated
 '          filename based on file content and optional reference document.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '  - Instruction Library: Loads local/global *.txt instruction sets; each line "Title|Instruction"

@@ -1,13 +1,12 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Outlook"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.WebExtension.vb
-' Part of: Red Ink for Outlook
 ' Purpose: Provides the local web extension surface (HTML UI + JSON API) for chat
 '          and document related LLM operations. Handles HTTP requests, command
 '          dispatch, LLM job scheduling, model selection, chat state persistence,
 '          file upload support, markdown conversion, and alternate model application.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - HTTP layer: single HttpListener (prefix /inky) returns HTML UI (GET) and JSON API (POST).
@@ -590,7 +589,9 @@ Partial Public Class ThisAddIn
     Dim logoUrl As System.String = GetLogoDataUrl()
     Dim greet As System.String = GetFriendlyGreeting()
 
-    ' Simple persisted state container for chat.
+    ''' <summary>
+    ''' Simple persisted state container for chat.
+    ''' </summary>
     <Serializable>
     Private Class InkyState
         Public History As System.Collections.Generic.List(Of ChatTurn) = New System.Collections.Generic.List(Of ChatTurn)()
@@ -601,6 +602,9 @@ Partial Public Class ThisAddIn
         Public SupportsFileUploads As System.Boolean = False
     End Class
 
+    ''' <summary>
+    ''' Represents a single conversational turn (user or assistant) with markdown/HTML payload and timestamp.
+    ''' </summary>
     <Serializable>
     Private Class ChatTurn
         Public Role As System.String   ' "user" or "assistant"
@@ -1317,7 +1321,7 @@ Partial Public Class ThisAddIn
                         Dim sysPromptBase As String = _context.SP_Chat
                         Dim nowLocal As String = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss zzz", Globalization.CultureInfo.InvariantCulture)
                         sysPromptBase &= Environment.NewLine & "Current local date/time: " & nowLocal
-                        sysPromptBase &= Environment.NewLine & $"Your name is '{AN6}'. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland."
+                        sysPromptBase &= Environment.NewLine & $"Your name is '{AN6}'. "
                         Dim useSecondApiLocal As Boolean = st.UseSecondApi
                         Dim selectedModelKeyLocal As String = st.SelectedModelKey
                         ' Capture file object (may be Nothing after extraction)
@@ -2155,6 +2159,13 @@ Partial Public Class ThisAddIn
         Next
         Return out
     End Function
+
+    ''' <summary>
+    ''' Invokes user32.dll to obtain the current process GDI (uiFlags=0) or USER (uiFlags=1) handle count.
+    ''' </summary>
+    ''' <param name="hProcess">Handle of the process being queried.</param>
+    ''' <param name="uiFlags">0 for GDI handles, 1 for USER handles.</param>
+    ''' <returns>The handle count reported by the OS for the specified resource type.</returns>
 
     <System.Runtime.InteropServices.DllImport("user32.dll")>
     Private Shared Function GetGuiResources(hProcess As System.IntPtr, uiFlags As System.Int32) As System.UInt32

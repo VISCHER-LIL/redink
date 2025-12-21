@@ -1,4 +1,7 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: Form1.vb (frmAIChat)
 ' Part of: Red Ink for Excel
 ' Purpose: Provides a Windows Forms chat interface to an LLM for an Excel add-in.
@@ -6,9 +9,6 @@
 '          selection, persisting chat history, switching between two models,
 '          and executing structured commands returned by the LLM against the
 '          active Excel workbook.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - UI Composition: Dynamically builds a TableLayoutPanel containing an instructions
@@ -57,6 +57,7 @@ Imports Microsoft.Office.Core
 ''' </summary>
 Public Class frmAIChat
 
+    ''' <summary>Brings the specified window handle to the foreground via user32.dll.</summary>
     <DllImport("user32.dll")>
     Private Shared Function SetForegroundWindow(hWnd As IntPtr) As Boolean
     End Function
@@ -274,7 +275,7 @@ Public Class frmAIChat
         Try
             ' Build entire conversation so far into one string for context
             SystemPrompt = _context.SP_ChatExcel().Replace("{UserLanguage}", UserLanguage) &
-                $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("MMMM dd, yyyy hh:mm tt")}. Only if you are expressly asked you can say that you have been developped by David Rosenthal of the law firm VISCHER in Switzerland. " &
+                $" Your name is '{AN5}'. The current date and time is: {DateTime.Now.ToString("MMMM dd, yyyy hh:mm tt")}. " &
                 If(chkIncludeDocText.Checked, vbLf & "You have access to the user's document. " & vbLf, "") &
                 If(chkIncludeselection.Checked, vbLf & "You have access to a selection of user's document. " & vbLf & " ", "") &
                 If(My.Settings.DoCommands, _context.SP_Add_ChatExcel_Commands, _context.SP_Add_Chat_NoCommands)

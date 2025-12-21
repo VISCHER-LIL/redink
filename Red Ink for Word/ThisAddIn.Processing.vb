@@ -1,6 +1,33 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Processing.vb
+' Purpose: Drives the Red Ink for Word text-processing pipeline, including selection
+'          validation, chunk iteration, formatting capture/restoration, LLM invocation,
+'          and routing AI output into Word, panes, clipboard, bubbles, podcasts, or slides.
+'
+' Architecture:
+'  - Entry Points & Undo: `ProcessSelectedText` enforces prerequisites, opens `WordUndoScope`,
+'    handles table-aware branching, and delegates to `TrueProcessSelectedText`.
+'  - Story & Chunk Management: re-centers the selection in the main story, bookmarks the
+'    working range, and iterates paragraph chunks while snapshotting styles via
+'    `ParagraphFormatStructure`.
+'  - Formatting & Markdown/HTML: extracts HTML/inline text, performs Markdown conversion,
+'    restores special fields, and reapplies paragraph/list formatting after insertions.
+'  - LLM Workflow: builds prompts (incl. bubbles, TP markup, slides, MyStyle), enforces token
+'    caps, supports alternate models, and post-processes responses (corrections, trimming).
+'  - Markup Generation: offers Word compare, DiffPlex inline tagging, regex-based markups,
+'    and revision-tag helpers (`AddMarkupTags`, `InsertMarkupText`, `SearchAndReplace`).
+'  - Output & UI Surfaces: dispatches results to clipboard panes, new docs, in-place replacements,
+'    podcast scripts, slide decks, bubbles/pushbacks, with progress/cancellation handling.
+'
+' External Dependencies:
+'  - Microsoft.Office.Interop.Word for document automation and story navigation.
+'  - SharedLibrary.SharedMethods for UI, prompt construction, LLM access, formatting utilities.
+'  - DiffPlex for diff building, Markdig + HtmlAgilityPack for Markdown-to-HTML conversion.
+'  - DocumentFormat.OpenXml, MarkdownToRtfConverter, and additional helpers referenced via SharedLibrary.
+' =============================================================================
 
 Option Explicit On
 Option Strict Off
@@ -22,14 +49,24 @@ Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
+    ''' <summary>
+    ''' P/Invoke to enable or disable a window handle.
+    ''' </summary>
+    ''' <param name="hWnd">Window handle.</param>
+    ''' <param name="bEnable">True to enable, False to disable.</param>
+    ''' <returns>True if the window was previously enabled.</returns>
     <System.Runtime.InteropServices.DllImport("user32.dll", SetLastError:=True)>
     Private Shared Function EnableWindow(hWnd As System.IntPtr, bEnable As System.Boolean) As System.Boolean
     End Function
 
+    ''' <summary>
+    ''' P/Invoke to check whether a window handle is enabled.
+    ''' </summary>
+    ''' <param name="hWnd">Window handle.</param>
+    ''' <returns>True if enabled, False otherwise.</returns>
     <System.Runtime.InteropServices.DllImport("user32.dll", SetLastError:=True)>
     Private Shared Function IsWindowEnabled(hWnd As System.IntPtr) As System.Boolean
     End Function
-
 
     ' ProcessSelectedText Parameters:
     ' - SysCommand: A string command to be processed.
@@ -57,8 +94,9 @@ Partial Public Class ThisAddIn
     ' - AddDocs: Boolean flag indicating whether insertdocs should be added
     ' - DoMyStyle: Boolean flag whether MyStyleInsert shall be used
 
-    ' Global array to store paragraph formatting information
-
+    ''' <summary>
+    ''' Stores paragraph-level style, font, list, alignment, and spacing information for reapplication after text processing.
+    ''' </summary>
     Structure ParagraphFormatStructure
         Dim Style As Word.Style
         Dim FontName As String
@@ -91,9 +129,46 @@ Partial Public Class ThisAddIn
         Dim DisableLineHeightGrid As Boolean
     End Structure
 
+    ''' <summary>
+    ''' Module-level array holding paragraph format snapshots for the current selection.
+    ''' </summary>
     Dim paragraphFormat() As ParagraphFormatStructure
+
+    ''' <summary>
+    ''' Count of paragraphs in the current selection snapshot.
+    ''' </summary>
     Dim paraCount As Integer
 
+    ''' <summary>
+    ''' Entry point for processing selected text. Validates prerequisites (system prompt, selection), opens an undo scope,
+    ''' handles table-aware processing (cell-by-cell or whole table), and delegates to TrueProcessSelectedText.
+    ''' </summary>
+    ''' <param name="SysCommand">System prompt for the LLM.</param>
+    ''' <param name="CheckMaxToken">Whether to check token limits.</param>
+    ''' <param name="KeepFormat">Preserve HTML formatting.</param>
+    ''' <param name="ParaFormatInline">Include inline paragraph format markers.</param>
+    ''' <param name="InPlace">Replace selection in place.</param>
+    ''' <param name="DoMarkup">Generate markup comparing original and new text.</param>
+    ''' <param name="MarkupMethod">1=Word compare, 2=Diff, 3=DiffWindow, 4=Regex.</param>
+    ''' <param name="PutInClipboard">Place result in clipboard.</param>
+    ''' <param name="PutInBubbles">Place result as Word comments (bubbles).</param>
+    ''' <param name="SelectionMandatory">Require text selection before processing.</param>
+    ''' <param name="UseSecondAPI">Use secondary API configuration.</param>
+    ''' <param name="FormattingCap">Character limit for format preservation.</param>
+    ''' <param name="DoTPMarkup">Mark revisions for a specific author.</param>
+    ''' <param name="TPMarkupname">Author name for revision filtering.</param>
+    ''' <param name="CreatePodcast">Generate podcast script output.</param>
+    ''' <param name="FileObject">File path for additional LLM input.</param>
+    ''' <param name="DoPane">Show result in a pane.</param>
+    ''' <param name="ChunkSize">Paragraph chunk size for iteration.</param>
+    ''' <param name="NoFormatAndFieldSaving">Skip format/field saving.</param>
+    ''' <param name="DoNewDoc">Place result in a new document.</param>
+    ''' <param name="SlideDeck">PowerPoint deck path for slide generation.</param>
+    ''' <param name="AddDocs">Include insertdocs content.</param>
+    ''' <param name="DoMyStyle">Use MyStyle insertion.</param>
+    ''' <param name="DoBubblesExtract">Extract text from bubbles.</param>
+    ''' <param name="DoPushback">Reply to bubbles.</param>
+    ''' <returns>Empty string on completion.</returns>
     Private Async Function ProcessSelectedText(SysCommand As String, CheckMaxToken As Boolean, KeepFormat As Boolean, ParaFormatInline As Boolean, InPlace As Boolean, DoMarkup As Boolean, MarkupMethod As Integer, PutInClipboard As Boolean, PutInBubbles As Boolean, SelectionMandatory As Boolean, UseSecondAPI As Boolean, FormattingCap As Integer, Optional DoTPMarkup As Boolean = False, Optional TPMarkupname As String = "", Optional CreatePodcast As Boolean = False, Optional FileObject As String = "", Optional DoPane As Boolean = False, Optional ChunkSize As Integer = 0, Optional NoFormatAndFieldSaving As Boolean = False, Optional DoNewDoc As Boolean = False, Optional SlideDeck As String = "", Optional AddDocs As Boolean = False, Optional DoMyStyle As Boolean = False, Optional DoBubblesExtract As Boolean = False, Optional DoPushback As Boolean = False) As Task(Of String)
 
         Dim application As Word.Application = Globals.ThisAddIn.Application
@@ -158,14 +233,12 @@ Partial Public Class ThisAddIn
 
                         If isEntirelyWithinTable Or isWholeTable Then
 
-
-                            ' Fully-qualified per your guidelines
                             Dim sel As Word.Selection = application.Selection
                             Dim selCRange As Word.Range = sel.Range
 
-                            ' Loop _only_ the cells the user actually selected
+                            ' Loop only the cells the user actually selected
                             For Each cell As Word.Cell In sel.Cells
-                                ' Make a working copy of the cell’s range, minus its end‐of‐cell marker
+                                ' Make a working copy of the cell's range, minus its end-of-cell marker
                                 Dim cellRange As Word.Range = cell.Range.Duplicate
                                 cellRange.End -= 1
 
@@ -174,15 +247,15 @@ Partial Public Class ThisAddIn
                                 intersection.Start = System.Math.Max(cellRange.Start, selCRange.Start)
                                 intersection.End = System.Math.Min(cellRange.End, selCRange.End)
 
-                                ' If there is any overlap, process _only_ that text
+                                ' If there is any overlap, process only that text
                                 If intersection.Start < intersection.End Then
-                                    ' keep UI responsive
+                                    ' Keep UI responsive
                                     System.Windows.Forms.Application.DoEvents()
 
-                                    ' show exactly what's being processed
+                                    ' Show exactly what's being processed
                                     intersection.Select()
 
-                                    ' your async processing call
+                                    ' Async processing call
                                     Dim result = Await TrueProcessSelectedText(
                                         SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline,
                                         InPlace, DoMarkup, MarkupMethod, PutInClipboard,
@@ -190,7 +263,7 @@ Partial Public Class ThisAddIn
                                         FormattingCap, DoTPMarkup, TPMarkupname, False,
                                         FileObject, DoPane, 0, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
 
-                                    ' throttle so Word doesn’t lock up
+                                    ' Throttle so Word doesn't lock up
                                     Await System.Threading.Tasks.Task.Delay(500)
                                 End If
                             Next
@@ -275,7 +348,6 @@ Partial Public Class ThisAddIn
                                         End If
 
                                         If (GetAsyncKeyState(VK_ESCAPE) And 1) <> 0 Or IsExit Then
-                                            ' Exit the loop
                                             Exit For
                                         End If
                                         Dim cellRange As Range = cell.Range
@@ -346,7 +418,37 @@ Partial Public Class ThisAddIn
 
     End Function
 
-
+    ''' <summary>
+    ''' Core processing routine. Iterates paragraphs in chunks, captures formatting, invokes the LLM,
+    ''' applies post-processing, and routes output to the requested surface (pane, clipboard, doc, etc.).
+    ''' </summary>
+    ''' <param name="SysCommand">System prompt.</param>
+    ''' <param name="CheckMaxToken">Check token limits.</param>
+    ''' <param name="KeepFormat">Preserve HTML formatting.</param>
+    ''' <param name="ParaFormatInline">Include inline paragraph format markers.</param>
+    ''' <param name="InPlace">Replace selection in place.</param>
+    ''' <param name="DoMarkup">Generate markup.</param>
+    ''' <param name="MarkupMethod">1=Word, 2=Diff, 3=DiffWindow, 4=Regex.</param>
+    ''' <param name="PutInClipboard">Place result in clipboard.</param>
+    ''' <param name="PutInBubbles">Place result as Word comments.</param>
+    ''' <param name="SelectionMandatory">Require text selection.</param>
+    ''' <param name="UseSecondAPI">Use secondary API.</param>
+    ''' <param name="FormattingCap">Character limit for format preservation.</param>
+    ''' <param name="DoTPMarkup">Mark revisions for a specific author.</param>
+    ''' <param name="TPMarkupname">Author name for revision filtering.</param>
+    ''' <param name="CreatePodcast">Generate podcast script.</param>
+    ''' <param name="FileObject">File path for additional LLM input.</param>
+    ''' <param name="DoPane">Show result in a pane.</param>
+    ''' <param name="ChunkSize">Paragraph chunk size.</param>
+    ''' <param name="NoFormatAndFieldSaving">Skip format/field saving.</param>
+    ''' <param name="DoNewDoc">Place result in a new document.</param>
+    ''' <param name="SlideDeck">PowerPoint deck path.</param>
+    ''' <param name="AddDocs">Include insertdocs.</param>
+    ''' <param name="DoMyStyle">Use MyStyle.</param>
+    ''' <param name="DoBubblesExtract">Extract from bubbles.</param>
+    ''' <param name="InTable">Processing within table context.</param>
+    ''' <param name="DoPushback">Reply to bubbles.</param>
+    ''' <returns>Empty string on completion.</returns>
     Private Async Function TrueProcessSelectedText(SysCommand As String, CheckMaxToken As Boolean, KeepFormat As Boolean, ParaFormatInline As Boolean, InPlace As Boolean, DoMarkup As Boolean, MarkupMethod As Integer, PutInClipboard As Boolean, PutInBubbles As Boolean, SelectionMandatory As Boolean, UseSecondAPI As Boolean, FormattingCap As Integer, Optional DoTPMarkup As Boolean = False, Optional TPMarkupname As String = "", Optional CreatePodcast As Boolean = False, Optional FileObject As String = "", Optional DoPane As Boolean = False, Optional ChunkSize As Integer = 0, Optional NoFormatAndFieldSaving As Boolean = False, Optional DoNewDoc As Boolean = False, Optional SlideDeck As String = "", Optional AddDocs As Boolean = False, Optional DoMyStyle As Boolean = False, Optional DoBubblesExtract As Boolean = False, Optional InTable As Boolean = False, Optional DoPushback As Boolean = False) As Task(Of String)
 
         Dim application As Word.Application = Globals.ThisAddIn.Application
@@ -377,7 +479,6 @@ Partial Public Class ThisAddIn
             Debug.WriteLine($"Warning: Could not reset to main story: {ex.Message}")
         End Try
         ' ================================================================================
-
 
         Debug.WriteLine(
                     vbCrLf & "CheckMaxToken=" & CheckMaxToken &
@@ -428,18 +529,14 @@ Partial Public Class ThisAddIn
             Debug.WriteLine(vbCrLf & Left(rng.Text, 400) & vbCrLf)
 
             ' Added for processing footnotes etc. too
-
             ' What story (main text, header, footer, footnote, etc.) am I in?
             Dim storyType As Word.WdStoryType = rng.StoryType
             ' Grab the full Range for that story from the document
             Dim storyRange As Word.Range = currentdoc.StoryRanges(storyType)
 
-
             If Not NoSelectedText Then
-
                 If rng.Text.Length = 0 Then NoSelectedText = True
                 If Not NoSelectedText And (KeepFormat Or ParaFormatInline) And FormattingCap > 0 And rng.Text.Length > FormattingCap Then NoFormatting = True
-
             End If
 
             If PutInBubbles Or PutInClipboard Or NoSelectedText Or DoPushback Then NoFormatting = True
@@ -458,7 +555,6 @@ Partial Public Class ThisAddIn
             If ChunkSize > 0 Then
                 DoSilent = True
                 If DoMarkup Then
-
                     Select Case MarkupMethod
                         Case 1
                             Dim SilentMarkup As Integer = SLib.ShowCustomYesNoBox($"You have choosen both iterated processing and markups using Word compare. Iteration only works using the Regex method. Continue using Regex markup (the character cap will be ignored) or go without markups?", "Yes, Regex markups", "No, no markups")
@@ -510,9 +606,7 @@ Partial Public Class ThisAddIn
 
             Dim totalEndBm As Word.Bookmark
 
-
             ' Added for processing footnotes etc. too
-
             Dim docEnd As Integer = storyRange.End
 
             If selection.End < docEnd Then
@@ -540,7 +634,6 @@ Partial Public Class ThisAddIn
 
             Do While NoSelectedText OrElse (currentdoc.Bookmarks.Exists("NextStart") AndAlso currentdoc.Bookmarks.Exists("TotalEnd") AndAlso currentdoc.Bookmarks("NextStart").Range.Start < currentdoc.Bookmarks("TotalEnd").Range.Start)
 
-
                 Try
 
                     If Not NoSelectedText Then
@@ -553,7 +646,7 @@ Partial Public Class ThisAddIn
                         Loop
                         If curStart >= totalEnd Then Exit Do
 
-                        ' ---- 2.1  Chunk-Ende bestimmen ----------------------------
+                        ' ---- 2.1  Determine chunk end ----------------------------
                         docEnd = storyRange.End
                         Dim restRng As Word.Range = currentdoc.Range(Start:=curStart, End:=totalEnd)
                         Dim paras As Word.Paragraphs = restRng.Paragraphs
@@ -578,15 +671,11 @@ Partial Public Class ThisAddIn
                             chunkEnd = paraRng.End
                         End If
 
-
-                        ' Grenzen sichern, um Range-Fehler zu vermeiden                        
-                        'If chunkEnd > docEnd Then chunkEnd = docEnd
-                        'If chunkEnd <= curStart Then chunkEnd = System.Math.Min(curStart + 1, docEnd)
-
+                        ' Secure boundaries to avoid Range errors
                         If chunkEnd > totalEnd Then chunkEnd = totalEnd
                         If chunkEnd <= curStart Then chunkEnd = System.Math.Min(curStart + 1, totalEnd)
 
-                        ' ---- 2.2  Selection auf diesen Chunk ----------------------
+                        ' ---- 2.2  Selection on this chunk ----------------------
                         selection.SetRange(Start:=curStart, End:=chunkEnd)
                         rng = selection.Range
 
@@ -605,7 +694,6 @@ Partial Public Class ThisAddIn
                 trailingCR = False
                 trailingCRcount = 0
 
-
                 If Not ParaFormatInline AndAlso Not NoFormatting AndAlso Not NoSelectedText AndAlso Not NoFormatAndFieldSaving Then
 
                     paraCount = rng.Paragraphs.Count
@@ -613,17 +701,16 @@ Partial Public Class ThisAddIn
                     ReDim paragraphFormat(paraCount - 1)
                     Array.Clear(paragraphFormat, 0, paragraphFormat.Length)
 
-
                     For i = 1 To paraCount
                         Dim para As Word.Paragraph = rng.Paragraphs(i)
                         Dim paraRange As Word.Range = para.Range
 
-                        '---- bodyRange = text without the paragaph mark -------------------
+                        ' bodyRange = text without the paragraph mark
                         Dim bodyRange As Word.Range = paraRange.Duplicate
                         bodyRange.MoveEnd(Word.WdUnits.wdCharacter, -1)
 
                         Try
-                            '---- character-level attributes – store only when uniform -----
+                            ' Character-level attributes – store only when uniform
                             Dim boldV As Integer? = Nothing
                             Dim italicV As Integer? = Nothing
                             Dim underlineV As Word.WdUnderline? = Nothing
@@ -645,7 +732,7 @@ Partial Public Class ThisAddIn
                             If bodyRange.Font.Size <> CSng(Word.WdConstants.wdUndefined) Then _
                                 fsize = bodyRange.Font.Size
 
-                            '---- assign into the (freshly resized) array ------------------
+                            ' Assign into the (freshly resized) array
                             paragraphFormat(i - 1) = New ParagraphFormatStructure With {
                                 .Style = para.Style,
                                 .FontName = fname,
@@ -677,7 +764,7 @@ Partial Public Class ThisAddIn
                                         }
 
                         Catch ex As System.Exception
-                            'Debug.Print($"Error extracting paragraph {i} {ex.Message}")
+                            ' Error extracting paragraph formatting
                         End Try
                     Next
 
@@ -686,7 +773,6 @@ Partial Public Class ThisAddIn
                 Debug.WriteLine($"4Range Start = {rng.Start} Selection Start = {selection.Start}")
                 Debug.WriteLine($"Range End = {rng.End} Selection End = {selection.End}")
                 Debug.WriteLine(vbCrLf & Left(rng.Text, 400) & vbCrLf)
-
 
                 Dim raw As String = ""
 
@@ -716,7 +802,7 @@ Partial Public Class ThisAddIn
                                 If Not String.IsNullOrWhiteSpace(raw) Then SelectedText = raw
                             End If
                         Else
-                            If INI_MarkdownConvert AndAlso Not KeepFormat AndAlso (Not DoMarkup OrElse (MarkupMethod = 3 Or MarkupMethod = 2)) AndAlso InPlace Then  ' AndAlso rng.Text.Length < INI_MarkupDiffCap 
+                            If INI_MarkdownConvert AndAlso Not KeepFormat AndAlso (Not DoMarkup OrElse (MarkupMethod = 3 Or MarkupMethod = 2)) AndAlso InPlace Then
 
                                 Debug.WriteLine($"4bRange Start = {rng.Start} Selection Start = {selection.Start}")
                                 Debug.WriteLine($"Range End = {rng.End} Selection End = {selection.End}")
@@ -813,8 +899,6 @@ Partial Public Class ThisAddIn
 
                 Dim LLMResult As String = ""
 
-
-
                 If SelectedAlternateModels Is Nothing OrElse SelectedAlternateModels.Count = 0 OrElse DoMarkup OrElse PutInBubbles OrElse DoPushback OrElse SlideInsert <> "" Then
 
                     LLMResult = Await LLM(SysCommand & If(String.IsNullOrWhiteSpace(BubblesText), "", " " & SP_Add_BubblesExtract) & If(DoTPMarkup, " " & SP_Add_Revisions, "") & " " & If(SlideDeck = "", If(NoFormatting, "", If(KeepFormat, " " & SP_Add_KeepHTMLIntact, " " & SP_Add_KeepInlineIntact)), " " & SP_Add_Slides) & If(DoMyStyle, " " & MyStyleInsert, ""), If(NoSelectedText, If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>" & If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert & " " & BubblesText), "", "", 0, UseSecondAPI, False, OtherPrompt, FileObject)
@@ -835,7 +919,6 @@ Partial Public Class ThisAddIn
 
                 LLMResult = LLMResult.Replace("<TEXTTOPROCESS>", "").Replace("</TEXTTOPROCESS>", "")
 
-
                 If Not String.IsNullOrEmpty(LLMResult) Then
                     LLMResult = Await PostCorrection(LLMResult, UseSecondAPI)
                 End If
@@ -852,11 +935,6 @@ Partial Public Class ThisAddIn
                 Debug.WriteLine($"LLMResult 2 = '{LLMResult}'")
 
                 If DoTPMarkup Then LLMResult = RemoveMarkupTags(LLMResult)
-
-                'If (MarkupMethod <> 4 Or Not DoMarkup) And InPlace And Not trailingCR And LLMResult.EndsWith(ControlChars.Lf) Then LLMResult = LLMResult.TrimEnd(ControlChars.Lf)
-                'If (MarkupMethod <> 4 Or Not DoMarkup) And InPlace And Not trailingCR And LLMResult.EndsWith(ControlChars.Cr) Then LLMResult = LLMResult.TrimEnd(ControlChars.Cr)
-
-                'If (MarkupMethod <> 4 Or Not DoMarkup) And trailingCR And (LLMResult.EndsWith(ControlChars.Cr) Or LLMResult.EndsWith(ControlChars.Lf)) Then LLMResult = LLMResult.Replace(ControlChars.Cr, ControlChars.CrLf).Replace(ControlChars.Lf, ControlChars.CrLf)
 
                 If Not trailingCR AndAlso LLMResult.EndsWith(ControlChars.CrLf) Then LLMResult = LLMResult.TrimEnd(ControlChars.CrLf)
                 If Not trailingCR AndAlso LLMResult.EndsWith(ControlChars.Lf) Then LLMResult = LLMResult.TrimEnd(ControlChars.Lf)
@@ -1415,14 +1493,21 @@ Partial Public Class ThisAddIn
     End Function
 
 
+
+    ''' <summary>
+    ''' Captures revision-free text from a range by temporarily hiding revisions and filtering deleted content.
+    ''' Returns text visible in final view, excluding deletions and moves.
+    ''' </summary>
+    ''' <param name="src">Word range to extract visible text from.</param>
+    ''' <returns>Text with deletions omitted.</returns>
     Public Function GetVisibleText(ByVal src As Range) As String
         Try
-            ' 1) Null-/Leerauswahl abfangen
+            ' 1) Catch null/empty selection
             If src Is Nothing Then
                 Return String.Empty
             End If
 
-            ' 2) Rohtext einmal holen für Fast-Path
+            ' 2) Fetch raw text once for fast path
             Dim raw As String
             Try
                 raw = src.Text
@@ -1433,7 +1518,7 @@ Partial Public Class ThisAddIn
                 Return String.Empty
             End Try
 
-            ' 3) Fast-Path: keine Revisionen in dieser Range → sofort zurückgeben
+            ' 3) Fast path: no revisions in this range → return immediately
             Dim revCount As Integer
             Try
                 revCount = src.Revisions.Count
@@ -1469,7 +1554,7 @@ Partial Public Class ThisAddIn
 
             ' Original algorithm with better error handling
             Dim sliceStart As Integer = src.Start
-            Dim sliceEnd As Integer = src.End    ' exklusiv
+            Dim sliceEnd As Integer = src.End    ' exclusive
 
             ' 4) Collect deleted intervals with safer revision handling
             Dim skips As New List(Of (s As Integer, e As Integer))()
@@ -1479,7 +1564,7 @@ Partial Public Class ThisAddIn
                     Dim revType As WdRevisionType = rev.Type
 
                     If revType = WdRevisionType.wdRevisionInsert _
-                    OrElse revType = WdRevisionType.wdRevisionMovedTo Then
+                OrElse revType = WdRevisionType.wdRevisionMovedTo Then
                         Continue For
                     End If
 
@@ -1534,9 +1619,13 @@ Partial Public Class ThisAddIn
                 Return String.Empty
             End Try
         End Try
-
     End Function
 
+    ''' <summary>
+    ''' Merges overlapping or adjacent integer intervals, returning a sorted list of non-overlapping ranges.
+    ''' </summary>
+    ''' <param name="intervals">List of start/end tuples to merge.</param>
+    ''' <returns>Merged intervals.</returns>
     Private Function MergeIntervals(ByVal intervals As List(Of (s As Integer, e As Integer))) _
     As List(Of (s As Integer, e As Integer))
 
@@ -1563,7 +1652,11 @@ Partial Public Class ThisAddIn
     End Function
 
 
-
+    ''' <summary>
+    ''' Applies regex-based find/replace pairs from the LLM to the selected text with tracked changes.
+    ''' Shows progress and handles cancellation; reports errors if patterns fail.
+    ''' </summary>
+    ''' <param name="regexResult">String containing pattern/replacement pairs from LLM.</param>
     Public Sub MarkupSelectedTextWithRegex(regexResult As String)
         Dim regexList As List(Of (Pattern As String, Replacement As String)) = ParseRegexString(regexResult)
         Dim errorCount As Integer = 0
@@ -1673,11 +1766,16 @@ Partial Public Class ThisAddIn
             End If
 
         Catch ex As Exception
-            MessageBox.Show("Error in MarkupSelectedTextWithRegex: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            MessageBox.Show($"Error in MarkupSelectedTextWithRegex: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
         End Try
     End Sub
 
-    ' Parses the input string into a list of regex patterns and replacements
+    ''' <summary>
+    ''' Parses regex result string into pattern/replacement tuples. Splits by RegexSeparator2, then by RegexSeparator1.
+    ''' Deduplicates identical pairs.
+    ''' </summary>
+    ''' <param name="input">Raw LLM regex output.</param>
+    ''' <returns>List of pattern/replacement pairs.</returns>
     Private Function ParseRegexString(input As String) As List(Of (String, String))
         Dim result As New List(Of (String, String))
         Dim entries() As String = input.Split(New String() {RegexSeparator2}, StringSplitOptions.RemoveEmptyEntries)
@@ -1699,24 +1797,31 @@ Partial Public Class ThisAddIn
         Return result
     End Function
 
-
+    ''' <summary>
+    ''' Searches for oldText in chunks, replaces with newText (plus optional marker), respecting tracked changes and selection boundaries.
+    ''' Advances search window after each replacement, restoring selection only if matches found.
+    ''' </summary>
+    ''' <param name="oldText">Text to find.</param>
+    ''' <param name="newText">Replacement text.</param>
+    ''' <param name="OnlySelection">Restrict to current selection.</param>
+    ''' <param name="Marker">Optional character to embed in replacement.</param>
     Private Sub SearchAndReplace(oldText As String, newText As String, OnlySelection As Boolean, Marker As String)
         Dim doc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
         Dim trackChangesEnabled As Boolean = doc.TrackRevisions
         Dim originalAuthor As String = doc.Application.UserName
 
         Try
-            ' 1) Arbeitsbereich festlegen
+            ' 1) Define working area
             Dim workRange As Microsoft.Office.Interop.Word.Range
             If OnlySelection AndAlso doc.Application.Selection IsNot Nothing _
-               AndAlso doc.Application.Selection.Range.Text <> "" Then
+           AndAlso doc.Application.Selection.Range.Text <> "" Then
                 workRange = doc.Application.Selection.Range.Duplicate
             Else
                 workRange = doc.Content.Duplicate
                 OnlySelection = False
             End If
 
-            ' 2) Marker in neuen Text einfügen
+            ' 2) Insert marker into new text
             Dim newTextWithMarker As String
             If newText.Length > 2 AndAlso Marker <> "" Then
                 newTextWithMarker = newText.Substring(0, newText.Length - 2) & Marker & newText.Substring(newText.Length - 2)
@@ -1724,25 +1829,23 @@ Partial Public Class ThisAddIn
                 newTextWithMarker = newText
             End If
 
-            ' 3) Ursprüngliche Selektion merken
+            ' 3) Remember original selection
             Dim selectionStart As Integer = doc.Application.Selection.Start
             Dim selectionEnd As Integer = doc.Application.Selection.End
 
-            ' 4) Chunk‑ oder Standard‑Suche
-
-            ' --- Long‑Chunk‑Suche ----------------------------------------
+            ' 4) Long-chunk search
             doc.Application.Selection.SetRange(workRange.Start, workRange.End)
             Dim foundAny As Boolean = False
 
             Do While Globals.ThisAddIn.FindLongTextInChunks(oldText, doc.Application.Selection)
                 If doc.Application.Selection Is Nothing Then Exit Do
-                ' Escape‑Taste prüfen
+                ' Check escape key
                 If (GetAsyncKeyState(VK_ESCAPE) And 1) <> 0 Then Exit Do
 
                 foundAny = True
                 Dim selRange As Microsoft.Office.Interop.Word.Range = doc.Application.Selection.Range
 
-                ' Auf Löschungen prüfen
+                ' Check for deletions
                 Dim isDeleted As Boolean = False
                 For Each rev As Microsoft.Office.Interop.Word.Revision In selRange.Revisions
                     If rev.Type = Microsoft.Office.Interop.Word.WdRevisionType.wdRevisionDelete Then
@@ -1751,29 +1854,29 @@ Partial Public Class ThisAddIn
                     End If
                 Next
 
-                ' Ersetzen
+                ' Replace
                 Dim replaceStart As Integer = selRange.Start
                 Dim replaceEnd As Integer = selRange.End
 
                 If Not isDeleted Then
                     selRange.Text = newTextWithMarker
 
-                    ' advance replaceEnd and selectionEnd by inserted length
+                    ' Advance replaceEnd and selectionEnd by inserted length
                     replaceEnd = replaceStart + newTextWithMarker.Length
                     selectionEnd += newTextWithMarker.Length
 
-                    ' hard clamp after mutation
+                    ' Hard clamp after mutation
                     selectionEnd = System.Math.Min(selectionEnd, doc.Content.End)
                     replaceEnd = System.Math.Min(replaceEnd, doc.Content.End)
                 End If
 
-                ' Clamping und Range‑Vorschub
+                ' Clamping and range advance
                 Dim newStart As Integer = System.Math.Max(doc.Content.Start, System.Math.Min(replaceEnd, doc.Content.End))
 
-                ' Ensure the next search window is valid and non‑negative length
+                ' Ensure the next search window is valid and non-negative length
                 Dim desiredEnd As Integer = If(OnlySelection,
-                                               System.Math.Min(selectionEnd, doc.Content.End),
-                                               doc.Content.End)
+                                           System.Math.Min(selectionEnd, doc.Content.End),
+                                           doc.Content.End)
 
                 ' Guarantee monotonic forward progress: end >= start
                 Dim newEnd As Integer = System.Math.Max(newStart, desiredEnd)
@@ -1789,7 +1892,7 @@ Partial Public Class ThisAddIn
                 End If
             Loop
 
-            ' Selektion nur bei Treffern wiederherstellen
+            ' Restore selection only when matches found
             If foundAny Then
                 selectionStart = System.Math.Max(doc.Content.Start, System.Math.Min(selectionStart, doc.Content.End))
                 selectionEnd = System.Math.Max(doc.Content.Start, System.Math.Min(selectionEnd, doc.Content.End))
@@ -1798,7 +1901,7 @@ Partial Public Class ThisAddIn
                     doc.Application.Selection.Select()
                 End If
             Else
-                Debug.WriteLine("Hinweis: Begriff nicht gefunden, Restore übersprungen.")
+                Debug.WriteLine("Note: Term not found, restore skipped.")
             End If
 
         Catch ex As System.Exception
@@ -1806,98 +1909,10 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-    Private Sub oldSearchAndReplace(oldText As String, newText As String, OnlySelection As Boolean, Marker As String)
-        Dim doc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
-        Dim trackChangesEnabled As Boolean = doc.TrackRevisions
-        Dim originalAuthor As String = doc.Application.UserName
 
-        Try
-            ' 1) Arbeitsbereich festlegen
-            Dim workRange As Microsoft.Office.Interop.Word.Range
-            If OnlySelection AndAlso doc.Application.Selection IsNot Nothing _
-           AndAlso doc.Application.Selection.Range.Text <> "" Then
-                workRange = doc.Application.Selection.Range.Duplicate
-            Else
-                workRange = doc.Content.Duplicate
-                OnlySelection = False
-            End If
-
-            ' 2) Marker in neuen Text einfügen
-            Dim newTextWithMarker As String
-            If newText.Length > 2 AndAlso Marker <> "" Then
-                newTextWithMarker = newText.Substring(0, newText.Length - 2) & Marker & newText.Substring(newText.Length - 2)
-            Else
-                newTextWithMarker = newText
-            End If
-
-            ' 3) Ursprüngliche Selektion merken
-            Dim selectionStart As Integer = doc.Application.Selection.Start
-            Dim selectionEnd As Integer = doc.Application.Selection.End
-
-            ' 4) Chunk‑ oder Standard‑Suche
-
-            ' --- Long‑Chunk‑Suche ----------------------------------------
-            doc.Application.Selection.SetRange(workRange.Start, workRange.End)
-            Dim foundAny As Boolean = False
-
-            Do While Globals.ThisAddIn.FindLongTextInChunks(oldText, doc.Application.Selection)
-                If doc.Application.Selection Is Nothing Then Exit Do
-                ' Escape‑Taste prüfen
-                If (GetAsyncKeyState(VK_ESCAPE) And 1) <> 0 Then Exit Do
-
-                foundAny = True
-                Dim selRange As Microsoft.Office.Interop.Word.Range = doc.Application.Selection.Range
-
-                ' Auf Löschungen prüfen
-                Dim isDeleted As Boolean = False
-                For Each rev As Microsoft.Office.Interop.Word.Revision In selRange.Revisions
-                    If rev.Type = Microsoft.Office.Interop.Word.WdRevisionType.wdRevisionDelete Then
-                        isDeleted = True
-                        Exit For
-                    End If
-                Next
-
-                ' Ersetzen
-                Dim replaceStart As Integer = selRange.Start
-                Dim replaceEnd As Integer = selRange.End
-                If Not isDeleted Then
-                    selRange.Text = newTextWithMarker
-                    replaceEnd += newTextWithMarker.Length
-                    selectionEnd += newTextWithMarker.Length
-                End If
-
-                ' Clamping und Range‑Vorschub
-                Dim newStart As Integer = System.Math.Max(0, System.Math.Min(replaceEnd, doc.Content.End))
-                Dim newEnd As Integer = If(OnlySelection,
-                                            System.Math.Min(selectionEnd, doc.Content.End),
-                                            doc.Content.End)
-                If newStart <= newEnd Then
-                    doc.Application.Selection.SetRange(newStart, newEnd)
-                Else
-                    Exit Do
-                End If
-            Loop
-
-            ' Selektion nur bei Treffern wiederherstellen
-            If foundAny Then
-                selectionStart = System.Math.Max(0, System.Math.Min(selectionStart, doc.Content.End))
-                selectionEnd = System.Math.Max(0, System.Math.Min(selectionEnd, doc.Content.End))
-                If selectionStart <= selectionEnd Then
-                    doc.Application.Selection.SetRange(selectionStart, selectionEnd)
-                    doc.Application.Selection.Select()
-                End If
-            Else
-                Debug.WriteLine("Hinweis: Begriff nicht gefunden, Restore übersprungen.")
-            End If
-
-
-
-        Catch ex As System.Exception
-            MsgBox("Error in SearchReplace: " & ex.Message, MsgBoxStyle.Critical)
-        End Try
-    End Sub
-
-
+    ''' <summary>
+    ''' Converts Markdown text to Word formatting in the current selection, preserving original paragraph styles where possible.
+    ''' </summary>
     Public Shared Sub ConvertMarkdownToWord()
         Dim app As Word.Application = Globals.ThisAddIn.Application
         Dim sel As Word.Selection = app.Selection
@@ -1946,7 +1961,14 @@ Partial Public Class ThisAddIn
         Next
     End Sub
 
-
+    ''' <summary>
+    ''' Inserts Markdown-formatted text into the selection, converting it to HTML then Word formatting.
+    ''' Handles trailing CR and space preservation around the inserted content.
+    ''' </summary>
+    ''' <param name="selection">Target Word selection.</param>
+    ''' <param name="Result">Markdown text to insert.</param>
+    ''' <param name="TrailingCR">Whether original text ended with CR.</param>
+    ''' <param name="AddTrailingIfNeeded">Add trailing CR if needed.</param>
     Public Shared Sub InsertTextWithMarkdown(selection As Microsoft.Office.Interop.Word.Selection, Result As String, Optional TrailingCR As Boolean = False, Optional AddTrailingIfNeeded As Boolean = False)
 
         If selection Is Nothing Then
@@ -1965,23 +1987,18 @@ Partial Public Class ThisAddIn
         Debug.WriteLine(selection.Text)
 
         If range.Start < range.End AndAlso Not TrailingCR Then
-
-            ' Prüfen, ob vor und hinter range Platz im Dokument ist; erforderlich, weil beim Löschen eines solchen Texts Word automatisch einen Space entfernt
+            ' Check if space exists before and after range; needed because Word automatically removes a space when deleting text
             Dim docStart As Integer = range.Document.Content.Start
             Dim docEnd As Integer = range.Document.Content.End
 
             If range.Start > docStart AndAlso range.End < docEnd Then
-                ' Ein 1‐Zeichen‐Range vor range
+                ' One-character range before range
                 Dim beforerange As Range = range.Document.Range(range.Start - 1, range.Start)
-
-                ' Ein 1‐Zeichen‐Range nach range
-                'Dim afterrange As Range = range.Document.Range(range.End - 1, range.End + 1)
+                ' One-character range after range
                 Dim afterrange As Range = range.Document.Range(range.End - 1, range.End)
 
-                'If beforerange.Text = " " AndAlso afterrange.Text = " " Then
                 Debug.WriteLine($"Beforetext='{beforerange.Text}'")
                 Debug.WriteLine($"Aftertext='{afterrange.Text}'")
-                'If afterrange.Text.EndsWith(" "c) OrElse afterrange.Text.StartsWith(" "c) Then
                 If afterrange.Text.EndsWith(" "c) OrElse afterrange.Text.StartsWith(" "c) Then
                     LeadingTrailingSpace = True
                 Else
@@ -1993,11 +2010,6 @@ Partial Public Class ThisAddIn
         End If
 
         Dim insertionStart As Integer = selection.Range.Start
-
-        'Debug.WriteLine($"IM2-Range Start = {selection.Start}")
-        'Debug.WriteLine($"Range End = {selection.End}")
-        'Debug.WriteLine("TrailingCR = " & TrailingCR)
-        'Debug.WriteLine(selection.Text)
 
         Dim ResultBack As String = Result
         Try
@@ -2013,12 +2025,12 @@ Partial Public Class ThisAddIn
 
         Dim pattern As String = "((\r\n|\n|\r){2,})"
         Result = Regex.Replace(Result, pattern, Function(m As Match)
-                                                    ' Prüfen, ob das Match bis zum Ende des Strings reicht:
+                                                    ' Check if the match reaches the end of the string:
                                                     If m.Index + m.Length = Result.Length Then
-                                                        ' Am Ende: Rückgabe der Umbrüche wie sie sind
+                                                        ' At end: return the breaks as they are
                                                         Return m.Value
                                                     Else
-                                                        ' Andernfalls: &nbsp; zwischen die Umbrüche einfügen
+                                                        ' Otherwise: insert &nbsp; between the breaks
                                                         Dim breaks As String = m.Value
                                                         Dim regexBreaks As New Regex("(\r\n|\n|\r)")
                                                         Dim splitBreaks = regexBreaks.Matches(breaks)
@@ -2030,7 +2042,6 @@ Partial Public Class ThisAddIn
                                                         Return resultx
                                                     End If
                                                 End Function)
-
 
         Dim builder As New MarkdownPipelineBuilder()
 
@@ -2055,12 +2066,11 @@ Partial Public Class ThisAddIn
 
         Dim htmlResult As String = Markdown.ToHtml(Result, markdownPipeline).Trim
 
-
-        ' ─── alle echten Newlines raus, damit sie nicht als Text umgewandelt werden ───
+        ' Remove all real newlines so they are not converted as text
         htmlResult = htmlResult _
-                .Replace(vbCrLf, "") _
-                .Replace(vbCr, "") _
-                .Replace(vbLf, "")
+            .Replace(vbCrLf, "") _
+            .Replace(vbCr, "") _
+            .Replace(vbLf, "")
 
         ' Load the HTML into HtmlDocument
         Dim htmlDoc As New HtmlAgilityPack.HtmlDocument()
@@ -2069,9 +2079,6 @@ Partial Public Class ThisAddIn
 
         fullhtml = htmlDoc.DocumentNode.OuterHtml
         Debug.WriteLine("HTML1=" & fullhtml)
-
-        'fullhtml = htmlDoc.DocumentNode.OuterHtml
-        'Debug.WriteLine("HTML3=" & fullhtml)
 
         SLib.InsertTextWithFormat(fullhtml, range, True, Not TrailingCR)
 
@@ -2088,7 +2095,6 @@ Partial Public Class ThisAddIn
             range.InsertAfter(" ")
         End If
 
-
         Dim InsertionEnd As Integer = range.End
 
         Dim doc As Microsoft.Office.Interop.Word.Document = selection.Document
@@ -2100,12 +2106,12 @@ Partial Public Class ThisAddIn
         Debug.WriteLine("LeadingTrailingSpace = " & LeadingTrailingSpace)
         Debug.WriteLine("TrailingCR = " & TrailingCR)
         Debug.WriteLine(selection.Text)
-
     End Sub
 
 
-
-    ' Structure to store revision information for fast processing
+    ''' <summary>
+    ''' Lightweight structure holding revision metadata (start, end, text, type, author) for efficient processing without repeated COM calls.
+    ''' </summary>
     Private Structure RevInfo
         Public Start As Integer
         Public EndPos As Integer  ' Using EndPos instead of End to avoid keyword conflict
@@ -2114,6 +2120,13 @@ Partial Public Class ThisAddIn
         Public Author As String
     End Structure
 
+    ''' <summary>
+    ''' Encodes Word revisions as HTML-style markup tags (ins/del) for LLM consumption.
+    ''' Optionally filters by author name. Shows splash screen progress during collection.
+    ''' </summary>
+    ''' <param name="rng">Range containing revisions.</param>
+    ''' <param name="TPMarkupName">Optional author name filter.</param>
+    ''' <returns>Text with del/ins tags.</returns>
     Public Function AddMarkupTags(ByVal rng As Range, Optional ByVal TPMarkupName As String = Nothing) As String
 
         Dim splash As New SLib.SplashScreen("Coding markups...  counting")
@@ -2245,13 +2258,26 @@ Partial Public Class ThisAddIn
         Return resultBuilder.ToString()
     End Function
 
-
+    ''' <summary>
+    ''' Strips del/ins markup tags from text using regex, returning plain text.
+    ''' </summary>
+    ''' <param name="text">Markup-tagged text.</param>
+    ''' <returns>Text without tags.</returns>
     Public Function RemoveMarkupTags(text As String) As String
         ' Remove <del>, </del>, <ins>, and </ins> tags using regular expressions
         Dim result As String = System.Text.RegularExpressions.Regex.Replace(text, "<del>|</del>|<ins>|</ins>", String.Empty)
         Return result
     End Function
 
+    ''' <summary>
+    ''' Creates tracked-change comparison by using Word's CompareDocuments on temporary docs, then pastes result into target range.
+    ''' Shows splash screen and minimizes temp doc windows.
+    ''' </summary>
+    ''' <param name="originalText">Original text.</param>
+    ''' <param name="newText">Revised text.</param>
+    ''' <param name="targetrange">Destination range for comparison output.</param>
+    ''' <param name="paraformatinline">Whether inline paragraph format was used.</param>
+    ''' <param name="noformatting">Skip formatting application.</param>
     Private Sub CompareAndInsertComparedoc(originalText As String, newText As String, targetrange As Range, Optional paraformatinline As Boolean = False, Optional noformatting As Boolean = True)
 
         Dim splash As New SLib.SplashScreen("Creating markup using the Word compare functionality (ignore any flickering and press 'No' if prompted) ...")
@@ -2337,7 +2363,17 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-
+    ''' <summary>
+    ''' Generates inline diff markup using DiffPlex, converting word-by-word changes into [INS_START]/[DEL_START] tags.
+    ''' Optionally shows result in a preview window or inserts directly into target range.
+    ''' </summary>
+    ''' <param name="text1">Original text.</param>
+    ''' <param name="text2">Revised text.</param>
+    ''' <param name="targetRange">Destination range.</param>
+    ''' <param name="ShowInWindow">Display preview before inserting.</param>
+    ''' <param name="TextforWindow">Window caption.</param>
+    ''' <param name="paraformatinline">Inline paragraph formatting flag.</param>
+    ''' <param name="noformatting">Skip formatting.</param>
     Private Sub CompareAndInsert(text1 As String, text2 As String, targetRange As Range, Optional ShowInWindow As Boolean = False, Optional TextforWindow As String = "A text with these changes will be inserted ('Esc' to abort):", Optional paraformatinline As Boolean = False, Optional noformatting As Boolean = True)
         Try
 
@@ -2472,7 +2508,12 @@ Partial Public Class ThisAddIn
     End Sub
 
 
-
+    ''' <summary>
+    ''' Parses markup tags ([INS_START]/[DEL_START]) and applies them to Word with track changes, stripping merge fields from deleted runs.
+    ''' Merges contiguous tags, inserts plain text, tracked insertions, and deletions, then cleans duplicate spaces in final view.
+    ''' </summary>
+    ''' <param name="inputText">Tagged markup string.</param>
+    ''' <param name="targetRange">Destination Word range.</param>
     Public Sub InsertMarkupText(ByVal inputText As String, ByVal targetRange As Microsoft.Office.Interop.Word.Range)
         Dim wordApp As Microsoft.Office.Interop.Word.Application = Globals.ThisAddIn.Application
         Dim doc As Microsoft.Office.Interop.Word.Document = wordApp.ActiveDocument
@@ -2480,8 +2521,7 @@ Partial Public Class ThisAddIn
         Dim originalTrack As Boolean = doc.TrackRevisions
         Dim originalUpdate As Boolean = wordApp.ScreenUpdating
 
-        ' Die Positions‑Variablen VOR dem Try deklarieren,
-        ' damit sie auch in Finally noch gültig sind:
+        ' Declare position variables BEFORE the Try so they are still valid in Finally:
         Dim docStart As Integer
         Dim startPos As Integer
         Dim endPosNoCR As Integer
@@ -2490,16 +2530,14 @@ Partial Public Class ThisAddIn
             wordApp.ScreenUpdating = False
             doc.TrackRevisions = False
 
-            '------------------------------------------------------------------
-            '  A) Preserve the trailing ¶ so the next paragraph never joins in
-            '------------------------------------------------------------------
+            ' A) Preserve the trailing ¶ so the next paragraph never joins in
             docStart = doc.Content.Start
             startPos = targetRange.Start
             endPosNoCR = targetRange.End
 
             If endPosNoCR > docStart Then
                 Dim checkRange As Microsoft.Office.Interop.Word.Range =
-                    doc.Range(endPosNoCR - 1, endPosNoCR)
+                doc.Range(endPosNoCR - 1, endPosNoCR)
                 If checkRange.Text = vbCr Then
                     endPosNoCR -= 1
                 End If
@@ -2511,43 +2549,41 @@ Partial Public Class ThisAddIn
 
             targetRange.SetRange(startPos, startPos)
 
-            '------------------------------------------------------------------
-            '  Merge contiguous INS‑ und DEL‑Tags mit nur Leerzeichen dazwischen
-            '------------------------------------------------------------------
+            ' Merge contiguous INS- and DEL-tags with only spaces in between
             Dim txt As String = inputText
             txt = RemoveMergeFormatFromBraces(txt)
 
-            '--- Strip merge‑fields out of **closed** delete‑runs:
+            ' Strip merge-fields out of **closed** delete-runs:
             txt = System.Text.RegularExpressions.Regex.Replace(
-                txt,
-                "\[DEL_START\]([\s\S]*?)\[DEL_END\]",
-                Function(m As System.Text.RegularExpressions.Match) As String
-                    Return "[DEL_START]" &
-                           System.Text.RegularExpressions.Regex.Replace(
-                               m.Groups(1).Value,
-                               "\{\{(?:WFLD|WFNT|WENT|PFOR):.*?\}\}",
-                               String.Empty
-                           ) &
-                           "[DEL_END]"
-                End Function,
-                System.Text.RegularExpressions.RegexOptions.Singleline
-            )
+            txt,
+            "\[DEL_START\]([\s\S]*?)\[DEL_END\]",
+            Function(m As System.Text.RegularExpressions.Match) As String
+                Return "[DEL_START]" &
+                       System.Text.RegularExpressions.Regex.Replace(
+                           m.Groups(1).Value,
+                           "\{\{(?:WFLD|WFNT|WENT|PFOR):.*?\}\}",
+                           String.Empty
+                       ) &
+                       "[DEL_END]"
+            End Function,
+            System.Text.RegularExpressions.RegexOptions.Singleline
+        )
 
-            '--- Strip merge‑fields out of **open** delete‑runs (no closing tag),
-            '    but only if wirklich kein [DEL_END] folgt:
+            ' Strip merge-fields out of **open** delete-runs (no closing tag),
+            ' but only if really no [DEL_END] follows:
             txt = System.Text.RegularExpressions.Regex.Replace(
-                txt,
-                "\[DEL_START\]((?:(?!\[DEL_END\]).)*)$",
-                Function(m As System.Text.RegularExpressions.Match) As String
-                    Return "[DEL_START]" &
-                           System.Text.RegularExpressions.Regex.Replace(
-                               m.Groups(1).Value,
-                               "\{\{(?:WFLD|WFNT|WENT|PFOR):.*?\}\}",
-                               String.Empty
-                           )
-                End Function,
-                System.Text.RegularExpressions.RegexOptions.Singleline
-            )
+            txt,
+            "\[DEL_START\]((?:(?!\[DEL_END\]).)*)$",
+            Function(m As System.Text.RegularExpressions.Match) As String
+                Return "[DEL_START]" &
+                       System.Text.RegularExpressions.Regex.Replace(
+                           m.Groups(1).Value,
+                           "\{\{(?:WFLD|WFNT|WENT|PFOR):.*?\}\}",
+                           String.Empty
+                       )
+            End Function,
+            System.Text.RegularExpressions.RegexOptions.Singleline
+        )
 
             Debug.WriteLine("Stripped txt1 = " & txt)
 
@@ -2560,7 +2596,7 @@ Partial Public Class ThisAddIn
                 System.Windows.Forms.Application.DoEvents()
                 If (GetAsyncKeyState(VK_ESCAPE) And &H8000) <> 0 Then Exit While
 
-                ' locate next opening tag
+                ' Locate next opening tag
                 Dim insPos As Integer = txt.IndexOf("[INS_START]", StringComparison.Ordinal)
                 Dim delPos As Integer = txt.IndexOf("[DEL_START]", StringComparison.Ordinal)
 
@@ -2574,7 +2610,7 @@ Partial Public Class ThisAddIn
                     nextTagPos = insPos : tagType = "INS"
                 End If
 
-                ' Plain text vor dem nächsten Tag
+                ' Plain text before the next tag
                 If nextTagPos = -1 OrElse nextTagPos > 0 Then
                     Dim plain As String = If(nextTagPos = -1, txt, txt.Substring(0, nextTagPos))
                     If plain.Length > 0 Then
@@ -2586,9 +2622,7 @@ Partial Public Class ThisAddIn
                 If nextTagPos = -1 Then Exit While
 
                 If tagType = "INS" Then
-                    '==============================================================
-                    '  INSERT block
-                    '==============================================================
+                    ' INSERT block
                     txt = txt.Substring(nextTagPos + "[INS_START]".Length)
                     Dim endIns As Integer = txt.IndexOf("[INS_END]", StringComparison.Ordinal)
                     Dim insText As String = If(endIns = -1, txt, txt.Substring(0, endIns))
@@ -2599,15 +2633,13 @@ Partial Public Class ThisAddIn
                     doc.TrackRevisions = False
 
                 Else
-                    '==============================================================
-                    '  DELETION block
-                    '==============================================================
+                    ' DELETION block
                     txt = txt.Substring(nextTagPos + "[DEL_START]".Length)
                     Dim endDel As Integer = txt.IndexOf("[DEL_END]", StringComparison.Ordinal)
                     Dim delText As String = If(endDel = -1, txt, txt.Substring(0, endDel))
                     If endDel <> -1 Then txt = txt.Substring(endDel + "[DEL_END]".Length)
 
-                    ' absorb following space/CR
+                    ' Absorb following space/CR
                     If txt.StartsWith(" ") Then
                         delText &= " " : txt = txt.Substring(1)
                     ElseIf txt.StartsWith(vbCrLf) Then
@@ -2616,10 +2648,10 @@ Partial Public Class ThisAddIn
                         delText &= vbCr : txt = txt.Substring(1)
                     End If
 
-                    ' a) einfügen (silent)
+                    ' a) Insert (silent)
                     doc.TrackRevisions = False
                     targetRange.Text = delText
-                    ' b) löschen (mit Tracking)
+                    ' b) Delete (with tracking)
                     doc.TrackRevisions = True
                     targetRange.Delete()
                     doc.TrackRevisions = False
@@ -2631,27 +2663,26 @@ Partial Public Class ThisAddIn
             Debug.WriteLine("InsertMarkupText error: " & ex.Message & vbCrLf & inputText)
         Finally
 
-            ' --- Final-View Replace Test (Space-Bereinigung) ---
+            ' Final-view replace test (space cleanup)
 
-            ' 2) Final-View aktivieren
+            ' 2) Activate final view
             With wordApp.ActiveWindow.View
                 .RevisionsView = Microsoft.Office.Interop.Word.WdRevisionsView.wdRevisionsViewFinal
                 .ShowRevisionsAndComments = False
             End With
-            ' 3) Replace doppelte Spaces
-            ' Temporär Revisionen ausschalten, damit die Ersetzungen nicht als Änderungen protokolliert werden
+            ' 3) Replace double spaces
+            ' Temporarily turn off revisions so replacements are not logged as changes
             doc.TrackRevisions = False
 
             Dim endPosInserted2 As Integer = targetRange.End
             Dim insertedRange As Microsoft.Office.Interop.Word.Range =
-                doc.Range(startPos, endPosInserted2)
+            doc.Range(startPos, endPosInserted2)
 
-
-            ' Find/Replace für zwei Leerzeichen → ein Leerzeichen
+            ' Find/Replace for two spaces → one space
             With insertedRange.Find
                 .ClearFormatting()
                 .Replacement.ClearFormatting()
-                .Text = "  "    ' genau zwei Leerzeichen
+                .Text = "  "    ' exactly two spaces
                 .Replacement.Text = " "
                 .Forward = True
                 .Wrap = Microsoft.Office.Interop.Word.WdFindWrap.wdFindStop
@@ -2659,9 +2690,9 @@ Partial Public Class ThisAddIn
                 .MatchWildcards = False
             End With
 
-            ' Solange noch ein Replace stattfindet, wiederholen
+            ' As long as a replacement still occurs, repeat
             Do
-                ' Execute gibt True zurück, wenn etwas ersetzt wurde
+                ' Execute returns True if something was replaced
             Loop While insertedRange.Find.Execute(Replace:=Microsoft.Office.Interop.Word.WdReplace.wdReplaceAll)
 
             With wordApp.ActiveWindow.View
@@ -2669,12 +2700,12 @@ Partial Public Class ThisAddIn
                 .ShowRevisionsAndComments = True
             End With
 
-            ' Tracking wieder in den Ursprungszustand versetzen
+            ' Restore tracking to original state
             doc.TrackRevisions = originalTrack
 
             wordApp.ScreenUpdating = originalUpdate
 
-            ' Range auf die volle eingefügte Länge setzen
+            ' Set range to the full inserted length
             Dim endPosInserted As Integer = targetRange.End
             targetRange.SetRange(startPos, endPosInserted)
             wordApp.Selection.SetRange(targetRange.Start, targetRange.End)
@@ -2683,9 +2714,9 @@ Partial Public Class ThisAddIn
 
 
     ''' <summary>
-    ''' Removes any “\* MERGEFORMAT” switch from inside {{…}} fields.
+    ''' Removes any "\* MERGEFORMAT" switch from inside {{…}} fields.
     ''' </summary>
-    ''' <param name="input">Your full diff‑markup string.</param>
+    ''' <param name="input">Your full diff-markup string.</param>
     ''' <returns>The same string, but with MERGEFORMAT gone from inside all {{…}}.</returns>
     Function RemoveMergeFormatFromBraces(input As String) As String
         ' Process each {{…}} as one chunk

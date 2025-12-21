@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.Pane.vb
-' Part of: Red Ink for Excel
 ' Purpose: Provides asynchronous task pane display and an instruction merge workflow.
 '          Shows a custom pane, supplies a callback for post-pane text handling,
 '          parses returned instruction text, applies instructions, and updates UI state.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - Partial class ThisAddIn: Excel add-in logic split across files.
@@ -52,7 +51,6 @@ Partial Public Class ThisAddIn
                           Optional PreserveLiterals As Boolean = False
                         )
         Try
-            Dim OriginalText As String = bodyText
 
             ' Ensure we're on the UI thread for the pane operation
             Dim result As String = ""

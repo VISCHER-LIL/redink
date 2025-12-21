@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.ExcelHelpers.vb
-' Part of: Red Ink for Excel
 ' Purpose: Excel helper routines for row height adjustment (including merged cells),
 '          legacy comment (note) shape sizing, and multi-pattern regex search/replace
 '          across a selected range or entire worksheet.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - Operates on the active worksheet (Globals.ThisAddIn.Application.ActiveSheet).
@@ -25,6 +24,9 @@ Imports System.Text.RegularExpressions
 Imports System.Windows.Forms
 Imports SharedLibrary.SharedLibrary.SharedMethods
 
+''' <summary>
+''' Hosts helper routines used by the Excel add-in for row sizing, legacy note sizing, and regex-based edits.
+''' </summary>
 Partial Public Class ThisAddIn
 
     ''' <summary>
@@ -244,7 +246,7 @@ Partial Public Class ThisAddIn
 
                 If cell.Comment IsNot Nothing Then
 
-                    ' Ensure the note box dimensions are at least 70 wide and 20 high, and no more than 200 wide
+                    ' Ensure the note box dimensions are at least 70 wide and 20 high, and no more than 250 wide
                     Dim comment As Excel.Comment = cell.Comment
                     With comment.Shape
 
@@ -281,8 +283,19 @@ Partial Public Class ThisAddIn
 
     End Sub
 
+    ''' <summary>
+    ''' Stores the last entered regex pattern list (multi-line, one pattern per line).
+    ''' </summary>
     Private Shared LastRegexPattern As String = String.Empty  ' Last entered pattern(s) (multi-line).
+
+    ''' <summary>
+    ''' Stores the last entered regex option flags for reuse.
+    ''' </summary>
     Private Shared LastRegexOptions As String = String.Empty  ' Last entered option flags.
+
+    ''' <summary>
+    ''' Stores the last entered replacement text lines aligned with patterns.
+    ''' </summary>
     Private Shared LastRegexReplace As String = String.Empty  ' Last entered replacement line(s).
 
     ''' <summary>

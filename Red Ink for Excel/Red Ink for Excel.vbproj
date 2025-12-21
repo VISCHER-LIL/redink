@@ -33,20 +33,36 @@
     <IsWebBootstrapper>True</IsWebBootstrapper>
     <TargetFrameworkProfile />
     <BootstrapperEnabled>true</BootstrapperEnabled>
-    <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\redink_prerelease\excel\</PublishUrl>
-    <InstallUrl>https://apps.vischer.com/redink/excel/</InstallUrl>
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.1.1.81</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
     <UpdateIntervalUnits>days</UpdateIntervalUnits>
-    <ProductName>Red Ink for Excel</ProductName>
-    <PublisherName>VISCHER AG</PublisherName>
-    <SupportUrl>https://www.vischer.com/redink</SupportUrl>
-    <FriendlyName>Red Ink for Excel</FriendlyName>
+    <PublisherName>LawDigital Ltd.</PublisherName>
+    <SupportUrl>https://redink.ai</SupportUrl>
     <OfficeApplicationDescription />
     <LoadBehavior>3</LoadBehavior>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
+    <ApplicationVersion>1.0.0.700</ApplicationVersion>
+    <PublishUrl>..\clickonce\redink\apps\develop\excel\</PublishUrl>
+    <InstallUrl>https://redink.ai/apps/develop/excel/</InstallUrl>
+    <ProductName>Red Ink for Excel %28Develop%29</ProductName>
+    <FriendlyName>Red Ink for Excel %28Develop%29</FriendlyName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
+    <ApplicationVersion>1.0.0.200</ApplicationVersion>
+    <PublishUrl>..\clickonce\redink\apps\preview\excel\</PublishUrl>
+    <InstallUrl>https://redink.ai/apps/preview/excel/</InstallUrl>
+    <ProductName>Red Ink for Excel %28Preview%29</ProductName>
+    <FriendlyName>Red Ink for Excel %28Preview%29</FriendlyName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' == 'GA'">
+    <ApplicationVersion>1.0.0.0</ApplicationVersion>
+    <PublishUrl>..\clickonce\redink\apps\ga\excel\</PublishUrl>
+    <InstallUrl>https://redink.ai/apps/ga/excel/</InstallUrl>
+    <ProductName>Red Ink for Excel</ProductName>
+    <FriendlyName>Red Ink for Excel</FriendlyName>
   </PropertyGroup>
   <ItemGroup>
     <BootstrapperPackage Include=".NETFramework,Version=v4.7.2">

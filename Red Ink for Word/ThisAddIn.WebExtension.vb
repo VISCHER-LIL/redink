@@ -1,6 +1,27 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.WebExtension.vb
+' Purpose: Provides HTTP listener functionality for Word to receive commands from
+'          external applications (primarily browser extensions) via localhost.
+'
+' Architecture:
+'  - HTTP Listener: Starts an async HttpListener on http://127.0.0.1:12334/ to
+'    receive JSON-formatted commands from external sources.
+'  - Threading Model: Uses async/await pattern throughout; UI operations marshaled
+'    to main thread via SwitchToUi helpers using mainThreadControl.Invoke.
+'  - Command Dispatch: ProcessRequestInAddIn parses incoming JSON body and routes
+'    to appropriate handlers based on "Command" field.
+'  - Supported Commands:
+'    * "redink_sendtoword": Inserts text and URL into current Word selection/cursor.
+'  - Error Recovery: Tracks consecutive failures; restarts listener after 10
+'    consecutive errors with 5-second delay.
+'  - CORS Support: Handles OPTIONS preflight requests for cross-origin scenarios.
+'  - Lifecycle: StartupHttpListener/ShutdownHttpListener manage listener state;
+'    isShuttingDown flag prevents restart during add-in shutdown.
+'  - COM Hygiene: Explicitly releases COM objects (Selection) to prevent leaks.
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -10,13 +31,16 @@ Imports System.Windows.Forms
 
 Partial Public Class ThisAddIn
 
-
     Private httpListener As System.Net.HttpListener
-    Private listenerTask As System.Threading.Tasks.Task   ' replaces the raw Thread
+    Private listenerTask As System.Threading.Tasks.Task
     Private isShuttingDown As Boolean = False
 
     '───────────────────────────────────────────────────────────────────────────
-    ' Run a Sub on the UI thread and *wait* for it to finish.
+    ''' <summary>
+    ''' Executes an action on the UI thread and waits for completion.
+    ''' </summary>
+    ''' <param name="uiAction">Action to execute on the main thread.</param>
+    ''' <returns>Task that completes when the action finishes or faults.</returns>
     '───────────────────────────────────────────────────────────────────────────
     Private Function SwitchToUi(uiAction As System.Action) _
         As System.Threading.Tasks.Task
@@ -37,7 +61,12 @@ Partial Public Class ThisAddIn
     End Function
 
     '───────────────────────────────────────────────────────────────────────────
-    ' Run a Func(Of T) on the UI thread and wait for its return value.
+    ''' <summary>
+    ''' Executes a function on the UI thread and waits for its result.
+    ''' </summary>
+    ''' <typeparam name="T">Return type of the function.</typeparam>
+    ''' <param name="uiFunc">Function to execute on the main thread.</param>
+    ''' <returns>Task containing the function's result or exception.</returns>
     '───────────────────────────────────────────────────────────────────────────
     Private Function SwitchToUi(Of T)(uiFunc As System.Func(Of T)) _
         As System.Threading.Tasks.Task(Of T)
@@ -56,12 +85,20 @@ Partial Public Class ThisAddIn
         Return tcs.Task
     End Function
 
-
+    '───────────────────────────────────────────────────────────────────────────
+    ''' <summary>
+    ''' Starts the HTTP listener in a fire-and-forget manner.
+    ''' </summary>
+    '───────────────────────────────────────────────────────────────────────────
     Private Sub StartupHttpListener()
-        ' fire-and-forget – no raw Thread needed
-        listenerTask = StartHttpListener()      ' captures the returned Task
+        listenerTask = StartHttpListener()
     End Sub
 
+    '───────────────────────────────────────────────────────────────────────────
+    ''' <summary>
+    ''' Stops the HTTP listener and releases resources.
+    ''' </summary>
+    '───────────────────────────────────────────────────────────────────────────
     Private Sub ShutdownHttpListener()
         isShuttingDown = True
         If httpListener IsNot Nothing AndAlso httpListener.IsListening Then
@@ -70,14 +107,20 @@ Partial Public Class ThisAddIn
         End If
     End Sub
 
-
+    '───────────────────────────────────────────────────────────────────────────
+    ''' <summary>
+    ''' Main HTTP listener loop. Accepts incoming connections on port 12334,
+    ''' handles requests, and recovers from failures automatically.
+    ''' </summary>
+    ''' <returns>Task that completes when listener shuts down.</returns>
+    '───────────────────────────────────────────────────────────────────────────
     Private Async Function StartHttpListener() As System.Threading.Tasks.Task
-        Const prefix As String = "http://127.0.0.1:12334/"   ' ← Word gets its own port
+        Const prefix As String = "http://127.0.0.1:12334/"
         Dim consecutiveFailures As Integer = 0
 
         While Not isShuttingDown
             Try
-                ' ensure listener exists and is running
+                ' Ensure listener exists and is running
                 If httpListener Is Nothing Then
                     httpListener = New System.Net.HttpListener()
                     httpListener.Prefixes.Add(prefix)
@@ -86,14 +129,14 @@ Partial Public Class ThisAddIn
                 ElseIf Not httpListener.IsListening Then
                     httpListener.Close()
                     httpListener = Nothing
-                    Continue While                      ' next loop restarts it
+                    Continue While
                 End If
 
-                ' wait for one incoming request
+                ' Wait for one incoming request
                 Dim ctx As System.Net.HttpListenerContext =
                 Await httpListener.GetContextAsync().ConfigureAwait(False)
 
-                ' handle the request (fire-and-forget)
+                ' Handle the request (fire-and-forget)
                 Call HandleHttpRequest(ctx) _
                 .ContinueWith(
                     Sub(t)
@@ -104,7 +147,7 @@ Partial Public Class ThisAddIn
                     End Sub,
                     System.Threading.Tasks.TaskScheduler.Default)
 
-                consecutiveFailures = 0                       ' success
+                consecutiveFailures = 0
             Catch ex As System.ObjectDisposedException
                 consecutiveFailures += 1
             Catch ex As System.Exception
@@ -112,7 +155,7 @@ Partial Public Class ThisAddIn
                 Debug.WriteLine("Listener error: " & ex.Message)
             End Try
 
-            ' recycle after too many consecutive errors
+            ' Recycle after too many consecutive errors
             If consecutiveFailures >= 10 AndAlso Not isShuttingDown Then
                 Debug.WriteLine("Restarting HttpListener after 10 failures.")
                 Try
@@ -126,7 +169,14 @@ Partial Public Class ThisAddIn
         End While
     End Function
 
-
+    '───────────────────────────────────────────────────────────────────────────
+    ''' <summary>
+    ''' Handles a single HTTP request: processes CORS preflight, reads body,
+    ''' dispatches to command handler, and sends response.
+    ''' </summary>
+    ''' <param name="ctx">The HTTP listener context containing request and response.</param>
+    ''' <returns>Task that completes when response is sent.</returns>
+    '───────────────────────────────────────────────────────────────────────────
     Private Async Function HandleHttpRequest(
         ctx As System.Net.HttpListenerContext) _
         As System.Threading.Tasks.Task
@@ -134,7 +184,7 @@ Partial Public Class ThisAddIn
         Dim req = ctx.Request
         Dim res = ctx.Response
 
-        '─── CORS pre-flight────────────────────────────────────────────────────
+        ' CORS pre-flight
         If req.HttpMethod = "OPTIONS" Then
             res.AddHeader("Access-Control-Allow-Origin", "*")
             res.AddHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -142,7 +192,7 @@ Partial Public Class ThisAddIn
             res.StatusCode = 204 : res.Close() : Return
         End If
 
-        '─── Read body (if any)─────────────────────────────────────────────────
+        ' Read body (if any)
         Dim body As String = ""
         If req.HasEntityBody Then
             Using rdr As New IO.StreamReader(req.InputStream, System.Text.Encoding.UTF8)
@@ -150,11 +200,11 @@ Partial Public Class ThisAddIn
             End Using
         End If
 
-        '─── Dispatch to our add-in logic───────────────────────────────────────
+        ' Dispatch to add-in logic
         Dim responseText As String =
         Await ProcessRequestInAddIn(body, req.RawUrl).ConfigureAwait(False)
 
-        '─── Send response──────────────────────────────────────────────────────
+        ' Send response
         Dim buf = System.Text.Encoding.UTF8.GetBytes(responseText)
         res.ContentLength64 = buf.Length
         res.ContentType = "text/plain; charset=utf-8"
@@ -165,16 +215,22 @@ Partial Public Class ThisAddIn
         res.Close()
     End Function
 
-
-    ' ---------------------------------------------------------------------------
-    ' MAIN REQUEST DISPATCH (Word – only "redink_sendtoword")
-    ' ---------------------------------------------------------------------------
+    '───────────────────────────────────────────────────────────────────────────
+    ''' <summary>
+    ''' Parses incoming JSON command and routes to appropriate handler.
+    ''' Currently supports "redink_sendtoword" command which inserts text and URL
+    ''' into the active Word document at the current cursor/selection.
+    ''' </summary>
+    ''' <param name="body">JSON body containing Command, Text, and URL fields.</param>
+    ''' <param name="rawUrl">Raw request URL (currently unused).</param>
+    ''' <returns>Response string to send back to client (empty for most commands).</returns>
+    '───────────────────────────────────────────────────────────────────────────
     Private Async Function ProcessRequestInAddIn(
         body As String,
         rawUrl As String) _
         As System.Threading.Tasks.Task(Of String)
 
-        ' guard clause – empty body
+        ' Guard clause: empty body
         If String.IsNullOrWhiteSpace(body) Then Return ""
 
         Dim j = Newtonsoft.Json.Linq.JObject.Parse(body)
@@ -183,7 +239,6 @@ Partial Public Class ThisAddIn
         Dim sourceUrl = j("URL")?.ToString()
 
         Select Case cmd
-        '───────────────────────────────────────────────────────────────────
             Case "redink_sendtoword"
                 If String.IsNullOrWhiteSpace(textBody) Then Return ""
 
@@ -207,22 +262,20 @@ Partial Public Class ThisAddIn
                                          rng.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
                                          rng.InsertAfter(finalText)
                                      Else
-                                         rng.Text = finalText  ' replace selected content safely
+                                         rng.Text = finalText
                                      End If
 
-                                     sel.SetRange(rng.End, rng.End) ' place caret after inserted text
+                                     sel.SetRange(rng.End, rng.End)
                                      wdApp.ScreenUpdating = True
 
-                                     ' Release COM objects explicitly (good hygiene)
+                                     ' Release COM objects explicitly
                                      System.Runtime.InteropServices.Marshal.ReleaseComObject(sel)
                                  End Sub)
 
-                Return ""      ' nothing needs to be sent back in this scenario
+                Return ""
         End Select
 
-        Return ""              ' unknown command → no-op
+        Return ""
     End Function
-
-
 
 End Class

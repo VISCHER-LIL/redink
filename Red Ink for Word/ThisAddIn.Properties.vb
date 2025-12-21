@@ -1,6 +1,22 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Properties.vb
+' Purpose: Exposes Word add-in configuration through strongly typed shared-context
+'          properties and provides helper overloads for safe configuration overrides.
+'
+' Architecture:
+'  - Shared Context Bridge: Maintains a single SharedContext instance implementing
+'    ISharedContext and backs every property with that centralized store.
+'  - Configuration Mirrors: Surfaces each INI/SP value as a Shared property so the
+'    broader add-in code accesses configuration without touching the context directly.
+'  - Override Helpers: Supplies overloads that translate string-based overrides into
+'    typed returns while preserving the original values when parsing fails.
+'  - External Dependencies: Relies on SharedLibrary.SharedLibrary for ISharedContext
+'    and SharedContext implementations consumed in this bridge.
+' =============================================================================
+
 
 Option Explicit On
 Option Strict On
@@ -1867,6 +1883,13 @@ Partial Public Class ThisAddIn
 
     ' Return Original when OverrideValue is empty or not interpretable.
     ' Overload for String originals.
+
+    ''' <summary>
+    ''' Returns <paramref name="Original"/> when <paramref name="OverrideValue"/> is null, whitespace, or empty; otherwise returns <paramref name="OverrideValue"/>.
+    ''' </summary>
+    ''' <param name="Original">Fallback string value.</param>
+    ''' <param name="OverrideValue">Candidate override string.</param>
+    ''' <returns>The override string when supplied; otherwise the original string.</returns>
     Public Function Override(Original As String, OverrideValue As String) As String
         If String.IsNullOrWhiteSpace(OverrideValue) Then
             Return Original
@@ -1876,6 +1899,13 @@ Partial Public Class ThisAddIn
 
     ' Overload for Boolean originals.
     ' Accepts (ignore case): True-set = 1, yes, ja, wahr, true; False-set = 0, no, nein, falsch, false.
+
+    ''' <summary>
+    ''' Converts <paramref name="OverrideValue"/> to Boolean tokens or keeps <paramref name="Original"/> when conversion fails.
+    ''' </summary>
+    ''' <param name="Original">Fallback Boolean value.</param>
+    ''' <param name="OverrideValue">Candidate override string.</param>
+    ''' <returns>Parsed Boolean when the string matches accepted tokens; otherwise the original Boolean.</returns>
     Public Function Override(Original As Boolean, OverrideValue As String) As Boolean
         If String.IsNullOrWhiteSpace(OverrideValue) Then
             Return Original
@@ -1897,6 +1927,13 @@ Partial Public Class ThisAddIn
 
     ' Overload for Integer originals.
     ' Returns Original unless OverrideValue parses as a valid Int32.
+
+    ''' <summary>
+    ''' Parses <paramref name="OverrideValue"/> as Int32 using invariant culture or keeps <paramref name="Original"/> when parsing fails.
+    ''' </summary>
+    ''' <param name="Original">Fallback integer value.</param>
+    ''' <param name="OverrideValue">Candidate override string.</param>
+    ''' <returns>The parsed integer when successful; otherwise the original integer.</returns>
     Public Function Override(Original As Integer, OverrideValue As String) As Integer
         If String.IsNullOrWhiteSpace(OverrideValue) Then
             Return Original

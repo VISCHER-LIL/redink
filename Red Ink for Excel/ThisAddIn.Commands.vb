@@ -1,17 +1,16 @@
-﻿Option Strict On
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+Option Strict On
 Option Explicit On
 
 ' =============================================================================
 ' File: ThisAddIn.Commands.vb
-' Part of: Red Ink for Excel
 ' Purpose: Defines command methods invoked by the UI for translation, correction,
 '          improvement, anonymization, shortening, party switching, freestyle prompt
 '          execution, chat display, help window, and settings management. Methods
 '          gather user input, set state variables, and delegate processing to
 '          ProcessSelectedRange or other helper routines.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   - Each public async command:

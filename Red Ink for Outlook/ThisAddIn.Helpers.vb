@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Outlook"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.Helpers.vb
-' Part of: Red Ink for Outlook
 ' Purpose: Helper components for the Outlook add-in: provides a Word undo scope
 '          wrapper (WordUndoScope), robust clipboard setting with retry (SafeSetClipboard),
 '          and runtime prompt/template interpolation (InterpolateAtRuntime).
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - WordUndoScope: wraps Word.Application.UndoRecord for custom undo grouping (active only on Word >= 15).

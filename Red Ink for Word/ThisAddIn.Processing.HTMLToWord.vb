@@ -1,6 +1,26 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Processing.HTMLToWord.vb
+' Purpose: Converts HtmlAgilityPack nodes into formatted Microsoft Word content for the
+'          Red Ink add-in, including inline styling, block elements, media, and links.
+'
+' Architecture:
+'  - Inline Rendering: RenderInline normalizes text nodes, propagates hyperlink context,
+'    applies cumulative formatting delegates, and routes emojis, images, breaks, and spans.
+'  - Block Rendering: ParseHtmlNode walks the DOM depth-first to translate paragraphs, headings,
+'    blockquotes, lists, definition lists, tables, code blocks, inputs, and anchors into Word ranges.
+'  - List State Tracking: ulLevels/ulStartPos record indentation levels so bullet and ordered lists
+'    receive consistent Word list formatting across nested structures.
+'  - Media Handling: InsertImageFromSrc resolves local paths or downloads remote images, inserts
+'    InlineShape instances, and logs failures without throwing.
+'  - Helper Utilities: CombineStyle chains formatting delegates, InsertInline/TrueInsertInline centralize
+'    styled text insertion and hyperlink creation, RemoveTrailingParagraph trims trailing block nodes.
+' Dependencies:
+'  - HtmlAgilityPack for DOM access, Microsoft.Office.Interop.Word for document automation,
+'    System.Net for remote image downloads, System.Diagnostics for tracing.
+' =============================================================================
 
 Option Explicit On
 Option Strict Off
@@ -14,18 +34,17 @@ Partial Public Class ThisAddIn
 
     Private Shared emojiSet As New HashSet(Of String)()
     Private Shared ReadOnly _emojiPairRegex As New System.Text.RegularExpressions.Regex(
-    "[\uD83C-\uDBFF][\uDC00-\uDFFF]",
-    System.Text.RegularExpressions.RegexOptions.Compiled Or
-    System.Text.RegularExpressions.RegexOptions.CultureInvariant)
-
+        "[\uD83C-\uDBFF][\uDC00-\uDFFF]",
+        System.Text.RegularExpressions.RegexOptions.Compiled Or
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant)
 
     ''' <summary>
-    ''' Verknüpft zwei Formatierungs‑Delegates, ohne die ursprünglichen zu verlieren.
+    ''' Combines two formatting delegates without discarding the originals.
     ''' </summary>
     Private Shared Function CombineStyle(
-    baseAction As Action(Of Microsoft.Office.Interop.Word.Range),
-    additional As Action(Of Microsoft.Office.Interop.Word.Range)
-) As Action(Of Microsoft.Office.Interop.Word.Range)
+        baseAction As Action(Of Microsoft.Office.Interop.Word.Range),
+        additional As Action(Of Microsoft.Office.Interop.Word.Range)
+    ) As Action(Of Microsoft.Office.Interop.Word.Range)
 
         If baseAction Is Nothing Then Return additional
         If additional Is Nothing Then Return baseAction
@@ -36,18 +55,17 @@ Partial Public Class ThisAddIn
                End Sub
     End Function
 
-
     ''' <summary>
-    ''' Rendert (ggf. rekursiv) reine Inline‑Knoten mit kumulativer Formatierung.
+    ''' Renders inline nodes (recursively when needed) with cumulative formatting and optional hyperlink context.
     ''' </summary>
     Private Shared Sub RenderInline(
-    node As HtmlAgilityPack.HtmlNode,
-    rng As Microsoft.Office.Interop.Word.Range,
-    styleAction As Action(Of Microsoft.Office.Interop.Word.Range),
-    inheritedHref As String
-)
+        node As HtmlAgilityPack.HtmlNode,
+        rng As Microsoft.Office.Interop.Word.Range,
+        styleAction As Action(Of Microsoft.Office.Interop.Word.Range),
+        inheritedHref As String
+    )
 
-        ' Kommentare ignorieren
+        ' Ignore comment nodes.
         If node.NodeType = HtmlAgilityPack.HtmlNodeType.Comment Then Return
 
         ' ------------------------------------------------- Leaf: #text -------------
@@ -59,22 +77,22 @@ Partial Public Class ThisAddIn
         'Return
         'End If
 
-        ' ─── Newline‑Handling: Nur echte, mit Inhalt versehene Zeilenumbrüche splitten
+        ' ─── Newline handling: split only real line breaks with content.
         If node.NodeType = HtmlAgilityPack.HtmlNodeType.Text Then
             Dim rawText = HtmlEntity.DeEntitize(node.InnerText)
             Dim hasNewline = rawText.IndexOfAny({vbCr(0), vbLf(0)}) >= 0
             Dim stripped = rawText.Replace(vbCr, "").Replace(vbLf, "")
 
-            ' 1) reine Whitespace‑-only‑Zeilenumbrüche → komplett überspringen
+            ' 1) Whitespace-only line breaks → skip entirely.
             If hasNewline AndAlso String.IsNullOrWhiteSpace(stripped) Then
                 Return
             End If
 
-            ' 2) gemischter Text mit echten Newlines → splitten & umbruchsweise einfügen
+            ' 2) Mixed text with real newlines → split and insert per break.
             If hasNewline Then
                 Dim parts = rawText.Split(
-            New String() {vbCrLf, vbCr, vbLf},
-            StringSplitOptions.None)
+                    New String() {vbCrLf, vbCr, vbLf},
+                    StringSplitOptions.None)
                 For i = 0 To parts.Length - 1
                     Dim segment = parts(i)
                     If Not String.IsNullOrWhiteSpace(segment) Then
@@ -88,13 +106,12 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
-            ' 3) kein Newline → ganz normal einfügen
+            ' 3) No newline → insert normally.
             If Not String.IsNullOrWhiteSpace(rawText) Then
                 InsertInline(rng, rawText, styleAction, inheritedHref)
             End If
             Return
         End If
-
 
         ' ------------------------------------------------- Leaf: <br> --------------
         'If node.Name.Equals("br", StringComparison.OrdinalIgnoreCase) Then
@@ -105,9 +122,9 @@ Partial Public Class ThisAddIn
         'End If
 
         If node.Name.Equals("br", StringComparison.OrdinalIgnoreCase) Then
-            ' Soft line break in Word (Shift+Enter) statt harter Absatz
+            ' Soft line break in Word (Shift+Enter) instead of a hard paragraph.
             rng.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
-            rng.InsertAfter(ChrW(11))  ' manueller Zeilenumbruch
+            rng.InsertAfter(ChrW(11))  ' Manual line break.
             rng.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
             Return
         End If
@@ -116,93 +133,89 @@ Partial Public Class ThisAddIn
         If node.Name.Equals("img", StringComparison.OrdinalIgnoreCase) Then
             Dim src As String = node.GetAttributeValue("src", String.Empty)
             If Not String.IsNullOrWhiteSpace(src) Then
-                ' Statt InlineShapes.AddPicture direkt aufzurufen,
-                ' ruf den robusten Helper auf:
+                ' Instead of calling InlineShapes.AddPicture directly,
+                ' call the resilient helper.
                 InsertImageFromSrc(rng, src)
             End If
             Return
         End If
 
-        ' ------------------------------------------------- Leaf/Semi‑Leaf: <a> -----
+        ' ------------------------------------------------- Leaf/Semi-Leaf: <a> -----
         Dim thisHref As String = inheritedHref
         If node.Name.Equals("a", StringComparison.OrdinalIgnoreCase) Then
             thisHref = node.GetAttributeValue("href", String.Empty)
 
-            ' einfache Textlinks direkt ausgeben …
+            ' Output simple text-only anchors immediately …
             If node.ChildNodes.All(Function(c) c.NodeType = HtmlAgilityPack.HtmlNodeType.Text) Then
                 Dim txtLink As String = HtmlEntity.DeEntitize(node.InnerText)
                 InsertInline(rng, txtLink, styleAction, thisHref)
                 Return
             End If
-            ' … ansonsten werden die Kinder rekursiv mit demselben href gerendert
+            ' … otherwise render the children with the same href.
         End If
 
-        ' ------------------------------------------------- Style‑Weiche ------------
+        ' ------------------------------------------------- Style routing ------------
         Select Case node.Name.ToLowerInvariant()
             Case "strong", "b"
                 styleAction = CombineStyle(styleAction,
-                                       Sub(r) r.Font.Bold = True)
+                                           Sub(r) r.Font.Bold = True)
 
             Case "em", "i"
                 styleAction = CombineStyle(styleAction,
-                                       Sub(r) r.Font.Italic = True)
+                                           Sub(r) r.Font.Italic = True)
 
             Case "u"
                 styleAction = CombineStyle(styleAction,
-                                       Sub(r) r.Font.Underline = Word.WdUnderline.wdUnderlineSingle)
+                                           Sub(r) r.Font.Underline = Word.WdUnderline.wdUnderlineSingle)
 
             Case "del", "s"
                 styleAction = CombineStyle(styleAction,
-                                       Sub(r) r.Font.StrikeThrough = True)
+                                           Sub(r) r.Font.StrikeThrough = True)
 
             Case "code"
                 styleAction = CombineStyle(styleAction,
-                Sub(r)
-                    r.Font.Name = "Courier New"
-                    r.Font.Size = 10
-                    r.Shading.BackgroundPatternColor = Word.WdColor.wdColorGray25
-                End Sub)
+                    Sub(r)
+                        r.Font.Name = "Courier New"
+                        r.Font.Size = 10
+                        r.Shading.BackgroundPatternColor = Word.WdColor.wdColorGray25
+                    End Sub)
 
             Case "sub"
                 styleAction = CombineStyle(styleAction,
-                                       Sub(r) r.Font.Subscript = True)
+                                           Sub(r) r.Font.Subscript = True)
 
             Case "sup"
                 styleAction = CombineStyle(styleAction,
-                                       Sub(r) r.Font.Superscript = True)
+                                           Sub(r) r.Font.Superscript = True)
 
             Case "span"
                 Dim cls = node.GetAttributeValue("class", String.Empty)
                 If cls.Contains("emoji") Then
                     styleAction = CombineStyle(styleAction,
-                    Sub(r)
-                        r.Font.Name = "Segoe UI Emoji"
-                        r.Font.Color = Word.WdColor.wdColorWhite
-                        r.Shading.BackgroundPatternColor =
-                            System.Drawing.ColorTranslator.ToOle(
-                                System.Drawing.Color.FromArgb(0, 112, 192))
-                    End Sub)
+                        Sub(r)
+                            r.Font.Name = "Segoe UI Emoji"
+                            r.Font.Color = Word.WdColor.wdColorWhite
+                            r.Shading.BackgroundPatternColor =
+                                System.Drawing.ColorTranslator.ToOle(
+                                    System.Drawing.Color.FromArgb(0, 112, 192))
+                        End Sub)
                 End If
-                ' sonst keine eigene Formatierung → einfach durchreichen
+                ' No additional formatting otherwise → pass through.
         End Select
 
-        ' ------------------------------------------------- Rekursion ---------------
+        ' ------------------------------------------------- Recursion ---------------
         For Each child In node.ChildNodes
             RenderInline(child, rng, styleAction, thisHref)
         Next
     End Sub
 
-
-
-
     ''' <summary>
-    ''' Fügt ein Bild aus src in den Word-Range ein.
-    ''' Unterstützt lokale Pfade und Web-URLs, und fängt alle Fehler intern ab.
+    ''' Inserts an image from a src attribute into the target Word range by loading local paths or downloading URLs.
     ''' </summary>
     Private Shared Sub InsertImageFromSrc(
-    rng As Microsoft.Office.Interop.Word.Range,
-    src As String
-)
+        rng As Microsoft.Office.Interop.Word.Range,
+        src As String
+    )
         If String.IsNullOrWhiteSpace(src) Then Return
 
         Dim fileName As String = src
@@ -210,59 +223,62 @@ Partial Public Class ThisAddIn
         Dim isUrl As Boolean = False
 
         Try
-            ' URL-Erkennung
+            ' URL detection.
             Dim uri = New System.Uri(src, UriKind.RelativeOrAbsolute)
             If uri.IsAbsoluteUri AndAlso
-           (uri.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase) _
-            OrElse uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)) Then
+               (uri.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase) _
+                OrElse uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)) Then
 
                 isUrl = True
                 tempFile = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                System.IO.Path.GetFileName(uri.LocalPath)
-            )
+                    System.IO.Path.GetTempPath(),
+                    System.IO.Path.GetFileName(uri.LocalPath)
+                )
                 Using client As New System.Net.WebClient()
                     client.DownloadFile(uri, tempFile)
                 End Using
                 fileName = tempFile
             End If
 
-            ' Existenz prüfen
+            ' Verify file existence.
             If Not System.IO.File.Exists(fileName) Then
-                Throw New System.Exception(
-                $"Bilddatei nicht gefunden bzw. Download fehlgeschlagen: '{fileName}'"
-            )
+                Debug.WriteLine(
+                    $"Image file not found or download failed: '{fileName}'"
+                )
             End If
 
-            ' Einfügen
+            ' Insert InlineShape.
             Dim pic As Microsoft.Office.Interop.Word.InlineShape =
-            rng.InlineShapes.AddPicture(
-                FileName:=fileName,
-                LinkToFile:=False,
-                SaveWithDocument:=True
-            )
+                rng.InlineShapes.AddPicture(
+                    FileName:=fileName,
+                    LinkToFile:=False,
+                    SaveWithDocument:=True
+                )
             rng.SetRange(pic.Range.End, pic.Range.End)
 
         Catch ex As System.Exception
-            ' Fehler intern loggen, nicht weiterwerfen
+            ' Log errors internally without throwing further.
             Debug.WriteLine(
-            $"[InsertImageFromSrc] {ex.GetType().FullName}: {ex.Message}"
-        )
+                $"[InsertImageFromSrc] {ex.GetType().FullName}: {ex.Message}"
+            )
             rng.InsertAfter("[Image missing]")
         Finally
-            ' Temp-Datei entfernen
+            ' Remove temporary file.
             If isUrl AndAlso Not String.IsNullOrWhiteSpace(tempFile) Then
                 Try
                     System.IO.File.Delete(tempFile)
                 Catch ioEx As System.Exception
                     Debug.WriteLine(
-                    $"[InsertImageFromSrc] Temp-Datei konnte nicht gelöscht werden: {ioEx.Message}"
-                )
+                        $"[InsertImageFromSrc] Temporary file could not be deleted: {ioEx.Message}"
+                    )
                 End Try
             End If
         End Try
     End Sub
 
+    ''' <summary>
+    ''' Removes the trailing paragraph or break node when it is redundant at the end of the document node.
+    ''' </summary>
     Private Shared Sub RemoveTrailingParagraph(htmlDoc As HtmlAgilityPack.HtmlDocument)
 
         Dim candidates = New String() {"p", "br"}
@@ -271,13 +287,13 @@ Partial Public Class ThisAddIn
             Dim lastNode = htmlDoc.DocumentNode.SelectSingleNode("(//" & TagName & ")[last()]")
             If lastNode Is Nothing Then Continue For
 
-            ' liegt wirklich ganz am Schluss?
+            ' Confirm that the node is truly the last significant node.
             Dim cur = lastNode.NextSibling
             Dim canDelete As Boolean = True
             While cur IsNot Nothing
                 Select Case cur.NodeType
                     Case HtmlAgilityPack.HtmlNodeType.Comment
-                    ' ignorieren
+                        ' Ignore.
                     Case HtmlAgilityPack.HtmlNodeType.Text
                         If Not String.IsNullOrWhiteSpace(cur.InnerText) Then
                             canDelete = False : Exit While
@@ -290,55 +306,54 @@ Partial Public Class ThisAddIn
 
             If canDelete Then
                 If TagName = "p" Then
-                    ' Kinder retten, <p> selbst raus
+                    ' Preserve children and remove the <p> container.
                     For Each child In lastNode.ChildNodes.ToList()
                         lastNode.ParentNode.InsertBefore(child, lastNode)
                     Next
                 End If
                 lastNode.Remove()
-                Exit For            ' nur EIN Abschlusstag anfassen
+                Exit For            ' Touch only one trailing element.
             End If
         Next
     End Sub
 
-
-
-
     Private Shared ulLevels As List(Of Integer)
     Private Shared ulStartPos As Integer
 
+    ''' <summary>
+    ''' Parses an HtmlNode (and its children) into the provided Word range, tracking list nesting levels.
+    ''' </summary>
     Private Shared Sub ParseHtmlNode(
-    node As HtmlAgilityPack.HtmlNode,
-    range As Microsoft.Office.Interop.Word.Range,
-    Optional currentLevel As Integer = 0)
+        node As HtmlAgilityPack.HtmlNode,
+        range As Microsoft.Office.Interop.Word.Range,
+        Optional currentLevel As Integer = 0)
 
-        ' -------------------------------- Text‑Shortcut ---------------------------
+        ' -------------------------------- Text shortcut ---------------------------
         If Not node.HasChildNodes AndAlso node.NodeType = HtmlAgilityPack.HtmlNodeType.Text Then
             RenderInline(node, range, Nothing, String.Empty)
             Return
         End If
 
-
         If node.Name.Equals("p", StringComparison.OrdinalIgnoreCase) Then
-            ' (1) Inline‐Inhalt rendern
+            ' (1) Render inline content.
             RenderInline(node, range, Nothing, String.Empty)
 
-            ' — nächstes echtes Node finden (Whitespace/Comments überspringen) —
+            ' — find the next real node (skip whitespace/comments) —
             Dim nxt As HtmlAgilityPack.HtmlNode = node.NextSibling
             While nxt IsNot Nothing _
-            AndAlso (nxt.NodeType = HtmlAgilityPack.HtmlNodeType.Comment _
-                    OrElse (nxt.NodeType = HtmlAgilityPack.HtmlNodeType.Text _
-                            AndAlso String.IsNullOrWhiteSpace(nxt.InnerText)))
+                AndAlso (nxt.NodeType = HtmlAgilityPack.HtmlNodeType.Comment _
+                        OrElse (nxt.NodeType = HtmlAgilityPack.HtmlNodeType.Text _
+                                AndAlso String.IsNullOrWhiteSpace(nxt.InnerText)))
                 nxt = nxt.NextSibling
             End While
 
-            ' — nur wenn wirklich noch etwas folgt, Absatz(e) einfügen —
+            ' — insert paragraph(s) only if something follows —
             If nxt IsNot Nothing Then
-                ' 1× Absat­zumbruch
+                ' Single paragraph break.
                 range.InsertParagraphAfter()
                 range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-                ' noch ein Leerabsatz, falls nächstes Geschwister ein <p> ist
+                ' Additional blank paragraph when the next sibling is a <p>.
                 If nxt.Name.Equals("p", StringComparison.OrdinalIgnoreCase) Then
                     range.InsertParagraphAfter()
                     range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
@@ -348,7 +363,6 @@ Partial Public Class ThisAddIn
             Return
         End If
 
-
         If node.Name.Equals("li", StringComparison.OrdinalIgnoreCase) Then
 
             Dim isFootnoteEntry As Boolean =
@@ -356,12 +370,12 @@ Partial Public Class ThisAddIn
                         .StartsWith("fn:", StringComparison.OrdinalIgnoreCase)
 
             If isFootnoteEntry Then
-                ' --- (A) Bookmark‑Name und Fußnotenzahl ermitteln ---
-                Dim rawId As String = node.GetAttributeValue("id", String.Empty)   ' z.B. "fn:1"
+                ' --- (A) Determine bookmark name and footnote number ---
+                Dim rawId As String = node.GetAttributeValue("id", String.Empty)   ' e.g. "fn:1"
                 Dim fnNum As String = rawId.Substring(rawId.IndexOf(":"c) + 1)     ' "1"
-                Dim bookmarkName As String = "fn" & fnNum                          ' "fn1" (gültiger Bookmark-Name)
+                Dim bookmarkName As String = "fn" & fnNum                          ' "fn1"
 
-                ' --- (B) Superscript-Zahl einfügen und Bookmark um sie herum anlegen ---
+                ' --- (B) Insert superscript number and wrap with bookmark ---
                 Dim bmStart As Integer = range.End
                 InsertInline(
                                 range,
@@ -379,12 +393,12 @@ Partial Public Class ThisAddIn
 
                 Debug.WriteLine($"[ParseHtmlNode] Footnote Bookmark '{bookmarkName}' at Range=({bmStart},{range.End})")
 
-                ' Leerzeichen nach der Zahl
+                ' Space after the number.
                 range.InsertAfter(" ")
                 range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-                ' --- (C) Den gesamten Fußnoten-Text (und Rücksprung-Arrow) rendern ---
-                ' Falls das <li> nur ein <p> enthält, entpacken wir es
+                ' --- (C) Render the complete footnote text (plus back reference arrow) ---
+                ' If the <li> contains only a <p>, unwrap it.
                 If node.ChildNodes.Count = 1 _
                      AndAlso node.FirstChild.Name.Equals("p", StringComparison.OrdinalIgnoreCase) Then
 
@@ -400,14 +414,14 @@ Partial Public Class ThisAddIn
                         Select Case subNode.Name.ToLowerInvariant()
 
                             Case "p"
-                                ' (1) Inline-Inhalt rendern (inkl. <br> als manueller Break)
+                                ' (1) Render inline content (including <br> as manual break).
                                 RenderInline(subNode, range, Nothing, String.Empty)
 
-                                ' (2) echten Absatz abschließen
+                                ' (2) Complete the paragraph.
                                 range.InsertParagraphAfter()
                                 range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-                                ' (3) prüfen, ob direkt ein <p> oder <blockquote> folgt (nach Whitespace/Comments)
+                                ' (3) Check whether <p> or <blockquote> follows (after whitespace/comments).
                                 Dim nxt As HtmlAgilityPack.HtmlNode = subNode.NextSibling
                                 While nxt IsNot Nothing _
                                           AndAlso (nxt.NodeType = HtmlAgilityPack.HtmlNodeType.Comment _
@@ -416,7 +430,7 @@ Partial Public Class ThisAddIn
                                     nxt = nxt.NextSibling
                                 End While
 
-                                ' (4) wenn ja, noch eine leere Zeile einfügen
+                                ' (4) If yes, insert an extra blank line.
                                 If nxt IsNot Nothing _
                                        AndAlso (nxt.Name.Equals("p", StringComparison.OrdinalIgnoreCase) _
                                                 OrElse nxt.Name.Equals("blockquote", StringComparison.OrdinalIgnoreCase)) Then
@@ -427,9 +441,8 @@ Partial Public Class ThisAddIn
 
                                 Exit Select
 
-
                             Case "blockquote"
-                                ' (1) Zitat‑Absätze einzeln rendern
+                                ' (1) Render quote paragraphs individually.
                                 Dim quoteParas = subNode.SelectNodes("./p")
                                 If quoteParas IsNot Nothing Then
                                     For Each pNode As HtmlAgilityPack.HtmlNode In quoteParas
@@ -440,7 +453,7 @@ Partial Public Class ThisAddIn
                                         range.InsertParagraphAfter()
                                         range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-                                        ' Den soeben eingefügten Absatz einrücken
+                                        ' Indent the inserted paragraph.
                                         Dim indentRg As Microsoft.Office.Interop.Word.Range = range.Duplicate
                                         indentRg.Start = paraStart
                                         indentRg.End = range.End
@@ -450,10 +463,9 @@ Partial Public Class ThisAddIn
                                         indentRg.ParagraphFormat.LeftIndent +=
                                             indentRg.Application.CentimetersToPoints(0.75)
 
-
                                     Next
                                 Else
-                                    ' Fallback: ohne <p>-Wrapper rekursiv parsen
+                                    ' Fallback: parse recursively without <p> wrapper.
                                     For Each innerNode As HtmlAgilityPack.HtmlNode In subNode.ChildNodes
                                         ParseHtmlNode(innerNode, range, currentLevel)
                                     Next
@@ -461,18 +473,17 @@ Partial Public Class ThisAddIn
 
                                 Exit Select
 
-
-                        ' Inline‑Elemente direkt rendern, damit RenderInline den Fett‑Stil anwendet:
+                            ' Render inline elements directly so RenderInline applies bold/other styles.
                             Case "#text", "strong", "b", "em", "i", "u",
                              "del", "s", "sub", "sup", "code", "span", "img", "br", "a"
 
                                 RenderInline(subNode, range, Nothing, String.Empty)
 
-                        ' verschachtelte Listen wie gehabt überspringen
+                            ' Skip nested lists here; handled afterward.
                             Case "ul", "ol"
-                                ' nichts tun, wird unten separat behandelt
+                                ' Intentionally empty.
 
-                                ' alle anderen Block‑Elemente rekursiv parsen
+                                ' All other block elements are parsed recursively.
                             Case Else
                                 ParseHtmlNode(subNode, range, currentLevel)
 
@@ -482,17 +493,17 @@ Partial Public Class ThisAddIn
 
                 End If
 
-                ' --- (D) Absatz nach jeder Fußnote und Rückkehr ---
+                ' --- (D) Paragraph break after each footnote and return ---
                 range.InsertParagraphAfter()
                 range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
                 Return
             End If
 
             If currentLevel > 1 Then
-                ' --- (0) CR VOR dem LI, je nach Listen‑Typ ---
+                ' --- (0) CR before the LI depending on list type ---
                 Dim parentName = node.ParentNode.Name.ToLowerInvariant()
                 If parentName = "ol" Or parentName = "ul" Then
-                    ' OL: nur vor Unterpunkten außer dem ersten
+                    ' OL: only before sub items except the first.
                     Dim sibs = node.ParentNode.SelectNodes("li")
                     If sibs IsNot Nothing Then
                         Dim idx As Integer = 0
@@ -510,12 +521,12 @@ Partial Public Class ThisAddIn
                 End If
             End If
 
-            ' --- (1) Level speichern ---
+            ' --- (1) Store level ---
             If ulLevels IsNot Nothing Then
                 ulLevels.Add(currentLevel)
             End If
 
-            ' --- (2) P‑Wrapper entfernen, wenn er das einzige direkte Kind ist ---
+            ' --- (2) Remove <p> wrapper when it is the only direct child ---
             If node.ChildNodes.Count = 1 _
        AndAlso node.FirstChild.Name.Equals("p", StringComparison.OrdinalIgnoreCase) Then
 
@@ -531,7 +542,7 @@ Partial Public Class ThisAddIn
                     Select Case subNode.Name.ToLowerInvariant()
 
                         Case "blockquote"
-                            ' (1) Zitat‑Absätze einzeln rendern
+                            ' (1) Render quote paragraphs individually.
                             Dim quoteParas = subNode.SelectNodes("./p")
                             If quoteParas IsNot Nothing Then
                                 For Each pNode As HtmlAgilityPack.HtmlNode In quoteParas
@@ -541,7 +552,7 @@ Partial Public Class ThisAddIn
                                     range.InsertParagraphAfter()
                                     range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-                                    ' Den soeben eingefügten Absatz einrücken
+                                    ' Indent the inserted paragraph.
                                     Dim indentRg As Microsoft.Office.Interop.Word.Range = range.Duplicate
                                     indentRg.Start = paraStart
                                     indentRg.End = range.End
@@ -549,10 +560,9 @@ Partial Public Class ThisAddIn
                                     indentRg.ParagraphFormat.LeftIndent +=
                                         indentRg.Application.CentimetersToPoints(0.75)
 
-
                                 Next
                             Else
-                                ' Fallback: ohne <p>-Wrapper rekursiv parsen
+                                ' Fallback: parse recursively without <p> wrapper.
                                 For Each innerNode As HtmlAgilityPack.HtmlNode In subNode.ChildNodes
                                     ParseHtmlNode(innerNode, range, currentLevel)
                                 Next
@@ -560,17 +570,17 @@ Partial Public Class ThisAddIn
 
                             Exit Select
 
-                        ' Inline‑Elemente direkt rendern, damit RenderInline den Fett‑Stil anwendet:
+                        ' Render inline elements directly so RenderInline applies bold/other styles.
                         Case "#text", "strong", "b", "em", "i", "u",
                              "del", "s", "sub", "sup", "code", "span", "img", "br", "a"
 
                             RenderInline(subNode, range, Nothing, String.Empty)
 
-                        ' verschachtelte Listen wie gehabt überspringen
+                        ' Skip nested lists here; handled afterward.
                         Case "ul", "ol"
-                            ' nichts tun, wird unten separat behandelt
+                            ' Intentionally empty.
 
-                            ' alle anderen Block‑Elemente rekursiv parsen
+                            ' All other block elements parsed recursively.
                         Case Else
                             ParseHtmlNode(subNode, range, currentLevel)
 
@@ -580,7 +590,7 @@ Partial Public Class ThisAddIn
 
             End If
 
-            ' --- (3) Verschachtelte Listen am Ende behandeln ---
+            ' --- (3) Process nested lists at the end ---
             Dim nestedUl As HtmlAgilityPack.HtmlNode = node.SelectSingleNode("ul")
             Dim nestedOl As HtmlAgilityPack.HtmlNode = node.SelectSingleNode("ol")
             If (nestedUl IsNot Nothing OrElse nestedOl IsNot Nothing) Then
@@ -601,12 +611,10 @@ Partial Public Class ThisAddIn
             Return
         End If
 
-
         Debug.WriteLine($"[ParseHtmlNode] Enter node=<{node.Name}> Range=({range.Start},{range.End})")
 
-        ' -------------------------------- Haupt, und Kindknoten‑Schleife ---------------------
+        ' -------------------------------- Main child-node loop ---------------------
         For Each childNode As HtmlAgilityPack.HtmlNode In node.ChildNodes
-
 
             Debug.WriteLine($"  └─ Child: <{childNode.Name}> Type={childNode.NodeType}")
 
@@ -620,30 +628,29 @@ Partial Public Class ThisAddIn
 
             Select Case childNode.Name.ToLowerInvariant()
 
-
                 Case "blockquote"
-                    ' (1) Absatz vor dem Zitat
+                    ' (1) Paragraph before the quote.
                     'range.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
                     'range.InsertParagraphAfter()
                     range.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
 
-                    ' (2) Nur direkte <p>-Kinder verarbeiten
+                    ' (2) Process only direct <p> children.
                     Dim quoteParas As HtmlAgilityPack.HtmlNodeCollection =
                         childNode.SelectNodes("./p")
 
                     If quoteParas IsNot Nothing Then
                         For Each pNode As HtmlAgilityPack.HtmlNode In quoteParas
-                            ' Markiere den Anfang des neuen Absatzes
+                            ' Mark the start of the new paragraph.
                             Dim paraStart As Integer = range.Start
 
-                            ' (3) Inline-Inhalt des Zitats rendern
+                            ' (3) Render inline content of the quote.
                             RenderInline(pNode, range, Nothing, String.Empty)
 
-                            ' (4) Absatz nach jedem Zitat-Absatz
+                            ' (4) Paragraph break after each quote paragraph.
                             range.InsertParagraphAfter()
                             range.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
 
-                            ' (5) Den soeben eingefügten Absatz einrücken
+                            ' (5) Indent the inserted paragraph.
                             Dim indentRg As Microsoft.Office.Interop.Word.Range = range.Duplicate
                             indentRg.Start = paraStart
                             indentRg.End = range.End
@@ -653,7 +660,7 @@ Partial Public Class ThisAddIn
 
                         Next
                     Else
-                        ' Fallback: kein <p> im Blockquote → normal parsen
+                        ' Fallback: parse normally when no <p> exists in the blockquote.
                         For Each subNode As HtmlAgilityPack.HtmlNode In childNode.ChildNodes
                             ParseHtmlNode(subNode, range, currentLevel)
                         Next
@@ -661,11 +668,11 @@ Partial Public Class ThisAddIn
 
                     Exit Select
 
-                    ' (6) Absatz nach dem gesamten Blockquote
+                    ' (6) Paragraph after the entire blockquote.
                     range.InsertParagraphAfter()
                     range.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
 
-                    ' (7) zusätzlichen Leerabsatz nur, wenn nach </blockquote> direkt ein <p> folgt
+                    ' (7) Additional blank paragraph only when another <p> follows immediately.
                     Dim nxtBQ As HtmlAgilityPack.HtmlNode = childNode.NextSibling
                     While nxtBQ IsNot Nothing _
                               AndAlso (nxtBQ.NodeType = HtmlAgilityPack.HtmlNodeType.Comment _
@@ -684,10 +691,10 @@ Partial Public Class ThisAddIn
                     Exit Select
 
                 Case "p"
-                    ' Inline-Inhalt rendern (inkl. <br> als manueller Umbruch)
+                    ' Render inline content (including <br> as manual break).
                     RenderInline(childNode, range, Nothing, String.Empty)
 
-                    ' nächstes echtes Geschwister-Node finden
+                    ' Locate next real sibling.
                     Dim nxt As HtmlAgilityPack.HtmlNode = childNode.NextSibling
                     While nxt IsNot Nothing _
                           AndAlso (nxt.NodeType = HtmlAgilityPack.HtmlNodeType.Comment _
@@ -696,12 +703,12 @@ Partial Public Class ThisAddIn
                         nxt = nxt.NextSibling
                     End While
 
-                    ' nur wenn wirklich etwas folgt, 1× Absatz
+                    ' Insert paragraph break only if something follows.
                     If nxt IsNot Nothing Then
                         range.InsertParagraphAfter()
                         range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-                        ' zusätzlich eine Leerzeile, wenn das Geschwister ein weiterer <p> ist
+                        ' Insert an extra blank line when the sibling is another <p> or <blockquote>.
                         If nxt.Name.Equals("p", StringComparison.OrdinalIgnoreCase) OrElse nxt.Name.Equals("blockquote", StringComparison.OrdinalIgnoreCase) Then
                             range.InsertParagraphAfter()
                             range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
@@ -710,8 +717,6 @@ Partial Public Class ThisAddIn
 
                     Exit Select
 
-
-
                 Case "#text", "strong", "b", "em", "i", "u", "del", "s",
                     "sub", "sup", "code", "span", "img", "br"
                     RenderInline(childNode, range, Nothing, String.Empty)
@@ -719,11 +724,10 @@ Partial Public Class ThisAddIn
                 Case "div"
                     Dim cls As String = childNode.GetAttributeValue("class", String.Empty)
                     If cls.Equals("footnotes", StringComparison.OrdinalIgnoreCase) Then
-                        ' Statt zu überspringen: das OL innerhalb der Fußnoten parsen
+                        ' Instead of skipping: parse the OL inside the footnotes container.
                         Dim footOl As HtmlAgilityPack.HtmlNode = childNode.SelectSingleNode("ol")
                         If footOl IsNot Nothing Then
-                            ' currentLevel evtl. gleich lassen oder auf 0 setzen,
-                            ' je nachdem, wie du die Nummerierung haben willst
+                            ' currentLevel is preserved so numbering remains consistent.
                             ParseHtmlNode(footOl, range, currentLevel)
                         End If
                         Exit Select
@@ -733,8 +737,7 @@ Partial Public Class ThisAddIn
                     RenderInline(childNode, range, Nothing, String.Empty)
 
                 Case "h1", "h2", "h3", "h4", "h5", "h6"
-                    ' 1) Welcher Built-In Heading-Style?
-
+                    ' 1) Determine built-in heading style.
                     Dim style As WdBuiltinStyle = WdBuiltinStyle.wdStyleNormal ' Default for 'p'
                     Select Case childNode.Name.ToLower()
                         Case "h1" : style = WdBuiltinStyle.wdStyleHeading1
@@ -748,24 +751,24 @@ Partial Public Class ThisAddIn
                     Dim txt As String = HtmlEntity.DeEntitize(childNode.InnerText)
                     Dim href As String = nestedHref
 
-                    ' 2) Neuen Absatz einfügen und Range dorthin setzen
+                    ' 2) Insert new paragraph and move range to it.
                     range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
                     range.InsertParagraphAfter()
                     range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-                    ' 3) Text einfügen
+                    ' 3) Insert text.
                     Dim paraStart As Integer = range.Start
                     range.InsertAfter(txt)
                     range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-                    ' 4) Absatz-Range ermitteln
+                    ' 4) Determine paragraph range.
                     Dim paraRg As Word.Range = range.Duplicate
                     paraRg.Start = paraStart
                     paraRg.End = range.End
-                    ' 5) Absatz-Stil anwenden
+                    ' 5) Apply heading style.
                     paraRg.Style = style
 
-                    ' 6) Hyperlink (falls nötig)
+                    ' 6) Add hyperlink when present.
                     If href <> String.Empty Then
                         Dim hl As Word.Hyperlink =
                                             range.Hyperlinks.Add(
@@ -776,7 +779,7 @@ Partial Public Class ThisAddIn
                         range.SetRange(hl.Range.End, hl.Range.End)
                     End If
 
-                    ' 7) Absatz-Umbruch ans Ende
+                    ' 7) Paragraph break at the end.
                     range.InsertParagraphAfter()
                     range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
@@ -785,47 +788,44 @@ Partial Public Class ThisAddIn
                     Dim href As String = childNode.GetAttributeValue("href", String.Empty)
                     Dim id As String = childNode.GetAttributeValue("id", String.Empty)
 
-                    ' 1) Inline-Fußnoten-Referenz im Text?
+                    ' 1) Inline footnote reference inside the text?
                     If id.StartsWith("fnref:", StringComparison.OrdinalIgnoreCase) _
                        AndAlso href.StartsWith("#fn:", StringComparison.OrdinalIgnoreCase) Then
 
                         Debug.WriteLine("Setting Bookmark in Case 'a'")
 
-                        ' Fußnotenzahl extrahieren
-                        Dim fnNum As String = id.Substring(id.IndexOf(":"c) + 1)  ' z.B. "1"
+                        ' Extract footnote number.
+                        Dim fnNum As String = id.Substring(id.IndexOf(":"c) + 1)  ' e.g. "1"
                         Dim bookmarkName As String = "fn" & fnNum                         ' "fn1"
 
-                        ' Anzeige-Text (die <sup>1</sup>)
+                        ' Display text (e.g. <sup>1</sup>).
                         Dim displayText As String = HtmlEntity.DeEntitize(childNode.InnerText)
 
-                        'Hyperlink auf unser Bookmark anlegen
+                        'Hyperlink to bookmark.
                         range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
                         range.Hyperlinks.Add(
                                                 Anchor:=range,
-                                                Address:="",                ' keine externe URL
-                                                SubAddress:=CStr(bookmarkName),   ' internes Ziel
+                                                Address:="",                ' No external URL.
+                                                SubAddress:=CStr(bookmarkName),   ' Internal target.
                                                 TextToDisplay:=CStr(displayText)
                                                 )
                         range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-                        Exit Select    ' <-- hier beenden wir NUR den Case, nicht die ganze Sub
+                        Exit Select    ' End only this Case block.
                     End If
 
-                    ' 2) Rücksprung-Pfeil in der Fußnotenliste
+                    ' 2) Back-reference arrow in the footnote list.
                     If cls.Equals("footnote-back-ref", StringComparison.OrdinalIgnoreCase) Then
                         RenderInline(childNode, range, Nothing, String.Empty)
                         Exit Select
                     End If
 
-                    ' 3) alle anderen Links normal
+                    ' 3) All other anchors render normally.
                     RenderInline(childNode, range, Nothing, String.Empty)
                     Exit Select
 
-
-
-
                 Case "ul"
-                    ' a) Task‑List (Checkboxen) wie gehabt …
+                    ' a) Task list (checkboxes) handling as before …
                     If childNode.GetAttributeValue("class", "").Contains("contains-task-list") Then
                         For Each li As HtmlAgilityPack.HtmlNode In childNode.SelectNodes("li")
                             range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
@@ -847,7 +847,7 @@ Partial Public Class ThisAddIn
                         Debug.WriteLine("[ul] Entering top UL – reset ulLevels")
                     End If
 
-                    ' c) Originales Einfügen der LI‑Nodes (recursive)
+                    ' c) Original insertion of LI nodes (recursive).
                     Dim liNodes = childNode.SelectNodes("li")
                     If liNodes IsNot Nothing Then
                         Dim listStart = range.Start
@@ -867,7 +867,7 @@ Partial Public Class ThisAddIn
                         End With
                         range.SetRange(ulRange.End, ulRange.End)
 
-                        ' d) Am Ende des ersten UL: Array anwenden
+                        ' d) At the end of the first UL: apply the stored levels.
                         If enteringTopUL Then
                             Debug.WriteLine($"[ul] At end of top UL – ulLevels.Count = {ulLevels.Count}")
                             Debug.WriteLine($"[ul] Levels array: {String.Join(",", ulLevels)}")
@@ -879,7 +879,7 @@ Partial Public Class ThisAddIn
                                 Dim lvl = ulLevels(i - 1)
                                 Debug.WriteLine($"[ul] Paragraph {i} initial level={lvl}")
 
-                                ' jede weitere Ebene einmal ListIndent()
+                                ' Apply ListIndent() once per nested level beyond the first.
                                 For stepIndent = 1 To (lvl - 1)
                                     p.Range.ListFormat.ListIndent()
                                 Next
@@ -893,23 +893,22 @@ Partial Public Class ThisAddIn
 
                     Exit Select
 
-
                 Case "ol"
 
-                    ' a) Alle <li>-Knoten holen
+                    ' a) Retrieve all <li> nodes.
                     Dim liNodes As HtmlAgilityPack.HtmlNodeCollection = childNode.SelectNodes("li")
                     If liNodes Is Nothing OrElse liNodes.Count = 0 Then
                         Debug.WriteLine("[ol] No <li> nodes found in <ol> – skipping")
                         Exit Select
                     End If
 
-                    ' b) Start-Attribut auslesen (Startnummer)
+                    ' b) Read start attribute (start number).
                     Dim startAttr As Integer = 1
                     Dim startStr As String = childNode.GetAttributeValue("start", String.Empty)
                     Dim tmpInt As Integer
                     If Integer.TryParse(startStr, tmpInt) Then startAttr = tmpInt
 
-                    ' c) Top-Level-OL: ulLevels initialisieren (shared mit UL)
+                    ' c) Top-level OL: initialize ulLevels (shared with UL handling).
                     Dim enteringTopUL As Boolean = (currentLevel = 0)
                     If enteringTopUL AndAlso ulLevels Is Nothing Then
                         ulLevels = New List(Of Integer)()
@@ -917,7 +916,7 @@ Partial Public Class ThisAddIn
                         Debug.WriteLine("[ol] Entering top OL – reset ulLevels")
                     End If
 
-                    ' d) Jedes LI rekursiv rendern (die LI-Logik übernimmt CR und Level-Push)
+                    ' d) Render each LI recursively (LI logic manages CR and level push).
                     Dim listStart As Integer = range.Start
                     For Each liNode As HtmlAgilityPack.HtmlNode In liNodes
                         ParseHtmlNode(liNode, range, currentLevel + 1)
@@ -925,33 +924,33 @@ Partial Public Class ThisAddIn
                         range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
                     Next
 
-                    ' e) Den kompletten Bereich der OL-Liste erfassen
+                    ' e) Capture the entire OL range.
                     Dim olRange As Word.Range = range.Duplicate
                     olRange.Start = listStart
                     olRange.End = range.End
 
-                    ' f) Prüfen, ob olRange überhaupt Absätze enthält
+                    ' f) Ensure range contains paragraphs.
                     If olRange.Paragraphs.Count = 0 Then
-                        Debug.WriteLine("[ol] olRange enthält keine Absätze – überspringe Nummerierung")
+                        Debug.WriteLine("[ol] olRange contains no paragraphs – skip numbering")
                         Exit Select
                     End If
 
-                    ' j) Formatierung nur beim obersten OL (enteringTopUL) anwenden
+                    ' j) Apply formatting only for the top-most OL.
                     If enteringTopUL Then
                         Dim paras As Word.Paragraphs = olRange.Paragraphs
 
-                        ' Remove any previous numbering
+                        ' Remove previous numbering.
                         olRange.ListFormat.RemoveNumbers()
 
-                        ' Use a multi-level list template from ListGalleries
+                        ' Use a multi-level template from ListGalleries.
                         Dim multiLevelTemplate As Word.ListTemplate = olRange.Application.ListGalleries(Word.WdListGalleryType.wdOutlineNumberGallery).ListTemplates(1)
 
-                        ' Set custom start value for level 1 if needed
+                        ' Set custom start value for level 1 if specified.
                         If startAttr <> 1 Then
                             multiLevelTemplate.ListLevels(1).StartAt = startAttr
                         End If
 
-                        ' Apply the multi-level template to the range
+                        ' Apply the multi-level template.
                         olRange.ListFormat.ApplyListTemplateWithLevel(
                                 ListTemplate:=multiLevelTemplate,
                                 ContinuePreviousList:=False,
@@ -959,7 +958,7 @@ Partial Public Class ThisAddIn
                                 DefaultListBehavior:=Word.WdDefaultListBehavior.wdWord10ListBehavior
                             )
 
-                        ' Set the correct level for each paragraph
+                        ' Assign correct level per paragraph.
                         For i As Integer = 1 To paras.Count
                             Dim p As Word.Paragraph = paras(i)
                             Dim lvl As Integer = ulLevels(i - 1)
@@ -970,21 +969,21 @@ Partial Public Class ThisAddIn
                         ulLevels = Nothing
                     End If
 
-                    ' j) Cursor hinter die Liste setzen
+                    ' j) Place cursor after the list.
                     range.SetRange(olRange.End, olRange.End)
 
                     Exit Select
 
                 Case "dl"
-                    ' Definition list
+                    ' Definition list.
                     For Each dt As HtmlNode In childNode.SelectNodes("dt")
-                        ' Term
+                        ' Term.
                         Dim term As Microsoft.Office.Interop.Word.Range = range.Duplicate
                         term.Text = HtmlEntity.DeEntitize(dt.InnerText) & vbTab
                         term.Font.Bold = True
                         term.Collapse(False)
                         range.SetRange(term.End, term.End)
-                        ' Definition
+                        ' Definition.
                         Dim dd As HtmlNode = dt.NextSibling
                         If dd IsNot Nothing AndAlso dd.Name.ToLower() = "dd" Then
                             Dim defn As Microsoft.Office.Interop.Word.Range = range.Duplicate
@@ -995,13 +994,12 @@ Partial Public Class ThisAddIn
                         End If
                     Next
 
-
                 Case "hr"
 
                     range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
                     Dim hrPara As Word.Paragraph = range.Paragraphs.Add(range)
-                    hrPara.Range.Text = ""  ' leer lassen, wir brauchen nur den Rahmen
+                    hrPara.Range.Text = ""  ' Keep empty; only the border is needed.
 
                     With hrPara.Range.ParagraphFormat.Borders(Word.WdBorderType.wdBorderBottom)
                         .LineStyle = Word.WdLineStyle.wdLineStyleSingle
@@ -1014,10 +1012,8 @@ Partial Public Class ThisAddIn
                     range.SetRange(afterHr.Start, afterHr.Start)
                     range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-
-
                 Case "input"
-                    ' Checkbox (ContentControl)
+                    ' Checkbox (ContentControl).
                     If childNode.GetAttributeValue("type", String.Empty).ToLower() = "checkbox" Then
                         range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
                         Dim cc As Word.ContentControl =
@@ -1036,7 +1032,7 @@ Partial Public Class ThisAddIn
                     RenderInline(childNode, range, Nothing, String.Empty)
 
                 Case "pre"
-                    ' Code block
+                    ' Code block.
                     Dim codeBlock As Microsoft.Office.Interop.Word.Range = range.Duplicate
                     codeBlock.Text = HtmlEntity.DeEntitize(childNode.InnerText) & vbCr
                     codeBlock.Font.Name = "Courier New"
@@ -1045,21 +1041,18 @@ Partial Public Class ThisAddIn
                     codeBlock.Collapse(False)
                     range.SetRange(codeBlock.End, codeBlock.End)
 
-
-
-
                 Case "table"
-                    '---------- 1) Top-Level-Rows holen ----------------------------
+                    '---------- 1) Retrieve top-level rows ----------------------------
                     Dim topRows As New List(Of HtmlNode)
 
-                    'direkte <tr> plus <thead>/<tbody>-Kinder, aber KEINE rekursiven
+                    'Direct <tr> plus <thead>/<tbody> children (non-recursive).
                     For Each tr As HtmlNode In childNode.SelectNodes("./tr|./thead/tr|./tbody/tr")
                         topRows.Add(tr)
                     Next
                     If topRows.Count = 0 Then Exit Select
                     '----------------------------------------------------------------
 
-                    '---------- 2) Beste Spaltenzahl ermitteln ----------------------
+                    '---------- 2) Determine best column count ----------------------
                     Dim colCount As Integer = 0
                     For Each tr In topRows
                         Dim cells = tr.SelectNodes("th|td")
@@ -1070,11 +1063,11 @@ Partial Public Class ThisAddIn
                     If colCount = 0 Then Exit Select
                     '----------------------------------------------------------------
 
-                    '---------- 3) Tabelle an Cursor anlegen ------------------------
+                    '---------- 3) Create table at cursor ----------------------------
                     Dim tbl As Microsoft.Office.Interop.Word.Table =
                         range.Tables.Add(range, topRows.Count, colCount)
 
-                    '---------- 4) Zellen befüllen ----------------------------------
+                    '---------- 4) Populate cells -----------------------------------
                     Dim rIdx As Integer = 1
                     For Each tr In topRows
                         Dim cells = tr.SelectNodes("th|td")
@@ -1083,22 +1076,22 @@ Partial Public Class ThisAddIn
                         If cells IsNot Nothing Then
                             For Each cell In cells
                                 Dim cellRg As Word.Range = tbl.Cell(rIdx, cIdx).Range
-                                'unsichtbares Zellenendzeichen abschneiden
+                                'Remove the hidden cell-end character.
                                 cellRg.SetRange(cellRg.Start, cellRg.End - 1)
 
-                                ParseHtmlNode(cell, cellRg, currentLevel)          '← rekursiv, kein Datenverlust
+                                ParseHtmlNode(cell, cellRg, currentLevel)          '← recursive, data preserved.
 
-                                'Headerzelle fett
+                                'Header cells bold.
                                 If cell.Name.Equals("th", StringComparison.OrdinalIgnoreCase) Then
                                     cellRg.Font.Bold = True
                                 End If
 
-                                '---------- 4a) Colspan behandeln ------------------
+                                '---------- 4a) Handle colspan ------------------
                                 Dim cSpan As Integer = cell.GetAttributeValue("colspan", 1)
                                 If cSpan > 1 AndAlso cIdx + cSpan - 1 <= colCount Then
                                     Dim tgtCell = tbl.Cell(rIdx, cIdx + cSpan - 1)
                                     tbl.Cell(rIdx, cIdx).Merge(tgtCell)
-                                    cIdx += cSpan                    'gleich weiter hinter dem Merge
+                                    cIdx += cSpan                    'Continue after the merge.
                                 Else
                                     cIdx += 1
                                 End If
@@ -1108,9 +1101,8 @@ Partial Public Class ThisAddIn
                         rIdx += 1
                     Next
 
-                    '---------- 5) Cursor hinter Tabelle setzen --------------------
+                    '---------- 5) Place cursor after table -------------------------
                     range.SetRange(tbl.Range.End, tbl.Range.End)
-
 
                 Case Else
 
@@ -1121,80 +1113,79 @@ Partial Public Class ThisAddIn
         Next
     End Sub
 
-
-
-
-
+    ''' <summary>
+    ''' Inserts text with optional emoji-aware splits, applying a base style and hyperlink when required.
+    ''' </summary>
     Private Shared Sub InsertInline(
         ByRef mainRg As Range,
         txt As String,
         baseStyle As Action(Of Range),
         Optional href As String = "")
 
-        ' 1) Kein Emoji‑Fall → direkter Einfügen‑Pfad
+        ' 1) If no emoji handling is needed, use the direct path.
         If emojiSet Is Nothing OrElse emojiSet.Count = 0 OrElse Not _emojiPairRegex.IsMatch(txt) Then
             TrueInsertInline(mainRg, txt, baseStyle, href)
             Return
         End If
 
-        ' 2) Sonst: nur an den Emoji-Punkten splitten und stylen
+        ' 2) Otherwise split at emoji boundaries and apply styling conditionally.
         Dim lastPos As Integer = 0
         For Each m As Match In _emojiPairRegex.Matches(txt)
-            ' (a) Alles vor dem Emoji
+            ' (a) Everything before the emoji.
             If m.Index > lastPos Then
                 Dim segment As String = txt.Substring(lastPos, m.Index - lastPos)
                 TrueInsertInline(mainRg, segment, baseStyle, href)
             End If
 
-            ' (b) Das Emoji selbst (nur, wenn es im Set ist)
+            ' (b) The emoji itself (only when it exists in the set).
             Dim emoji As String = m.Value
             If emojiSet.Contains(emoji) Then
                 Dim emojiStyle = CombineStyle(baseStyle,
                     Sub(r As Range) r.Font.Name = "Segoe UI Emoji")
                 TrueInsertInline(mainRg, emoji, emojiStyle, href)
             Else
-                ' falls doch nicht im Set – als normaler Text
+                ' If the emoji is not in the set, treat it as normal text.
                 TrueInsertInline(mainRg, emoji, baseStyle, href)
             End If
 
             lastPos = m.Index + m.Length
         Next
 
-        ' (c) Rest nach dem letzten Emoji
+        ' (c) Remaining text after the last emoji.
         If lastPos < txt.Length Then
             Dim tail As String = txt.Substring(lastPos)
             TrueInsertInline(mainRg, tail, baseStyle, href)
         End If
     End Sub
 
-
-
-
+    ''' <summary>
+    ''' Inserts text into the provided range, optionally creating a hyperlink and applying a style delegate.
+    ''' </summary>
     Private Shared Sub TrueInsertInline(
-    ByRef mainRg As Word.Range,
-    txt As String,
-    styleAction As Action(Of Word.Range),
-    Optional href As String = "")
+        ByRef mainRg As Word.Range,
+        txt As String,
+        styleAction As Action(Of Word.Range),
+        Optional href As String = "")
 
         mainRg.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
         Dim wrk As Word.Range = mainRg.Duplicate
         wrk.Text = txt
 
-        ' **Hier passiert der Reset** – denk daran, vor und nach dem Reset zu loggen
+        ' **Reset occurs here** – remember to log before and after the reset when required.
         wrk.Font.Reset()
 
         If href <> "" Then
             Dim hl = mainRg.Document.Hyperlinks.Add(Anchor:=wrk, Address:=CStr(href))
             If styleAction IsNot Nothing Then
-                Debug.WriteLine("[InsertInline] → Anwenden styleAction auf Hyperlink‑Range")
+                Debug.WriteLine("[InsertInline] → Applying styleAction to hyperlink range")
                 styleAction(hl.Range)
             End If
             hl.Range.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
             mainRg.SetRange(hl.Range.End, hl.Range.End)
         Else
             If styleAction IsNot Nothing Then
-                Debug.WriteLine("[InsertInline] → Anwenden styleAction auf Text‑Range")
+                Debug.WriteLine("[InsertInline] → Applying styleAction to text range")
                 styleAction(wrk)
             End If
             wrk.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
@@ -1202,7 +1193,5 @@ Partial Public Class ThisAddIn
         End If
 
     End Sub
-
-
 
 End Class

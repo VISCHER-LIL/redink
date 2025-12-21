@@ -1,6 +1,37 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Redactions.vb
+' Purpose: LLM-powered PDF redaction preparation and finalization. Prepares
+'          removable redaction annotations using AI-detected text ranges; 
+'          finalizes by flattening annotations into rasterized images.
+'
+' Architecture:
+'  - Instruction Library: Loads local/global *.txt instruction sets; each line "Title|Instruction"
+'    (lines starting with ";" ignored). Manual instruction overrides prepared instruction.
+'  - UI Parameter Collection: Uses SharedMethods.InputParameter and ShowCustomVariableInputForm
+'    to collect redaction parameters (prepared/manual instruction, transparency, reason codes,
+'    metadata removal, output paths, optional secondary model).
+'  - Model Switching: Optional alternate model or secondary API selection based on configuration flags.
+'  - Text Extraction (PDF): Uses UglyToad.PdfPig to extract text and character-level positions
+'    from PDF pages, maintaining spatial layout for accurate box placement.
+'  - LLM Invocation: Calls LLM(systemPrompt, userPrompt, ...) expecting JSON with redaction ranges
+'    (start/end indices or exact_text). Sanitizes and parses response.
+'  - Text Matching: Supports exact and normalized (whitespace-tolerant) text matching to map
+'    LLM-provided text snippets to character positions.
+'  - Redaction Box Generation: Converts character ranges to PDF rectangles with padding,
+'    grouped by page and line; coordinates transformed from PdfPig (bottom-left) to PdfSharp (top-left).
+'  - Annotation Creation: Adds /Square PDF annotations (removable boxes) in red (transparent) or black;
+'    optionally includes reason codes in /Contents field; optionally strips metadata.
+'  - Finalization (Flattening): Burns annotations into rasterized images using PdfiumViewer,
+'    preserving metadata; sticky notes and popup annotations excluded from burning.
+'  - Progress & Cancellation: ProgressBarModule tracks state in multi-file mode; user can abort mid-iteration.
+'  - Font Handling: ArialFontResolver implements PdfSharp.Fonts.IFontResolver for rendering reason
+'    code labels when flattening; falls back to Base-14 Helvetica if Arial unavailable.
+'  - External Dependencies: SharedLibrary.SharedMethods supplies UI, LLM, progress, model selection;
+'    UglyToad.PdfPig for text extraction; PdfSharp for PDF manipulation; PdfiumViewer for rendering.
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -18,7 +49,10 @@ Imports PDFP = UglyToad.PdfPig
 
 Partial Public Class ThisAddIn
 
-
+    ''' <summary>
+    ''' Prepares PDF redactions by analyzing text with LLM and adding removable annotation boxes.
+    ''' Supports single-file and multi-file modes with configurable parameters.
+    ''' </summary>
     Public Async Sub PrepareRedactedPDF()
         If INILoadFail() Then Return
 
@@ -342,6 +376,11 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
+    ''' <summary>
+    ''' Finalizes PDF redactions by flattening annotations into rasterized images.
+    ''' Converts annotation boxes to burned-in black rectangles; preserves sticky notes.
+    ''' Supports single-file and multi-file modes.
+    ''' </summary>
     Public Async Sub FlattenRedactedPDF()
         If INILoadFail() Then Return
 
@@ -577,12 +616,17 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-
+    ''' <summary>
+    ''' Service class providing PDF redaction operations: text extraction, LLM-based analysis,
+    ''' annotation creation, and finalization via rasterization.
+    ''' </summary>
     Public Class PdfRedactionService
 
         ' Padding for redaction boxes
         Private Const RedactionPadPts As Double = 2.5
         Private Const RedactionSidePad As Double = 2.0
+
+        ' Subdirectory and extension defaults
         Private Const SubDirRedacted As String = "Redacted"
         Private Const RedactedExtension As String = "_redacted"
 
@@ -631,6 +675,19 @@ Partial Public Class ThisAddIn
             Public Property ReasonCode As System.String
         End Class
 
+        ''' <summary>
+        ''' Orchestrates PDF redaction: extracts text, queries LLM, matches text occurrences,
+        ''' builds rectangles, creates annotated PDF with optional metadata removal.
+        ''' </summary>
+        ''' <param name="filename">Input PDF path</param>
+        ''' <param name="instruction">Redaction instruction for LLM</param>
+        ''' <param name="transparentboxes">True for red transparent boxes; False for black opaque</param>
+        ''' <param name="reasoncodes">Include reason codes in /Contents field</param>
+        ''' <param name="removemetadata">Strip PDF Info dictionary and XMP metadata</param>
+        ''' <param name="subdirectory">Output subdirectory (optional)</param>
+        ''' <param name="extension">Filename extension suffix (optional)</param>
+        ''' <param name="silent">Suppress message boxes; throw exceptions instead</param>
+        ''' <param name="useSecondApi">Use secondary API/model if configured</param>
 
         Public Shared Async Function RunPdfRedactionAsync(filename As String, instruction As String, transparentboxes As Boolean,
                                                           reasoncodes As Boolean, removemetadata As Boolean,
@@ -693,7 +750,7 @@ Partial Public Class ThisAddIn
                     Throw New Exception(errMsg)
                 End Try
 
-                If response Is Nothing OrElse response.Redactions Is Nothing OrElse response.Redactions.Count = 0 And Not silent Then
+                If (response Is Nothing OrElse response.Redactions Is Nothing OrElse response.Redactions.Count = 0) And Not silent Then
                     ShowCustomMessageBox($"Nothing to redact found.")
                     Return
                 End If
@@ -787,6 +844,14 @@ Partial Public Class ThisAddIn
             End Try
         End Function
 
+
+        ''' <summary>
+        ''' Finds all occurrences of searchText in fullText. First attempts exact match,
+        ''' then falls back to normalized (whitespace-collapsed) matching with position mapping.
+        ''' </summary>
+        ''' <param name="fullText">Full extracted PDF text</param>
+        ''' <param name="searchText">Text snippet to locate</param>
+        ''' <returns>List of RedactionRangeDto with start/end indices</returns>
 
         Private Shared Function FindTextOccurrences(fullText As String, searchText As String) As List(Of RedactionRangeDto)
             Dim ranges As New List(Of RedactionRangeDto)()
@@ -887,6 +952,14 @@ Partial Public Class ThisAddIn
 
             Return ranges
         End Function
+
+        ''' <summary>
+        ''' Extracts text and character-level positions from PDF using PdfPig.
+        ''' Preserves word order, line breaks, and spatial layout; inserts spaces between words and lines.
+        ''' </summary>
+        ''' <param name="pdfPath">Input PDF path</param>
+        ''' <param name="fullText">Output: concatenated text from all pages</param>
+        ''' <param name="positions">Output: List of TextPosition for each character</param>
 
         Private Shared Sub ExtractTextAndPositions(pdfPath As System.String,
                            ByRef fullText As System.String,
@@ -997,7 +1070,10 @@ Partial Public Class ThisAddIn
             fullText = sb.ToString()
         End Sub
 
-
+        ''' <summary>
+        ''' Converts LLM response ranges to RedactionRectangle objects with PDF coordinates.
+        ''' Groups positions by page/line, applies padding, transforms coordinates from PdfPig to PdfSharp.
+        ''' </summary>
         Private Shared Function BuildRedactionRectangles(response As RedactionResponseDto,
                                          positions As System.Collections.Generic.List(Of TextPosition),
                                          llmTextLength As System.Int32) _
@@ -1105,7 +1181,10 @@ Partial Public Class ThisAddIn
             Return rectangles
         End Function
 
-
+        ''' <summary>
+        ''' Creates redacted PDF by adding Square annotations to input PDF.
+        ''' Annotations can be removable (default) or burned-in via graphics.
+        ''' </summary>
         Private Shared Sub CreateRedactedPdf(inputPath As System.String,
                                      outputPath As System.String,
                                      rectangles As System.Collections.Generic.List(Of RedactionRectangle),
@@ -1189,7 +1268,10 @@ Partial Public Class ThisAddIn
             document.Close()
         End Sub
 
-        ' Removes Info dictionary entries and XMP (/Metadata) from catalog and pages
+        ''' <summary>
+        ''' Removes Info dictionary entries and XMP metadata from PDF catalog and pages.
+        ''' Best-effort; never throws exceptions.
+        ''' </summary>
         Private Shared Sub StripPdfMetadata(doc As PdfSharp.Pdf.PdfDocument)
             If doc Is Nothing Then Return
             Try
@@ -1233,7 +1315,6 @@ Partial Public Class ThisAddIn
             Return arr
         End Function
 
-        ' Add this at the class level
         <DllImport("kernel32.dll", CharSet:=CharSet.Auto, SetLastError:=True)>
         Private Shared Function LoadLibrary(lpFileName As String) As IntPtr
         End Function
@@ -1242,7 +1323,10 @@ Partial Public Class ThisAddIn
         Private Shared Function SetDllDirectory(lpPathName As String) As Boolean
         End Function
 
-        ' Add this helper method
+        ''' <summary>
+        ''' Preloads pdfium.dll from bin directory or x64 subdirectory to avoid loading failures.
+        ''' Uses kernel32.dll LoadLibrary and SetDllDirectory APIs.
+        ''' </summary>
         Private Shared Sub EnsurePdfiumLoaded()
             Static isLoaded As Boolean = False
             If isLoaded Then Return
@@ -1279,7 +1363,15 @@ Partial Public Class ThisAddIn
             End Try
         End Sub
 
-
+        ''' <summary>
+        ''' Finalizes PDF by burning annotations into rasterized images.
+        ''' Excludes sticky notes and popup annotations; optionally renders reason code labels.
+        ''' Preserves source PDF metadata.
+        ''' </summary>
+        ''' <param name="inputPath">Input PDF with annotations</param>
+        ''' <param name="outputPath">Output rasterized PDF path</param>
+        ''' <param name="Label">Render reason code labels in white text</param>
+        ''' <param name="dpi">Rasterization DPI (default 300)</param>
         Public Shared Sub BurnInPdfToImageOnly(inputPath As String,
                                 outputPath As String, Optional Label As Boolean = False,
                                 Optional dpi As Integer = 300)
@@ -1422,7 +1514,6 @@ Partial Public Class ThisAddIn
             End Try
         End Sub
 
-        ' Place this helper inside the PdfRedactionService class
         Private Shared Sub CopyPdfInfoFromPath(srcPath As String, dest As PdfSharp.Pdf.PdfDocument)
             If String.IsNullOrWhiteSpace(srcPath) OrElse dest Is Nothing Then Return
             Try
@@ -1436,6 +1527,10 @@ Partial Public Class ThisAddIn
             End Try
         End Sub
 
+        ''' <summary>
+        ''' Copies PDF Info dictionary and custom metadata from source to destination document.
+        ''' Handles standard fields and custom keys; adjusts DateTime kinds to Local.
+        ''' </summary>
         Private Shared Sub CopyPdfInfo(src As PdfSharp.Pdf.PdfDocument, dest As PdfSharp.Pdf.PdfDocument)
             If src Is Nothing OrElse dest Is Nothing Then Return
 
@@ -1478,7 +1573,7 @@ Partial Public Class ThisAddIn
                 If info.ModificationDate.Kind = DateTimeKind.Utc Then
                     info.ModificationDate = DateTime.SpecifyKind(info.ModificationDate.ToLocalTime(), DateTimeKind.Local)
                 End If
-                ' Alternatively, use Unspecified:
+                ' Alternatively, if Unspecified is to be used:
                 ' info.CreationDate = DateTime.SpecifyKind(info.CreationDate, DateTimeKind.Unspecified)
                 ' info.ModificationDate = DateTime.SpecifyKind(info.ModificationDate, DateTimeKind.Unspecified)
             End If
@@ -1486,6 +1581,12 @@ Partial Public Class ThisAddIn
 
 
         Private Shared _fontResolverConfigured As Boolean = False
+
+        ''' <summary>
+        ''' Configures PdfSharp global font resolver to use Arial from Windows Fonts folder.
+        ''' Falls back to Base-14 fonts if Arial unavailable.
+        ''' </summary>
+        ''' <returns>True if Arial configured; False if using Base-14 fallback</returns>
 
         Private Shared Function EnsurePdfSharpFontResolver() As Boolean
             ' If already configured by caller, keep it.
@@ -1507,6 +1608,10 @@ Partial Public Class ThisAddIn
             Return False
         End Function
 
+        ''' <summary>
+        ''' Implements PdfSharp IFontResolver for Arial font family with bold/italic variants.
+        ''' Loads TTF files from Windows Fonts folder; provides fallback chain.
+        ''' </summary>
         Class ArialFontResolver
             Implements PdfSharp.Fonts.IFontResolver
 
@@ -1566,7 +1671,9 @@ Partial Public Class ThisAddIn
             End Function
         End Class
 
-
+        ''' <summary>
+        ''' Returns XFontStyleEx.Regular enum value, with fallback to enum 0 if "Regular" not found.
+        ''' </summary>
         Private Shared Function RegularStyle() As PdfSharp.Drawing.XFontStyleEx
             ' Prefer named value if present, else fallback to enum 0
             Dim t As System.Type = GetType(PdfSharp.Drawing.XFontStyleEx)
@@ -1577,6 +1684,10 @@ Partial Public Class ThisAddIn
             End Try
         End Function
 
+        ''' <summary>
+        ''' Binary search for maximum font size that fits text within rectangle bounds.
+        ''' Simulates word wrapping and line height.
+        ''' </summary>
         Private Shared Function FitFontSize(gfx As PdfSharp.Drawing.XGraphics,
                                     text As String,
                                     family As String,
@@ -1603,6 +1714,9 @@ Partial Public Class ThisAddIn
             Return System.Math.Max(minSize, System.Math.Min(best, maxSize))
         End Function
 
+        ''' <summary>
+        ''' Tests whether text fits in rectangle at given font size using word wrapping simulation.
+        ''' </summary>
         Private Shared Function TextFits(gfx As PdfSharp.Drawing.XGraphics,
                                  text As String,
                                  font As PdfSharp.Drawing.XFont,

@@ -1,6 +1,24 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Processing.Comments.vb
+' Purpose: Integrates LLM-provided feedback with Word comments by creating,
+'          replying to, extracting, and formatting comment bubbles (including
+'          Markdown/HTML rendering and XML export utilities).
+'
+' Architecture:
+'   - Comment Creation: Parses LLM responses, locates target text, and inserts
+'     comments with optional Markdown rendering while suppressing UI flicker.
+'   - Reply Automation: Resolves Word comment IDs/pseudo hashes and posts
+'     threaded replies with markdown-aware formatting.
+'   - Extraction: Filters existing comments by range/author/date and serializes
+'     them as XML, including pseudo-stable identifiers.
+'   - Formatting Utilities: Converts Markdown/HTML to the limited formatting
+'     that Word comment balloons accept, including sanitization and fallbacks.
+'   - Helpers: Provide safe position calculations, XML escaping, hashing, and
+'     ID token parsing to keep interactions deterministic and auditable.
+' =============================================================================
 
 Option Explicit On
 Option Strict Off
@@ -15,36 +33,21 @@ Imports Microsoft.Office.Interop.Word
 Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
+''' <summary>
+''' Hosts helpers that transform LLM responses into Word comments, apply replies, format Markdown/HTML safely,
+''' and export comment metadata for downstream processing.
+''' </summary>
 Partial Public Class ThisAddIn
 
 
-    ' Adds a comment at the current selection and renders Markdown/HTML into its bubble.
-    Private Shared Function AddMarkdownComment(sel As Microsoft.Office.Interop.Word.Selection, prefix As String, body As String) As Microsoft.Office.Interop.Word.Comment
-        Dim doc As Microsoft.Office.Interop.Word.Document = Globals.ThisAddIn.Application.ActiveDocument
-        ' Create with a single space to get a writable comment range
-        Dim cmt As Microsoft.Office.Interop.Word.Comment = doc.Comments.Add(sel.Range, " ")
-        Dim cr As Microsoft.Office.Interop.Word.Range = cmt.Range
-
-        ' Clear and insert plain prefix
-        cr.Text = ""
-        Dim startPos As Integer = cr.Start
-        cr.InsertAfter(prefix)
-
-        ' Move insertion point to end of prefix and render the body
-        Dim ins As Microsoft.Office.Interop.Word.Range = cmt.Range.Duplicate
-        ins.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-
-        ' Separate prefix and body with a space if needed
-        If prefix.Length > 0 AndAlso body.Length > 0 AndAlso Not Char.IsWhiteSpace(prefix(prefix.Length - 1)) Then
-            ins.InsertAfter(" ")
-            ins.Collapse(Microsoft.Office.Interop.Word.WdCollapseDirection.wdCollapseEnd)
-        End If
-
-        InsertMarkdownToComment(ins, body)
-
-        Return cmt
-    End Function
-
+    ''' <summary>
+    ''' Parses an LLM bubble payload, locates each referenced text fragment, and inserts formatted Word comments while tracking failures.
+    ''' </summary>
+    ''' <param name="LLMResult">LLM output containing items separated by <c>"§§§"</c> and individual pairs <c>"find@@comment"</c>.</param>
+    ''' <param name="Selection">Text selection that scopes the search anchors.</param>
+    ''' <param name="DoSilent">When true, suppresses UI notifications.</param>
+    ''' <param name="Prefix">Optional prefix prepended to every comment body.</param>
+    ''' <remarks>Errors (missing text, wrong format) are collected and optionally inserted as a summary comment at the tail of the selection.</remarks>
     Public Sub SetBubbles(LLMResult As System.String, Selection As Microsoft.Office.Interop.Word.Selection, DoSilent As System.Boolean, Optional Prefix As String = "")
 
         Dim responseItems() As System.String = LLMResult.Split(New System.String() {"§§§"}, System.StringSplitOptions.RemoveEmptyEntries)
@@ -141,7 +144,7 @@ Partial Public Class ThisAddIn
 
                         Dim viewChanged1 As Boolean = False
                         Dim viewChanged2 As Boolean = False
-                        Dim view = wordApp.ActiveWindow.View
+                        Dim view = app.ActiveWindow.View
                         Dim origRevView = view.RevisionsView
                         Dim origShowRev = view.ShowRevisionsAndComments
 
@@ -273,7 +276,7 @@ Partial Public Class ThisAddIn
 
         End Try
 
-        ' (unchanged) build ErrorList and add final summary comment…
+        ' build ErrorList and add final summary comment…
         Dim ErrorList As System.String = ""
 
         If notfoundresponse.Count > 0 Then
@@ -326,18 +329,14 @@ Partial Public Class ThisAddIn
 
     End Sub
 
-
-
-
-    ' Extracts multiple comment-replies from an LLM result and adds a threaded reply to each
-    ' Expected format per reply item:
-    '   "wid:123 ph:abcdef@@commentreply1§§§wid:123 ph:abcdef@@commentreply2..."
-    ' Supported ID token variants (same as in ExecuteReplyToCommentByIdToken inspiration):
-    '   - "1234|abcdef"                  (id|hash)
-    '   - "id=1234;hash=abcdef"          (labels; separators ; , | or whitespace)
-    '   - "wid:1234 ph:abcdef"           (labels with ':' and whitespace)
-    '   - "1234"                         (id only)
-    '   - "abcdef"                       (hash only)
+    ''' <summary>
+    ''' Parses LLM reply instructions, resolves target comments by ID/hash, and posts threaded replies or records failures.
+    ''' </summary>
+    ''' <param name="LLMResult">Reply payload split by <c>"§§§"</c> with each entry formatted as <c>"token@@reply"</c>.</param>
+    ''' <param name="Selection">Selection used to keep focus inside the main story range.</param>
+    ''' <param name="DoSilent">When true, suppresses message boxes.</param>
+    ''' <param name="Prefix">Optional label prepended to reply content.</param>
+    ''' <remarks>Each token can be a Word comment index, pseudo hash, or labeled pair as described in the summary block.</remarks>
     Public Sub ReplyBubbles(ByVal LLMResult As String,
                         ByVal Selection As Microsoft.Office.Interop.Word.Selection,
                         ByVal DoSilent As Boolean, Optional Prefix As String = "")
@@ -553,11 +552,13 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-
-
-
-
-    ' Local parser for comment id tokens (mirrors the inspiration function)
+    ''' <summary>
+    ''' Attempts to extract a Word comment index and/or pseudo hash from a flexible identifier string.
+    ''' </summary>
+    ''' <param name="raw">Input containing tokens such as <c>"wid:123 ph:abcdef"</c>, <c>"1234|abcdef"</c>, or a single value.</param>
+    ''' <param name="wordId">Outputs the parsed Word comment index when present.</param>
+    ''' <param name="pseudoHash">Outputs the parsed pseudo hash identifier when present.</param>
+    ''' <returns><c>True</c> when at least one identifier was resolved; otherwise <c>False</c>.</returns>
     Private Function TryParseCommentIdToken(ByVal raw As String,
                                               ByRef wordId As System.Nullable(Of Integer),
                                               ByRef pseudoHash As String) As Boolean
@@ -606,7 +607,12 @@ Partial Public Class ThisAddIn
         Return False
     End Function
 
-    ' Renders Markdown or HTML into a Word comment balloon.
+    ''' <summary>
+    ''' Converts Markdown or HTML into Word-safe formatting and inserts the result into a comment range with sanitization.
+    ''' </summary>
+    ''' <param name="rg">Target Word range inside a comment bubble.</param>
+    ''' <param name="src">Markdown or HTML source to render.</param>
+    ''' <remarks>On conversion failure the content falls back to a plain text representation.</remarks>
     Public Shared Sub InsertMarkdownToComment(ByRef rg As Word.Range,
                                                  ByVal src As String)
         Try
@@ -646,8 +652,11 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-
-
+    ''' <summary>
+    ''' Removes nodes that match the provided XPath to ensure only supported markup reaches Word comments.
+    ''' </summary>
+    ''' <param name="hdoc">HTML document to prune.</param>
+    ''' <param name="xpath">XPath selecting disallowed elements.</param>
     Private Shared Sub RemoveNodesIfPresent(hdoc As HtmlAgilityPack.HtmlDocument, xpath As String)
         Dim nodes = hdoc.DocumentNode.SelectNodes(xpath)
         If nodes Is Nothing Then Return
@@ -656,7 +665,10 @@ Partial Public Class ThisAddIn
         Next
     End Sub
 
-    ' Replace each <table> with a plaintext representation (tab-separated rows).
+    ''' <summary>
+    ''' Flattens each table into tab-delimited rows so that table content remains readable in balloons.
+    ''' </summary>
+    ''' <param name="hdoc">HTML document that may contain tables.</param>
     Private Shared Sub FlattenTables(hdoc As HtmlAgilityPack.HtmlDocument)
         Dim tables = hdoc.DocumentNode.SelectNodes("//table")
         If tables Is Nothing Then Return
@@ -673,7 +685,11 @@ Partial Public Class ThisAddIn
         Next
     End Sub
 
-    ' Converts either Markdown or HTML to a safe plain text fallback.
+    ''' <summary>
+    ''' Provides a Markdown/HTML to plain-text fallback that preserves readable content when rich rendering fails.
+    ''' </summary>
+    ''' <param name="src">Original Markdown or HTML input.</param>
+    ''' <returns>Plain text representation of the source.</returns>
     Private Shared Function SafePlainFromMarkdownOrHtml(src As String) As String
         Try
             Dim looksLikeHtml As Boolean =
@@ -693,6 +709,13 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
+    ''' <summary>
+    ''' Extracts comments within a range, optionally filters by author/date, and emits an XML document describing each bubble.
+    ''' </summary>
+    ''' <param name="rng">Range limiting extraction; entire document is used when <c>Nothing</c> or zero-length.</param>
+    ''' <param name="Silent">When true, suppresses user prompts and notifications.</param>
+    ''' <param name="SortByDate">Sorts output by date when true; otherwise by document order.</param>
+    ''' <returns>XML payload containing summary metadata and comment nodes, or an empty string if none were exported.</returns>
     Public Shared Function BubblesExtract(ByVal rng As Microsoft.Office.Interop.Word.Range,
                                       Optional ByVal Silent As Boolean = False, Optional ByVal SortByDate As Boolean = False) As System.String
 
@@ -854,7 +877,7 @@ Partial Public Class ThisAddIn
                 End If
             End If
 
-            ' Parse "yyyy-MM-dd (…)" labels
+            ' Parse "yyyy-MM-dd (…)” labels
             Dim parseDateFromLabel As System.Func(Of System.String, System.Nullable(Of System.DateTime)) =
             Function(lbl As System.String) As System.Nullable(Of System.DateTime)
                 If System.String.Equals(lbl, "(All dates)", System.StringComparison.OrdinalIgnoreCase) Then Return Nothing
@@ -980,7 +1003,11 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-    ' Helper: safe start/end for a comment’s anchor in the document
+    ''' <summary>
+    ''' Retrieves a safe starting position for a comment, falling back to the reference range when necessary.
+    ''' </summary>
+    ''' <param name="c">Comment of interest.</param>
+    ''' <returns>Start position or <see cref="Integer.MaxValue"/> if unavailable.</returns>
     Private Shared Function CommentStartPos(c As Microsoft.Office.Interop.Word.Comment) As Integer
         Try
             Return c.Scope.Start
@@ -993,6 +1020,11 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
+    ''' <summary>
+    ''' Retrieves a safe ending position for a comment, falling back to the reference range when necessary.
+    ''' </summary>
+    ''' <param name="c">Comment of interest.</param>
+    ''' <returns>End position or <see cref="Integer.MaxValue"/> if unavailable.</returns>
     Private Shared Function CommentEndPos(c As Microsoft.Office.Interop.Word.Comment) As Integer
         Try
             Return c.Scope.End
@@ -1005,12 +1037,14 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-
-    ' : ReplyToWordComment (by Word-ID, fallback by PseudoHashID)
-    ' Replies to an existing Word comment. First tries by Word-ID (c.Index), then (if not found) by pseudo hash id (same as in BubblesExtract).
-    ' If formatted = True, calls InsertMarkdownToComment to write the reply content; otherwise inserts as plain text.
-    ' Returns True on success, False otherwise (with user-facing messages via ShowCustomMessageBox).
-
+    ''' <summary>
+    ''' Attempts to reply to a Word comment using its numeric ID or pseudo hash, optionally formatting the reply as Markdown/HTML.
+    ''' </summary>
+    ''' <param name="wordId">Word comment index (<c>c.Index</c>) if available.</param>
+    ''' <param name="pseudoHashId">Content-derived pseudo hash identifier.</param>
+    ''' <param name="replyText">Reply body (already prefixed).</param>
+    ''' <param name="formatted">When true, renders reply via <see cref="InsertMarkdownToComment"/>; otherwise inserts plain text.</param>
+    ''' <returns><c>True</c> when a threaded reply or fallback insertion succeeded; otherwise <c>False</c>.</returns>
     Public Shared Function ReplyToWordComment(ByVal wordId As System.Nullable(Of System.Int32),
                                               ByVal pseudoHashId As System.String,
                                               ByVal replyText As System.String,
@@ -1135,8 +1169,12 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
+    ''' <summary>
+    ''' Escapes XML-sensitive characters in the supplied string.
+    ''' </summary>
+    ''' <param name="s">Input value that may contain reserved XML characters.</param>
+    ''' <returns>Escaped string (empty when input is <c>Nothing</c>).</returns>
 
-    ' Helper: XML escape
     Private Shared Function xmlEscapeSafe(ByVal s As System.String) As System.String
         If s Is Nothing Then Return System.String.Empty
         Dim r As System.String = s.Replace("&", "&amp;").
@@ -1147,8 +1185,12 @@ Partial Public Class ThisAddIn
         Return r
     End Function
 
+    ''' <summary>
+    ''' Computes a SHA-256 hash for the provided text and returns the hexadecimal string representation.
+    ''' </summary>
+    ''' <param name="input">String used to derive a pseudo-stable identifier.</param>
+    ''' <returns>Lowercase hexadecimal digest.</returns>
 
-    ' Helper: Compute SHA-256 hex for pseudo ID
     Private Shared Function ComputeSha256Hex(ByVal input As System.String) As System.String
         If input Is Nothing Then input = System.String.Empty
         Dim bytes As System.Byte() = System.Text.Encoding.UTF8.GetBytes(input)
@@ -1161,6 +1203,5 @@ Partial Public Class ThisAddIn
             Return sbHex.ToString()
         End Using
     End Function
-
 
 End Class

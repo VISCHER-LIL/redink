@@ -1,6 +1,25 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.TextToSpeech.Form.vb
+' Purpose: Hosts the Text-to-Speech selection dialog that lets users pick a TTS
+'          provider (Google/OpenAI), configure languages/voices, preview speech,
+'          and choose the output mp3 destination used by Red Ink for Word.
+'
+' Architecture:
+'  - UI Initialization: Builds the WinForms surface (engine selector, two voice
+'    sets, sample text, output path controls) and persists user choices via My.Settings.
+'  - Voice Loading: Populates combos with either cached Google Cloud voices
+'    (fetched via REST + OAuth token) or locally defined OpenAI voices/descriptions.
+'  - Playback: Generates preview audio through GenerateAndPlayAudio for the
+'    currently highlighted language/voice combination.
+'  - Output Selection: Normalizes output paths, honors “Temp only”, and exposes
+'    SelectedVoices/SelectedOutputPath back to the caller.
+'  - Dependencies: Relies on SharedLibrary.SharedMethods for TTS helpers,
+'    OAuth token retrieval, and UI utilities; uses Newtonsoft.Json for parsing
+'    Google voice responses.
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -15,6 +34,10 @@ Imports SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
+    ''' <summary>
+    ''' Provides a dialog for selecting Text-to-Speech provider, languages, voices, and output options.
+    ''' Supports both Google Cloud TTS and OpenAI TTS engines with voice preview and persistence.
+    ''' </summary>
     Public Class TTSSelectionForm
         Inherits Form
 
@@ -62,6 +85,9 @@ Partial Public Class ThisAddIn
             Public Property Voices As List(Of GoogleVoice)
         End Class
 
+        ''' <summary>
+        ''' Represents a single voice returned by Google Cloud TTS with name, language codes, and gender attributes.
+        ''' </summary>
         Private Class GoogleVoice
             <JsonProperty("name")>
             Public Property Name As String
@@ -76,14 +102,6 @@ Partial Public Class ThisAddIn
         ' We can cache voices once retrieved for each language
         Private voiceCache As New Dictionary(Of String, List(Of GoogleVoice))()
 
-        ' --- Dependencies / external references for Auth, etc. ---
-        'Private _context As ISharedContext ' or your actual type
-        'Private INI_OAuth2ClientMail As String
-        'Private INI_OAuth2Scopes As String
-        'Private INI_APIKey As String
-        'Private INI_OAuth2Endpoint As String
-        'Private INI_OAuth2ATExpiry As Long
-
         ' --- New parameters/fields for the amended form ---
         Private _twoVoicesRequired As Boolean
         Private _topLabelText As String
@@ -94,7 +112,7 @@ Partial Public Class ThisAddIn
         ' In two‐voice mode we group each voice set separately (using Panels).
         Private rdoVoice1A As RadioButton, rdoVoice1B As RadioButton
         Private rdoVoice2A As RadioButton, rdoVoice2B As RadioButton
-        Private pnlVoiceSet1 As Panel, pnlVoiceSet2 As Panel
+        'Private pnlVoiceSet1 As Panel, pnlVoiceSet2 As Panel
 
         ' --- Public properties to return results ---
         ' In one‑voice mode SelectedVoices will contain one item;
@@ -105,6 +123,13 @@ Partial Public Class ThisAddIn
 
         Public NoOutputFileRequired As Boolean = False
 
+        ''' <summary>
+        ''' Initializes the TTS selection form with specified display text, title, and voice mode.
+        ''' </summary>
+        ''' <param name="topLabelText">Introductory text displayed at the top of the form.</param>
+        ''' <param name="formTitle">Window title for the dialog.</param>
+        ''' <param name="twoVoicesRequired">True if caller needs two distinct voices; False for single-voice selection.</param>
+        ''' <param name="NoOutputFile">When True, disables output path controls (for preview-only scenarios).</param>
         Public Sub New(topLabelText As String,
                formTitle As String,
                twoVoicesRequired As Boolean,
@@ -173,6 +198,9 @@ Partial Public Class ThisAddIn
     )
         End Sub
 
+        ''' <summary>
+        ''' Instantiates all UI controls (labels, combos, buttons, checkboxes) and configures their initial properties.
+        ''' </summary>
         Private Sub CreateControls()
             ' --- Intro ---
             lblIntro = New System.Windows.Forms.Label() With {
@@ -193,7 +221,7 @@ Partial Public Class ThisAddIn
             If TTS_googleAvailable Then cmbEngine.Items.Add("Google")
             If TTS_openAIAvailable Then cmbEngine.Items.Add("OpenAI")
             ' default to first available
-            cmbEngine.SelectedIndex = 0
+            If cmbEngine.Items.Count > 0 Then cmbEngine.SelectedIndex = 0
             AddHandler cmbEngine.SelectedIndexChanged, AddressOf EngineChanged
 
 
@@ -323,6 +351,9 @@ Partial Public Class ThisAddIn
             Next
         End Sub
 
+        ''' <summary>
+        ''' Arranges controls into a two-column TableLayoutPanel layout with proper spacing and alignment.
+        ''' </summary>
         Private Sub LayoutControls()
 
             Me.Controls.Clear()
@@ -493,6 +524,10 @@ Partial Public Class ThisAddIn
 
         End Sub
 
+        ''' <summary>
+        ''' Handles engine selection changes by updating the global TTS_SelectedEngine, persisting the choice,
+        ''' and reloading language/voice lists for the newly selected provider.
+        ''' </summary>
         Private Sub EngineChanged(sender As Object, e As EventArgs)
             ' set our global
             TTS_SelectedEngine = If(cmbEngine.SelectedItem.ToString() = "OpenAI",
@@ -507,6 +542,9 @@ Partial Public Class ThisAddIn
             LoadSettingsAndVoices()
         End Sub
 
+        ''' <summary>
+        ''' Wires up all event handlers for language changes, play buttons, and action buttons.
+        ''' </summary>
         Private Sub AddHandlers()
             AddHandler cmbLanguage1.SelectedIndexChanged, AddressOf cmbLanguage1_SelectedIndexChanged
             AddHandler cmbLanguage2.SelectedIndexChanged, AddressOf cmbLanguage2_SelectedIndexChanged
@@ -519,8 +557,12 @@ Partial Public Class ThisAddIn
             AddHandler btnOK.Click, AddressOf btnOK_Click
             AddHandler btnCancel.Click, AddressOf btnCancel_Click
             AddHandler btnDesktop.Click, AddressOf btnDesktop_Click
+            AddHandler chkTemporary.CheckedChanged, AddressOf chkTemporary_CheckedChanged
         End Sub
 
+        ''' <summary>
+        ''' Populates both language combo boxes with either OpenAI or Google language codes based on the selected engine.
+        ''' </summary>
         Private Sub PopulateLanguageComboBoxes()
             cmbLanguage1.Items.Clear()
             cmbLanguage2.Items.Clear()
@@ -539,7 +581,10 @@ Partial Public Class ThisAddIn
             If cmbLanguage2.Items.Count > 0 Then cmbLanguage2.SelectedIndex = 0
         End Sub
 
-
+        ''' <summary>
+        ''' Restores previously selected languages and voices from My.Settings, then asynchronously loads voice lists
+        ''' for Google or synchronously for OpenAI.
+        ''' </summary>
         Private Async Sub LoadSettingsAndVoices()
             RemoveHandler cmbLanguage1.SelectedIndexChanged, AddressOf cmbLanguage1_SelectedIndexChanged
             RemoveHandler cmbLanguage2.SelectedIndexChanged, AddressOf cmbLanguage2_SelectedIndexChanged
@@ -577,7 +622,12 @@ Partial Public Class ThisAddIn
         End Sub
 
 
-
+        ''' <summary>
+        ''' Fills the specified voice combo boxes with OpenAI voice names and descriptions.
+        ''' </summary>
+        ''' <param name="lang">Language code (not used by OpenAI but kept for consistency).</param>
+        ''' <param name="comboA">First voice combo box to populate.</param>
+        ''' <param name="comboB">Second voice combo box to populate.</param>
         Private Sub PopulateOpenAIVoices(lang As String,
                                  comboA As Forms.ComboBox,
                                  comboB As Forms.ComboBox)
@@ -591,6 +641,9 @@ Partial Public Class ThisAddIn
             If comboB.Items.Count > 0 Then comboB.SelectedIndex = 0
         End Sub
 
+        ''' <summary>
+        ''' Handles language selection changes for voice set 1 by reloading the corresponding voice combo boxes.
+        ''' </summary>
         Private Async Sub cmbLanguage1_SelectedIndexChanged(sender As Object, e As EventArgs)
             Dim lang = TryCast(cmbLanguage1.SelectedItem, String)
             If String.IsNullOrEmpty(lang) Then Return
@@ -602,6 +655,9 @@ Partial Public Class ThisAddIn
             End If
         End Sub
 
+        ''' <summary>
+        ''' Handles language selection changes for voice set 2 by reloading the corresponding voice combo boxes.
+        ''' </summary>
         Private Async Sub cmbLanguage2_SelectedIndexChanged(sender As Object, e As EventArgs)
             Dim lang = TryCast(cmbLanguage2.SelectedItem, String)
             If String.IsNullOrEmpty(lang) Then Return
@@ -613,21 +669,13 @@ Partial Public Class ThisAddIn
             End If
         End Sub
 
-
-
-        Private Async Sub xxcmbLanguage1_SelectedIndexChanged(sender As Object, e As EventArgs)
-            Dim selectedLang As String = TryCast(cmbLanguage1.SelectedItem, String)
-            If Not String.IsNullOrEmpty(selectedLang) Then
-                Await LoadVoicesIntoComboBoxesAsync(selectedLang, cmbVoice1A, cmbVoice1B)
-            End If
-        End Sub
-
-        Private Async Sub xxcmbLanguage2_SelectedIndexChanged(sender As Object, e As EventArgs)
-            Dim selectedLang As String = TryCast(cmbLanguage2.SelectedItem, String)
-            If Not String.IsNullOrEmpty(selectedLang) Then
-                Await LoadVoicesIntoComboBoxesAsync(selectedLang, cmbVoice2A, cmbVoice2B)
-            End If
-        End Sub
+        ''' <summary>
+        ''' Fetches Google Cloud TTS voices for the specified language code, filters by prefix match,
+        ''' and populates the given combo boxes with display names including gender.
+        ''' </summary>
+        ''' <param name="languageCode">BCP-47 language code (e.g., "de-DE").</param>
+        ''' <param name="comboA">First voice combo box to populate.</param>
+        ''' <param name="comboB">Second voice combo box to populate.</param>
 
         Private Async Function LoadVoicesIntoComboBoxesAsync(languageCode As String,
                                                            comboA As Forms.ComboBox,
@@ -662,6 +710,12 @@ Partial Public Class ThisAddIn
             End Try
         End Function
 
+        ''' <summary>
+        ''' Retrieves the list of Google Cloud TTS voices for the specified language, using cached data when available.
+        ''' Authenticates via OAuth token and parses the JSON response.
+        ''' </summary>
+        ''' <param name="languageCode">BCP-47 language code to query.</param>
+        ''' <returns>List of GoogleVoice objects, or Nothing on error.</returns>
 
         Private Async Function GetVoicesByLanguageAsync(languageCode As String) As System.Threading.Tasks.Task(Of List(Of GoogleVoice))
             If voiceCache.ContainsKey(languageCode) Then
@@ -714,6 +768,12 @@ Partial Public Class ThisAddIn
             Await PlaySelectedVoiceAsync(cmbLanguage2, cmbVoice2B)
         End Sub
 
+        ''' <summary>
+        ''' Generates and plays audio for the selected language and voice using the sample text.
+        ''' Strips gender/description suffixes before invoking GenerateAndPlayAudio.
+        ''' </summary>
+        ''' <param name="cmbLang">Language combo box to read from.</param>
+        ''' <param name="cmbVoice">Voice combo box to read from.</param>
         Private Async Function PlaySelectedVoiceAsync(cmbLang As Forms.ComboBox, cmbVoice As Forms.ComboBox) As System.Threading.Tasks.Task
             Try
                 Dim lang As String = TryCast(cmbLang.SelectedItem, String)
@@ -726,7 +786,7 @@ Partial Public Class ThisAddIn
                 End If
                 voiceName = voiceName.Replace(" (male)", "").Replace(" (female)", "")
                 If TTS_SelectedEngine = TTSEngine.OpenAI Then
-                    ' remove “ — Beschreibung”
+                    ' remove OpenAI voice description suffix
                     voiceName = voiceName.Split(" "c)(0)
                 End If
                 Await System.Threading.Tasks.Task.Run(Sub()
@@ -737,7 +797,10 @@ Partial Public Class ThisAddIn
             End Try
         End Function
 
-        ' --- OK / Cancel / Desktop event handlers ---
+        ''' <summary>
+        ''' Validates selections, normalizes output path, saves settings, and closes the dialog with DialogResult.OK.
+        ''' Strips OpenAI description suffixes and handles both one-voice and two-voice modes.
+        ''' </summary>
         Private Sub btnOK_Click(sender As Object, e As EventArgs)
 
             TTS_SelectedEngine = If(cmbEngine.SelectedItem.ToString() = "OpenAI",
@@ -900,8 +963,6 @@ Partial Public Class ThisAddIn
             ' Update the TextBox with the corrected path
             txtOutputPath.Text = SelectedOutputPath
 
-            txtOutputPath.Text = SelectedOutputPath
-
             SaveSettings()
 
             If chkTemporary.Checked Then
@@ -913,6 +974,9 @@ Partial Public Class ThisAddIn
 
         End Sub
 
+        ''' <summary>
+        ''' Clears selected voices and closes the dialog with DialogResult.Cancel.
+        ''' </summary>
         Private Sub btnCancel_Click(sender As Object, e As EventArgs)
             ' If cancelled, clear any voice selection.
             SelectedVoices.Clear()
@@ -920,6 +984,9 @@ Partial Public Class ThisAddIn
             Me.Close()
         End Sub
 
+        ''' <summary>
+        ''' Persists the current language, voice, sample text, and output path selections to My.Settings.
+        ''' </summary>
         Private Sub SaveSettings()
             My.Settings.TTS1languagecode = If(cmbLanguage1.SelectedItem?.ToString(), "")
             My.Settings.TTS1voiceA = If(cmbVoice1A.SelectedItem?.ToString(), "")
@@ -937,6 +1004,9 @@ Partial Public Class ThisAddIn
             txtOutputPath.Enabled = Not chkTemporary.Checked
         End Sub
 
+        ''' <summary>
+        ''' Sets the output path to the user's Desktop folder while preserving the current filename.
+        ''' </summary>
         Private Sub btnDesktop_Click(sender As Object, e As EventArgs)
             ' Get the filename
             Dim fileName As String = System.IO.Path.GetFileName(txtOutputPath.Text)

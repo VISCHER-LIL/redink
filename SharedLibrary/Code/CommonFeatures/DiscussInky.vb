@@ -1,6 +1,5 @@
-﻿' Part of: Red Ink Shared Library
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 
 Option Strict On
 Option Explicit On
@@ -600,7 +599,7 @@ Namespace SharedLibrary
                         client.Timeout = TimeSpan.FromSeconds(30)
                         ' Some servers reject requests without UA
                         Try
-                            client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "RedInk/1.0 (+https://apps.vischer.com/redink)")
+                            client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "RedInk/1.0 (+https://redink.ai)")
                             client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/pdf, text/*, */*")
                         Catch
                         End Try

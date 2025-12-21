@@ -1,12 +1,12 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: EmbeddingStore_BagofWords.vb
 ' Part of: Red Ink Shared Library
 ' Purpose: Lightweight, offline embedding and similarity search using classical 
 '          bag-of-words vectorization with term frequency (TF) and cosine similarity.
 '          Serves as a fallback when neural embeddings are unavailable.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   - In-memory document store mapping docId -> chunked text segments
