@@ -37,22 +37,41 @@
     </NuGetPackageImportStamp>
     <TargetFrameworkProfile />
     <BootstrapperEnabled>true</BootstrapperEnabled>
-    <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\ridevelop\word\</PublishUrl>
-    <InstallUrl>https://www.rosenthal.ch/downloads/ridevelop/word/</InstallUrl>
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.2.0.1</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
     <UpdateIntervalUnits>days</UpdateIntervalUnits>
-    <ProductName>Red Ink for Word %28Develop%29</ProductName>
     <PublisherName>LawDigital Ltd.</PublisherName>
     <SupportUrl>https://redink.ai</SupportUrl>
     <FriendlyName>Red Ink for Word</FriendlyName>
     <OfficeApplicationDescription />
     <LoadBehavior>3</LoadBehavior>
   </PropertyGroup>
-  <ItemGroup>
+	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
+		<ApplicationVersion>1.0.0.700</ApplicationVersion>
+		<PublishUrl>..\clickonce\redink\apps\develop\word\</PublishUrl>
+		<InstallUrl>https://redink.ai/apps/develop/word/</InstallUrl>
+		<ProductName>Red Ink for Word %28Develop%29</ProductName>
+		<FriendlyName>Red Ink for Word %28Develop%29</FriendlyName>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
+		<ApplicationVersion>1.0.0.200</ApplicationVersion>
+		<PublishUrl>..\clickonce\redink\apps\preview\word\</PublishUrl>
+		<InstallUrl>https://redink.ai/apps/preview/word/</InstallUrl>
+		<ProductName>Red Ink for Word %28Preview%29</ProductName>
+		<FriendlyName>Red Ink for Word %28Preview%29</FriendlyName>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'GA'">
+		<ApplicationVersion>1.0.0.0</ApplicationVersion>
+		<PublishUrl>..\clickonce\redink\apps\ga\word\</PublishUrl>
+		<InstallUrl>https://redink.ai/apps/ga/word/</InstallUrl>
+		<ProductName>Red Ink for Word</ProductName>
+		<FriendlyName>Red Ink for Word</FriendlyName>
+	</PropertyGroup>
+	<ItemGroup>
     <BootstrapperPackage Include=".NETFramework,Version=v4.7.2">
       <Visible>False</Visible>
       <ProductName>Microsoft .NET Framework 4.7.2 %28x86 and x64%29</ProductName>

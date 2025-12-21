@@ -1,7 +1,7 @@
 ﻿' Part of "Red Ink for Excel"
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 '
-' 22.12.2025
+' 21.12.2025
 '
 ' The compiled version of Red Ink also ...
 '
