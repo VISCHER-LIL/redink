@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Outlook"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.WebExtension.FileHelpers.vb
-' Part of: Red Ink for Outlook
 ' Purpose: Plaintext extraction helpers for Office documents (Word, Excel, PowerPoint)
 '          and text/code-like files. Provides safe COM release utilities, XML
 '          escaping, column letter conversion, and encoding-smart file reading.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   - Entry points: TryExtractOfficeText (Word/Excel/PowerPoint), TryExtractTextLike (text/code files).
@@ -420,28 +419,6 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-    ''' <summary>
-    ''' Safely closes and releases PowerPoint Presentation and Application COM objects.
-    ''' </summary>
-    ''' <param name="pres">Presentation instance.</param>
-    ''' <param name="app">Application instance.</param>
-    Private Sub SafeClosePowerPoint(
-    ByVal pres As Microsoft.Office.Interop.PowerPoint.Presentation,
-    ByVal app As Microsoft.Office.Interop.PowerPoint.Application
-)
-        Try
-            If pres IsNot Nothing Then
-                Try : pres.Close() : Catch : End Try
-                Try : System.Runtime.InteropServices.Marshal.FinalReleaseComObject(pres) : Catch : End Try
-            End If
-        Finally
-            If app IsNot Nothing Then
-                Try : app.Quit() : Catch : End Try
-                Try : System.Runtime.InteropServices.Marshal.FinalReleaseComObject(app) : Catch : End Try
-            End If
-        End Try
-    End Sub
-
 
     ''' <summary>
     ''' XML-escapes a string (returns empty string if input is Nothing).
@@ -515,8 +492,8 @@ Partial Public Class ThisAddIn
 
             ' For CSV/TSV add small header
             If ext = ".csv" OrElse ext = ".tsv" Then
-                Dim sep As System.String = If(ext = ".csv", ",", vbTab)
-                Dim header As System.String = "=== CSV/TSV Detected (" & ext.Trim("."c).ToUpperInvariant() & ", sep=""" & If(ext = ".csv", ",", "\t") & """) ==="
+                Dim sepDisplay As System.String = If(ext = ".csv", ",", "\t")
+                Dim header As System.String = "=== CSV/TSV Detected (" & ext.Trim("."c).ToUpperInvariant() & ", sep=""" & sepDisplay & """) ==="
                 extracted = header & System.Environment.NewLine & content
                 label = "Spreadsheet text: " & System.IO.Path.GetFileName(filePath)
             Else

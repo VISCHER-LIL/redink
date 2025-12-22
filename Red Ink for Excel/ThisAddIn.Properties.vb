@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.Properties.vb
-' Part of: Red Ink for Excel
 ' Purpose: Exposes a large set of configuration and state values for the Excel
 '          Add-in via Shared (static) properties. Acts as a facade over a single
 '          SharedLibrary.ISharedContext implementation instance.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - Private Shared field _context (ISharedContext) instantiated as SharedContext.

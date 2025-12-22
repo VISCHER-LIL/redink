@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Outlook"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.WebExtension.ListenerAndPower.vb
-' Part of: Red Ink for Outlook
 ' Purpose: Hosts a local HttpListener for the web extension, manages suspend/resume
 '          transitions, listener lifecycle, watchdog monitoring, job cancellation,
 '          and recovery of stalled operations.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - HttpListener loop: restart-safe via a generation counter (listenerGeneration).
@@ -85,6 +84,9 @@ Partial Public Class ThisAddIn
 
         Private ReadOnly owner As ThisAddIn
 
+        ''' <summary>
+        ''' Initializes the message-only window handle used to receive WM_POWERBROADCAST notifications.
+        ''' </summary>
         Public Sub New(ByVal owner As ThisAddIn)
             Me.owner = owner
             Dim cp As New System.Windows.Forms.CreateParams()
@@ -96,6 +98,9 @@ Partial Public Class ThisAddIn
             Me.CreateHandle(cp)
         End Sub
 
+        ''' <summary>
+        ''' Initializes the message-only window handle used to receive WM_POWERBROADCAST notifications.
+        ''' </summary>
         Protected Overrides Sub WndProc(ByRef m As System.Windows.Forms.Message)
             Const WM_POWERBROADCAST As System.Int32 = &H218
             Const PBT_APMQUERYSUSPEND As System.Int32 = &H0
@@ -140,6 +145,9 @@ Partial Public Class ThisAddIn
             MyBase.WndProc(m)
         End Sub
 
+        ''' <summary>
+        ''' Releases the native window handle backing the power notification window.
+        ''' </summary>
         Public Sub Dispose() Implements System.IDisposable.Dispose
             If Me.Handle <> System.IntPtr.Zero Then
                 Me.DestroyHandle()

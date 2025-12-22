@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Outlook"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.Properties.vb
-' Part of: Red Ink for Outlook
 ' Purpose: Central property bridge exposing configuration, runtime state, prompt
 '          templates, and feature flags of the Outlook add‑in through a shared
 '          `ISharedContext` instance for consumption by SharedLibrary logic.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - Backing Context: `_context As ISharedContext` holds all INI / runtime fields; each

@@ -1,6 +1,33 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.TextToSpeech.vb
+' Purpose: Provides text-to-speech (TTS) functionality for Word documents using
+'          Google Cloud TTS, OpenAI TTS, and legacy Windows SAPI engines.
+'
+' Architecture:
+'  - Multi-Engine Support: Detects and manages Google TTS (OAuth2-based) and 
+'    OpenAI TTS (API key-based) endpoints from INI configuration. Falls back
+'    to legacy Windows SpeechSynthesizer when cloud engines unavailable.
+'  - Token Management: Caches OAuth2 tokens (ttsAccessToken1/2) with expiry tracking;
+'    refreshes via GetFreshTTSToken when needed.
+'  - Sleep Lock Management: Cooperative system sleep prevention during TTS operations
+'    via AcquireTTSSleepLock/ReleaseTTSSleepLock to avoid interruptions.
+'  - Podcast Generation: Parses dialogue text (host/guest tags), generates multi-speaker
+'    audio with voice alternation, merges segments via NAudio, encodes to MP3.
+'  - Paragraph Processing: Iterates Word selection paragraphs, handles titles/bullets,
+'    optional LLM-based text cleaning, generates per-paragraph audio, inserts silence
+'    between segments, merges final output.
+'  - Audio Processing: Uses NAudio for MP3 reading/writing, MediaFoundation for encoding,
+'    resampling to uniform PCM format (44.1kHz, 16-bit, stereo) before merging.
+'  - SSML Support: Conditionally wraps text in <speak> tags unless NoSSML flag set.
+'  - Cancellation: Monitors VK_ESCAPE key state and ProgressBarModule.CancelOperation
+'    flag for user-initiated abort.
+'  - External Dependencies: SharedLibrary.SharedMethods (UI dialogs, progress tracking,
+'    clipboard), NAudio (audio I/O), GoogleOAuthHelper (token acquisition),
+'    Microsoft.Office.Interop.Word (document access).
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -26,7 +53,13 @@ Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
+    ' ==================== PODCAST SCRIPT GENERATION ====================
 
+    ''' <summary>
+    ''' Generates a podcast script from selected text using LLM with configurable parameters
+    ''' (host/guest names, target audience, duration, language, context).
+    ''' Displays parameter input form, saves settings, and processes text via InterpolateAtRuntime(SP_Podcast).
+    ''' </summary>
     Public Async Sub CreatePodcast()
         If INILoadFail() Then Return
         Dim application As Word.Application = Globals.ThisAddIn.Application
@@ -80,21 +113,30 @@ Partial Public Class ThisAddIn
 
     End Sub
 
+    ' ==================== SYSTEM SLEEP LOCK MANAGEMENT ====================
 
-
+    ''' <summary>
+    ''' Windows API function to set thread execution state for sleep prevention.
+    ''' </summary>
+    ''' <param name="esFlags">Execution state flags (ES_CONTINUOUS, ES_SYSTEM_REQUIRED).</param>
+    ''' <returns>Previous execution state flags.</returns>
     <DllImport("kernel32.dll", CharSet:=CharSet.Auto, SetLastError:=True)>
     Private Shared Function SetThreadExecutionState(ByVal esFlags As UInteger) As UInteger
     End Function
 
+    ''' <summary>Windows API constant: Maintains execution state until explicitly reset.</summary>
     Private Const ES_CONTINUOUS As UInteger = &H80000000UI
+
+    ''' <summary>Windows API constant: Prevents system from entering sleep (must be combined with ES_CONTINUOUS).</summary>
     Private Const ES_SYSTEM_REQUIRED As UInteger = &H1UI
 
-    ' Flag to track if the TTS engine is responsible for the current sleep lock.
+    ''' <summary>Tracks whether this TTS module acquired the system sleep lock (vs. inherited from another component).</summary>
     Private Shared _ttsAcquiredTheSleepLock As Boolean = False
 
     ''' <summary>
     ''' Cooperatively acquires a system sleep lock for TTS operations.
-    ''' It checks if a lock is already active before taking responsibility for it.
+    ''' Checks if a lock is already active before taking responsibility for it.
+    ''' Sets _ttsAcquiredTheSleepLock flag to indicate ownership.
     ''' </summary>
     Public Shared Sub AcquireTTSSleepLock()
         ' Always request that the system stay awake.
@@ -115,14 +157,14 @@ Partial Public Class ThisAddIn
 
     ''' <summary>
     ''' Cooperatively releases the system sleep lock, but only if the TTS
-    ''' engine was the component that originally acquired it.
+    ''' engine was the component that originally acquired it (_ttsAcquiredTheSleepLock = True).
     ''' </summary>
     Public Shared Sub ReleaseTTSSleepLock()
         ' Only release the sleep lock IF we were the ones who set it.
         If _ttsAcquiredTheSleepLock Then
             ' We are responsible, so we release the lock.
             SetThreadExecutionState(ES_CONTINUOUS)
-            _ttsAcquiredTheSleepLock = False ' Reset our flag
+            _ttsAcquiredTheSleepLock = False
             Debug.WriteLine("[TTS] TTS has released the sleep lock.")
         Else
             ' We are not responsible, so we do nothing.
@@ -130,32 +172,38 @@ Partial Public Class ThisAddIn
         End If
     End Sub
 
+    ''' <summary>Enumeration of supported TTS engines.</summary>
     Public Enum TTSEngine
         Google = 0
         OpenAI = 1
     End Enum
 
+    ''' <summary>Currently selected TTS engine for audio generation.</summary>
     Public Shared TTS_SelectedEngine As TTSEngine = TTSEngine.Google
 
+    ''' <summary>
+    ''' Detects available TTS engines by parsing INI_Endpoint and INI_TTSEndpoint configurations.
+    ''' Sets availability flags (TTS_googleAvailable, TTS_openAIAvailable) and endpoint URIs
+    ''' based on GoogleIdentifier/OpenAIIdentifier matches and OAuth2 flags.
+    ''' </summary>
     Public Sub DetectTTSEngines()
-        ' — split auth endpoints —
-
+        ' Split authentication endpoints from INI configuration
         Dim auth1 As String = ThisAddIn.INI_Endpoint
         Dim auth2 As String = ThisAddIn.INI_Endpoint_2
 
-        ' — split TTS endpoints —
+        ' Split TTS endpoints from INI configuration
         Dim ttsEps = If(String.IsNullOrEmpty(ThisAddIn.INI_TTSEndpoint),
                      Array.Empty(Of String)(),
                      INI_TTSEndpoint.Split("¦"c))
         Dim tts1 As String = If(ttsEps.Length > 0, ttsEps(0), "")
         Dim tts2 As String = If(ttsEps.Length > 1, ttsEps(1), "")
 
-        ' reset
+        ' Reset availability flags and endpoint URIs
         TTS_googleAvailable = False : TTS_googleSecondary = False
         TTS_openAIAvailable = False : TTS_openAISecondary = False
         TTS_GoogleEndpoint = "" : TTS_OpenAIEndpoint = ""
 
-        ' — Google (needs OAuth2 flags) —
+        ' Check if Google TTS is configured with OAuth2 enabled
         If auth1.Contains(GoogleIdentifier) AndAlso ThisAddIn.INI_OAuth2 Then
             TTS_googleAvailable = True
             TTS_googleSecondary = False
@@ -165,7 +213,7 @@ Partial Public Class ThisAddIn
             TTS_googleSecondary = True
         End If
 
-        ' — OpenAI (no OAuth2) —
+        ' Check if OpenAI TTS is configured (no OAuth2 required)
         If auth1.Contains(OpenAIIdentifier) Then
             TTS_openAIAvailable = True
             TTS_openAISecondary = False
@@ -175,19 +223,24 @@ Partial Public Class ThisAddIn
             TTS_openAISecondary = True
         End If
 
-        ' — assign TTS URIs based on identifier match —
+        ' Assign TTS endpoint URIs based on identifier match
         If tts1.Contains(GoogleIdentifier) Then TTS_GoogleEndpoint = tts1
         If tts2.Contains(GoogleIdentifier) Then TTS_GoogleEndpoint = tts2
 
         If tts1.Contains(OpenAIIdentifier) Then TTS_OpenAIEndpoint = tts1
         If tts2.Contains(OpenAIIdentifier) Then TTS_OpenAIEndpoint = tts2
 
-        ' if neither engine auth-configured, bail early
+        ' Exit early if neither engine is properly configured
         If Not TTS_googleAvailable AndAlso Not TTS_openAIAvailable Then
             Return
         End If
     End Sub
 
+    ''' <summary>
+    ''' Determines whether to use secondary API configuration for the specified engine.
+    ''' </summary>
+    ''' <param name="engine">TTS engine to check.</param>
+    ''' <returns>True if secondary configuration should be used.</returns>
     Private Shared Function UseSecondaryFor(engine As TTSEngine) As Boolean
         If engine = TTSEngine.Google Then
             Return TTS_googleSecondary
@@ -196,13 +249,21 @@ Partial Public Class ThisAddIn
         End If
     End Function
 
+    ' ==================== TOKEN MANAGEMENT ====================
 
-    ' Token-Cache für TTS
+    ' Token cache for Google OAuth2 authentication (primary API)
     Private Shared ttsAccessToken1 As String = String.Empty
     Private Shared ttsTokenExpiry1 As DateTime = DateTime.MinValue
+
+    ' Token cache for Google OAuth2 authentication (secondary API)
     Private Shared ttsAccessToken2 As String = String.Empty
     Private Shared ttsTokenExpiry2 As DateTime = DateTime.MinValue
 
+    ''' <summary>
+    ''' Retrieves a cached OAuth2 access token or fetches a new one if expired.
+    ''' </summary>
+    ''' <param name="useSecond">True to use secondary API configuration (INI_*_2 settings).</param>
+    ''' <returns>Valid OAuth2 bearer token, or empty string on failure.</returns>
     Private Shared Async Function GetFreshTTSToken(useSecond As Boolean) _
     As System.Threading.Tasks.Task(Of String)
 
@@ -218,23 +279,23 @@ Partial Public Class ThisAddIn
                 expiry = ttsTokenExpiry1
             End If
 
-            ' Wenn kein Token oder abgelaufen, neuen holen
+            ' If token is missing or expired, fetch a new one
             If String.IsNullOrEmpty(token) OrElse DateTime.UtcNow >= expiry Then
-                ' Parameter je nach gewählter API
+                ' Select parameters based on chosen API configuration
                 Dim clientEmail = If(useSecond, INI_OAuth2ClientMail_2, INI_OAuth2ClientMail)
                 Dim scopes = If(useSecond, INI_OAuth2Scopes_2, INI_OAuth2Scopes)
                 Dim rawKey = If(useSecond, INI_APIKey_2, INI_APIKey)
                 Dim authServer = If(useSecond, INI_OAuth2Endpoint_2, INI_OAuth2Endpoint)
                 Dim life = If(useSecond, INI_OAuth2ATExpiry_2, INI_OAuth2ATExpiry)
 
-                ' GoogleOAuthHelper konfigurieren
+                ' Configure GoogleOAuthHelper with selected API settings
                 GoogleOAuthHelper.client_email = clientEmail
                 GoogleOAuthHelper.private_key = TranscriptionForm.FormatPrivateKey(rawKey)
                 GoogleOAuthHelper.scopes = scopes
                 GoogleOAuthHelper.token_uri = authServer
                 GoogleOAuthHelper.token_life = life
 
-                ' neuen Token holen
+                ' Fetch new OAuth2 token
                 Dim newToken As String = Await GoogleOAuthHelper.GetAccessToken()
                 Dim newExpiry = DateTime.UtcNow.AddSeconds(life - 300)
 
@@ -261,8 +322,20 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
+    ''' <summary>Cancellation token source for aborting TTS operations.</summary>
     Public Shared cts As New CancellationTokenSource()
 
+    ' ==================== AUDIO GENERATION - OPENAI ====================
+
+    ''' <summary>
+    ''' Generates audio via OpenAI TTS API.
+    ''' </summary>
+    ''' <param name="input">Text to synthesize (SSML not supported by OpenAI).</param>
+    ''' <param name="languageCode">Language code (not used by OpenAI, kept for signature compatibility).</param>
+    ''' <param name="voiceName">OpenAI voice name (e.g., "alloy", "echo").</param>
+    ''' <param name="pitch">Pitch adjustment (not supported by OpenAI, ignored).</param>
+    ''' <param name="speakingRate">Speaking rate (not supported by OpenAI, ignored).</param>
+    ''' <returns>MP3 audio bytes, or Nothing on error.</returns>
     Private Shared Async Function GenerateOpenAITTSAsync(
         input As String,
         languageCode As String,
@@ -278,13 +351,13 @@ Partial Public Class ThisAddIn
             Dim apiKey = If(TTS_openAISecondary, DecodedAPI_2, DecodedAPI)
 
             Debug.WriteLine($"[TTS] OpenAI endpoint = '{TTS_OpenAIEndpoint}'")
-            Debug.WriteLine($"[TTS] OpenAI API Key = '{apiKey}'")
+            Debug.WriteLine($"[TTS] OpenAI API Key = '{If(String.IsNullOrEmpty(apiKey), "(empty)", "(configured)")}'")
 
             Using client As New System.Net.Http.HttpClient()
                 client.DefaultRequestHeaders.Authorization =
                 New Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey)
 
-                ' build JSON
+                ' Build JSON request payload for OpenAI TTS API
                 Dim j = New JObject From {
                 {"model", TTS_OpenAI_Model},
                 {"input", input},
@@ -295,7 +368,7 @@ Partial Public Class ThisAddIn
 
                 Dim content = New StringContent(j.ToString(), Encoding.UTF8, "application/json")
 
-                ' POST to the detected OpenAI endpoint
+                ' Send POST request to detected OpenAI TTS endpoint
                 Dim resp = Await client.PostAsync(TTS_OpenAIEndpoint, content).ConfigureAwait(False)
                 If resp.IsSuccessStatusCode Then
                     Return Await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(False)
@@ -309,8 +382,21 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
+    ' ==================== AUDIO GENERATION - GOOGLE/OPENAI UNIFIED ====================
 
-
+    ''' <summary>
+    ''' Generates audio from text using the selected TTS engine (Google or OpenAI).
+    ''' Manages authentication (OAuth2 for Google, API key for OpenAI), handles SSML wrapping,
+    ''' displays progress messages for large text, and supports cancellation via cts token.
+    ''' </summary>
+    ''' <param name="input">Text or JSON payload to synthesize.</param>
+    ''' <param name="languageCode">Language code (e.g., "en-US").</param>
+    ''' <param name="voiceName">Voice identifier specific to the selected engine.</param>
+    ''' <param name="nossml">True to strip SSML tags before processing.</param>
+    ''' <param name="Pitch">Voice pitch adjustment (-20.0 to 20.0 for Google).</param>
+    ''' <param name="SpeakingRate">Speech rate multiplier (0.25 to 4.0 for Google).</param>
+    ''' <param name="CurrentPara">Current paragraph text for error reporting (optional).</param>
+    ''' <returns>MP3 audio bytes, or Nothing on error/cancellation.</returns>
     Public Shared Async Function GenerateAudioFromText(input As String, Optional languageCode As String = "en-US", Optional voiceName As String = "en-US-Studio-O", Optional nossml As Boolean = False, Optional Pitch As Double = 0, Optional SpeakingRate As Double = 1, Optional CurrentPara As String = "") As Task(Of Byte())
 
         AcquireTTSSleepLock()
@@ -320,7 +406,7 @@ Partial Public Class ThisAddIn
             Dim eng = TTS_SelectedEngine
 
             If eng = TTSEngine.OpenAI Then
-                ' strip off “ — Beschreibung” if present
+                ' Extract voice identifier by removing description suffix
                 Dim rawVoice = voiceName.Split(" "c)(0)
                 Return Await GenerateOpenAITTSAsync(input,
                                        languageCode,
@@ -337,18 +423,9 @@ Partial Public Class ThisAddIn
                     Return Nothing
                 End If
 
-
-                If String.IsNullOrEmpty(AccessToken) Then
-                    ShowCustomMessageBox("Error generating audio - authentication failed (no token).")
-                    Return Nothing
-                End If
-
                 httpClient.DefaultRequestHeaders.Authorization = New Net.Http.Headers.AuthenticationHeaderValue("Bearer", AccessToken)
 
                 Dim requestBody As JObject
-
-                'Debug.WriteLine(input)
-
                 Dim jsonPayload As String
 
                 If input.Trim().StartsWith("{") Then
@@ -369,7 +446,7 @@ Partial Public Class ThisAddIn
                         End If
                     End If
 
-                    ' Process as single-speaker plain text
+                    ' Build Google TTS request body for single-speaker synthesis
                     requestBody = New JObject From {
                     {"input", New JObject From {{$"{textlabel}", input}}},
                     {"voice", New JObject From {
@@ -385,11 +462,11 @@ Partial Public Class ThisAddIn
                 }
                     jsonPayload = requestBody.ToString()
                 End If
-                ' Convert payload to JSON
+                ' Serialize request payload to JSON
                 Dim content As New StringContent(jsonPayload, Encoding.UTF8, "application/json")
 
                 Try
-                    ' Make API request
+                    ' Send TTS generation request to Google API
 
                     If Len(input) > TTSLargeText Then
                         Dim t As New Thread(Sub()
@@ -401,7 +478,7 @@ Partial Public Class ThisAddIn
 
                     Dim response As HttpResponseMessage = Await httpClient.PostAsync(TTS_GoogleEndpoint & "text:synthesize", content, cts.Token).ConfigureAwait(False)
 
-                    ' Error Handling: Check if API call failed
+                    ' Validate API response
                     If response Is Nothing Then
                         ShowCustomMessageBox("Error generating audio: No response from Google TTS API.")
                         Return Nothing
@@ -409,13 +486,13 @@ Partial Public Class ThisAddIn
 
                     Dim responseString As String = Await response.Content.ReadAsStringAsync()
 
-                    ' Debug output: Show API response for troubleshooting
+                    ' Log API response for debugging purposes
                     Debug.WriteLine($"Google TTS API Response: {responseString}")
 
                     If response.IsSuccessStatusCode Then
                         Dim responseJson As JObject = JObject.Parse(responseString)
 
-                        ' Check if "audioContent" exists in response
+                        ' Verify that response contains audioContent field
                         If responseJson.ContainsKey("audioContent") Then
                             Dim audioBase64 As String = responseJson("audioContent").ToString()
                             Return System.Convert.FromBase64String(audioBase64)
@@ -441,13 +518,21 @@ Partial Public Class ThisAddIn
             MessageBox.Show($"Error in GenerateAudioFromText: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             Return Nothing
         Finally
-            ' If IsNothing(prevExecState) Then ...
+            ' Release sleep lock if this module acquired it
             ReleaseTTSSleepLock()
         End Try
 
     End Function
 
+    ' ==================== CONVERSATION PARSING ====================
 
+    ''' <summary>
+    ''' Parses plain text dialogue into speaker/text tuples.
+    ''' Recognizes host tags (hostTags) and guest tags (guestTags) at paragraph start.
+    ''' Combines consecutive paragraphs from the same speaker.
+    ''' </summary>
+    ''' <param name="text">Multi-line dialogue text with speaker tags.</param>
+    ''' <returns>List of (speaker code, text) tuples: "H" for host, "G" for guest.</returns>
     Public Function ParseTextToConversation(text As String) As List(Of Tuple(Of String, String))
         Dim conversation As New List(Of Tuple(Of String, String))
         Dim currentSpeaker As String = ""
@@ -459,7 +544,7 @@ Partial Public Class ThisAddIn
             Dim trimmedText As String = para.Trim()
             If String.IsNullOrEmpty(trimmedText) Then Continue For
 
-            ' Check if the paragraph starts with a speaker tag
+            ' Detect speaker tag at start of paragraph
             Dim newSpeaker As String = ""
             If hostTags.Any(Function(tag) trimmedText.StartsWith(tag, StringComparison.OrdinalIgnoreCase)) Then
                 newSpeaker = "H"
@@ -469,7 +554,7 @@ Partial Public Class ThisAddIn
                 trimmedText = trimmedText.Substring(trimmedText.IndexOf(":"c) + 1).Trim()
             End If
 
-            ' If a new speaker is detected, store the previous entry and start a new one
+            ' Store previous speaker segment and start new one when speaker changes
             If newSpeaker <> "" Then
                 If Not String.IsNullOrEmpty(currentSpeaker) Then
                     conversation.Add(Tuple.Create(currentSpeaker, currentText.Trim()))
@@ -477,14 +562,14 @@ Partial Public Class ThisAddIn
                 currentSpeaker = newSpeaker
                 currentText = trimmedText
             Else
-                ' Continue the current speaker's dialogue
+                ' Append text to current speaker's dialogue
                 If Not String.IsNullOrEmpty(currentSpeaker) Then
                     currentText &= " " & trimmedText
                 End If
             End If
         Next
 
-        ' Add the last entry
+        ' Add final speaker segment to conversation list
         If Not String.IsNullOrEmpty(currentSpeaker) Then
             conversation.Add(Tuple.Create(currentSpeaker, currentText.Trim()))
         End If
@@ -492,7 +577,21 @@ Partial Public Class ThisAddIn
         Return conversation
     End Function
 
+    ' ==================== MULTI-SPEAKER PODCAST GENERATION ====================
 
+    ''' <summary>
+    ''' Generates multi-speaker podcast audio from parsed conversation segments.
+    ''' Alternates between host and guest voices, generates audio per segment,
+    ''' merges all segments into a single output file, and optionally plays the result.
+    ''' </summary>
+    ''' <param name="conversation">List of (speaker, text) tuples from ParseTextToConversation.</param>
+    ''' <param name="filepath">Output file path for merged audio.</param>
+    ''' <param name="languagecode">Language code for TTS.</param>
+    ''' <param name="hostVoice">Voice identifier for host segments.</param>
+    ''' <param name="guestVoice">Voice identifier for guest segments.</param>
+    ''' <param name="pitch">Voice pitch adjustment.</param>
+    ''' <param name="speakingrate">Speech rate multiplier.</param>
+    ''' <param name="nossml">True to disable SSML processing.</param>
     Async Sub GenerateAndPlayPodcastAudio(
         conversation As List(Of Tuple(Of String, String)),
         filepath As String,
@@ -508,12 +607,12 @@ Partial Public Class ThisAddIn
 
             Dim outputFiles As New List(Of String)
 
-            ' ensure a valid output path
+            ' Ensure valid output file path; use default if empty
             If String.IsNullOrWhiteSpace(filepath) Then
                 filepath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), TTSDefaultFile)
             End If
 
-            ' defaults
+            ' Apply default values for missing parameters
             If String.IsNullOrEmpty(languagecode) Then languagecode = "en-US"
             If String.IsNullOrEmpty(hostVoice) Then hostVoice = "en-US-Studio-O"
             If String.IsNullOrEmpty(guestVoice) Then guestVoice = "en-US-Casual-K"
@@ -522,7 +621,7 @@ Partial Public Class ThisAddIn
             Dim eng = TTS_SelectedEngine
 
             Using httpClient As New HttpClient()
-                ' — set Authorization header once, based on engine —
+                ' Configure HTTP client authorization based on selected TTS engine
                 If eng = TTSEngine.Google Then
                     Debug.WriteLine($"[TTS] Using Google TTS engine with endpoint '{TTS_GoogleEndpoint}'")
                     ' Google: fetch OAuth token
@@ -541,7 +640,7 @@ Partial Public Class ThisAddIn
                     New Net.Http.Headers.AuthenticationHeaderValue("Bearer", key)
                 End If
 
-                ' start “running in background” message
+                ' Display background operation notification in separate thread
                 Dim t As New Thread(Sub()
                                         ShowCustomMessageBox(
                                         "Audio generation has started and runs in the background. Press 'Esc' to abort.",
@@ -550,7 +649,8 @@ Partial Public Class ThisAddIn
                 t.SetApartmentState(ApartmentState.STA)
                 t.Start()
 
-                ' process each speaker snippet
+                ' Generate audio for each speaker segment in conversation
+                ' Check ESC key state: &H8000 = currently pressed, 1 = state toggled since last check
                 For i = 0 To conversation.Count - 1
 
                     If (GetAsyncKeyState(VK_ESCAPE) And &H8000) <> 0 Then Exited = True : Exit For
@@ -560,7 +660,7 @@ Partial Public Class ThisAddIn
                     Dim text = conversation(i).Item2
                     Dim voice = If(speaker = "H", hostVoice, guestVoice)
 
-                    ' handle SSML stripping/wrapping
+                    ' Process SSML: strip tags if disabled, wrap in <speak> if needed
                     Dim textlabel = "text"
                     If Not nossml Then
                         If Regex.IsMatch(text, "<[^>]+>") AndAlso Not text.Trim().StartsWith("<speak>") Then
@@ -574,7 +674,7 @@ Partial Public Class ThisAddIn
                     Dim audioBytes As Byte()
 
                     If eng = TTSEngine.Google Then
-                        ' — Google path —
+                        ' Generate audio via Google TTS API
                         Dim requestBody = New JObject From {
                         {"input", New JObject From {{textlabel, text}}},
                         {"voice", New JObject From {
@@ -602,24 +702,24 @@ Partial Public Class ThisAddIn
                         End If
 
                     Else
-                        ' — OpenAI path —
-                        ' strip off any “ — Beschreibung” from the combo text
+                        ' Generate audio via OpenAI TTS API
+                        ' Extract voice identifier by removing description suffix
                         Dim rawVoice = voice.Split(" "c)(0)
                         audioBytes = Await GenerateOpenAITTSAsync(text, languagecode, rawVoice, pitch, speakingrate)
                     End If
 
                     Debug.WriteLine($"Generated audio of {audioBytes.Length} for speaker {speaker} ({voice}) with text length {text.Length} characters.")
 
-                    ' save snippet
+                    ' Save generated audio segment to temporary file
                     Dim tempFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"{AN2}_podcast_temp_{i}.mp3")
                     File.WriteAllBytes(tempFile, audioBytes)
                     outputFiles.Add(tempFile)
 
-                    ' throttle
+                    ' Rate-limit API requests to avoid overwhelming TTS service
                     Await System.Threading.Tasks.Task.Delay(1000)
                 Next
 
-                ' merge & cleanup
+                ' Merge audio segments and delete temporary files
                 If Not Exited Then MergeAudioFiles(outputFiles, filepath)
                 For Each f In outputFiles : File.Delete(f) : Next
             End Using
@@ -641,11 +741,21 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
+
+    ' ==================== AUDIO FILE MERGING ====================
+
+    ''' <summary>
+    ''' Merges multiple audio files (MP3/WAV) into a single output file.
+    ''' Resamples all inputs to uniform PCM format (44.1kHz, 16-bit, stereo),
+    ''' concatenates to WAV, then optionally encodes to MP3 via MediaFoundation.
+    ''' </summary>
+    ''' <param name="inputFiles">List of input audio file paths.</param>
+    ''' <param name="outputFile">Output file path (.mp3 or .wav extension).</param>
     Public Sub MergeAudioFiles(inputFiles As System.Collections.Generic.List(Of System.String), outputFile As System.String)
         If inputFiles Is Nothing OrElse inputFiles.Count = 0 Then Throw New ArgumentException("No input files.")
         Dim take As Integer = inputFiles.Count
 
-        ' 1) Concatenate to a temporary WAV (uniform PCM)
+        ' Step 1: Concatenate all inputs to a temporary WAV file with uniform PCM format
         Dim tempWav As String = System.IO.Path.ChangeExtension(System.IO.Path.GetTempFileName(), ".wav")
         Dim targetFormat As New NAudio.Wave.WaveFormat(44100, 16, 2) ' 44.1kHz, 16-bit, stereo
 
@@ -672,17 +782,17 @@ Partial Public Class ThisAddIn
             Next
         End Using
 
-        ' 2) If caller wants MP3, encode with Media Foundation; otherwise leave as WAV
+        ' Step 2: Encode to MP3 if requested, otherwise deliver WAV
         Dim ext = System.IO.Path.GetExtension(outputFile)
         If String.Equals(ext, ".mp3", StringComparison.OrdinalIgnoreCase) Then
             Try
                 NAudio.MediaFoundation.MediaFoundationApi.Startup()
                 Using wavReader As New NAudio.Wave.WaveFileReader(tempWav)
-                    ' 192 kbps; adjust as needed
+                    ' Encode to MP3 at 192 kbps bitrate
                     NAudio.Wave.MediaFoundationEncoder.EncodeToMp3(wavReader, outputFile, 192000)
                 End Using
             Catch ex As Exception
-                ' Fallback: deliver WAV if MP3 encoder is unavailable (e.g., Windows N without Media Feature Pack)
+                ' Fallback: Save as WAV if Media Foundation encoder unavailable (e.g., Windows N editions)
                 Dim wavFallback = System.IO.Path.ChangeExtension(outputFile, ".wav")
                 System.IO.File.Copy(tempWav, wavFallback, True)
                 Throw New InvalidOperationException("Media Foundation MP3 encoder unavailable. Wrote WAV instead: " & wavFallback, ex)
@@ -691,14 +801,17 @@ Partial Public Class ThisAddIn
                 Try : System.IO.File.Delete(tempWav) : Catch : End Try
             End Try
         Else
-            ' Caller requested a non-MP3 extension; give them the WAV
+            ' Caller requested a non-MP3 extension; deliver the WAV file
             System.IO.File.Copy(tempWav, outputFile, True)
             Try : System.IO.File.Delete(tempWav) : Catch : End Try
         End If
     End Sub
 
-
-    ' Function to save audio to a file
+    ''' <summary>
+    ''' Writes audio bytes to a file.
+    ''' </summary>
+    ''' <param name="audioData">Audio data (typically MP3 format).</param>
+    ''' <param name="filePath">Target file path.</param>
     Public Shared Sub SaveAudioToFile(audioData As Byte(), filePath As String)
         Try
             If audioData IsNot Nothing AndAlso audioData.Length > 0 Then
@@ -712,9 +825,14 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-    ' Function to play the generated MP3 audio using NAudio
-    Public Shared Sub PlayAudio(filePath As String)
+    ' ==================== AUDIO PLAYBACK ====================
 
+    ''' <summary>
+    ''' Plays an MP3 audio file using NAudio WaveOutEvent.
+    ''' Displays splash screen with "press Esc to abort" message during playback.
+    ''' </summary>
+    ''' <param name="filePath">Path to MP3 file.</param>
+    Public Shared Sub PlayAudio(filePath As String)
 
         Dim splash As New SLib.SplashScreen($"Playing MP3... press 'Esc' to abort")
         If File.Exists(filePath) Then
@@ -731,7 +849,8 @@ Partial Public Class ThisAddIn
                         waveOut.Init(mp3Reader)
                         waveOut.Play()
 
-                        ' Keep playing until the audio ends
+                        ' Monitor playback state and check for ESC key to abort
+                        ' Check ESC key state: &H8000 = currently pressed, 1 = state toggled since last check
                         While waveOut.PlaybackState = PlaybackState.Playing
                             Thread.Sleep(100)
                             System.Windows.Forms.Application.DoEvents()
@@ -743,7 +862,7 @@ Partial Public Class ThisAddIn
                             End If
                         End While
 
-                        ' Stop playback
+                        ' Stop audio playback and dispose resources
                         waveOut.Stop()
                     End Using ' Automatically disposes waveOut
                 End Using ' Automatically disposes mp3Reader
@@ -760,6 +879,17 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
+    ' ==================== SINGLE-SPEAKER AUDIO GENERATION ====================
+
+    ''' <summary>
+    ''' Generates audio from text and optionally plays it immediately.
+    ''' Creates temporary file if filepath is empty; deletes temporary file after playback.
+    ''' Prompts user before playback if text length exceeds TTSLargeText threshold.
+    ''' </summary>
+    ''' <param name="textToSpeak">Text to synthesize.</param>
+    ''' <param name="filepath">Output file path (empty for temporary file).</param>
+    ''' <param name="languageCode">Language code.</param>
+    ''' <param name="voiceName">Voice identifier.</param>
     Shared Async Sub GenerateAndPlayAudio(textToSpeak As String, filepath As String, Optional languageCode As String = "en-US", Optional voiceName As String = "en-US-Studio-O")
 
         Dim Temporary As Boolean = (filepath = "")
@@ -784,18 +914,25 @@ Partial Public Class ThisAddIn
                 End If
             End If
         Catch ex As System.Exception
-
+            ' Suppress errors to allow workflow to continue
         End Try
     End Sub
 
+    ' ==================== PODCAST READING WITH VOICE SELECTION ====================
 
+    ''' <summary>
+    ''' Reads a podcast dialogue by parsing speaker tags, prompting for voice selection,
+    ''' collecting TTS parameters (pitch, rate, SSML), and generating multi-speaker audio.
+    ''' Requires both host and guest tags present in text.
+    ''' </summary>
+    ''' <param name="Text">Dialogue text with host/guest speaker tags.</param>
     Public Sub ReadPodcast(Text As String)
 
         Dim NoSSML As Boolean = My.Settings.NoSSML
         Dim Pitch As Double = My.Settings.Pitch
         Dim SpeakingRate As Double = My.Settings.Speakingrate
 
-        ' Create an array of InputParameter objects.
+        ' Define TTS parameter collection for user input form
         Dim params() As SLib.InputParameter = {
                     New SLib.InputParameter("Pitch", Pitch),
                     New SLib.InputParameter("Speaking Rate", SpeakingRate),
@@ -807,7 +944,7 @@ Partial Public Class ThisAddIn
         Dim hasGuest As Boolean = conversation.Any(Function(t) t.Item1 = "G")
 
         If hasHost AndAlso hasGuest Then
-            Using frm As New TTSSelectionForm("Select the voice you wish to use for creating your audio file and configure where to save it.", $"{AN} Text-to-Speech - Select Voices", True) ' TTSSelectionForm(_context, INI_OAuth2ClientMail, INI_OAuth2Scopes, INI_APIKey, INI_OAuth2Endpoint, INI_OAuth2ATExpiry, "Select the voice you wish to use for creating your audio file and configure where to save it.", $"{AN} Google Text-to-Speech - Select Voices", True)
+            Using frm As New TTSSelectionForm("Select the voice you wish to use for creating your audio file and configure where to save it.", $"{AN} Text-to-Speech - Select Voices", True)
                 If frm.ShowDialog() = DialogResult.OK Then
                     Dim selectedVoices As List(Of String) = frm.SelectedVoices
                     Dim selectedLanguage As String = frm.SelectedLanguage
@@ -816,10 +953,10 @@ Partial Public Class ThisAddIn
                     Debug.WriteLine("Voices=" & selectedVoices(0))
                     Debug.WriteLine("TTS_SelectedEngine=" & TTS_SelectedEngine)
 
-                    ' Call the procedure (the parameters are passed ByRef).
+                    ' Display parameter input form; update variables if user confirms
                     If ShowCustomVariableInputForm("Please enter the following parameters to apply when creating your podcast audio file:", $"Create Podcast Audio", params) Then
 
-                        ' After OK is clicked, update your original variables:
+                        ' Update settings with user-provided values
                         Pitch = CDbl(params(0).Value)
                         SpeakingRate = CDbl(params(1).Value)
                         NoSSML = CBool(params(2).Value)
@@ -834,13 +971,24 @@ Partial Public Class ThisAddIn
                 End If
             End Using
         Else
-            ' Missing either Host or Guest
+            ' Validation failed: conversation must contain both host and guest segments
             ShowCustomMessageBox($"No conversation was found. Use '{hostTags(0)}' and '{guestTags(0)}' to dedicate content to the host and guest.")
         End If
 
     End Sub
 
+    ' ==================== PARAGRAPH-BASED AUDIO GENERATION ====================
 
+    ''' <summary>
+    ''' Generates audio from selected Word paragraphs with advanced features:
+    ''' voice alternation for titles, bullet detection, silence insertion, optional
+    ''' LLM-based text cleaning, progress tracking, and ESC-based cancellation.
+    ''' Saves cleaned text to .txt file when CleanText option enabled.
+    ''' </summary>
+    ''' <param name="filepath">Output audio file path (empty for temporary file).</param>
+    ''' <param name="languageCode">Language code for TTS.</param>
+    ''' <param name="voiceName">Primary voice identifier.</param>
+    ''' <param name="voiceNameAlt">Alternate voice for title paragraphs (optional).</param>
     Public Async Sub GenerateAndPlayAudioFromSelectionParagraphs(filepath As String, Optional languageCode As String = "en-US", Optional voiceName As String = "en-US-Studio-O", Optional voiceNameAlt As String = "")
 
         Dim CurrentPara As String = ""
@@ -856,7 +1004,7 @@ Partial Public Class ThisAddIn
 
             If voiceNameAlt = "" Then Alternate = False
 
-            ' Get the current Word selection.
+            ' Retrieve currently selected text from Word document
             Dim app As Word.Application = Globals.ThisAddIn.Application
             Dim selection As Microsoft.Office.Interop.Word.Selection = app.Selection
             If selection Is Nothing OrElse selection.Paragraphs.Count = 0 Then
@@ -872,7 +1020,7 @@ Partial Public Class ThisAddIn
             Dim CleanTextPrompt As String = My.Settings.CleanTextPrompt
             If String.IsNullOrWhiteSpace(CleanTextPrompt) Then CleanTextPrompt = SP_CleanTextPrompt
 
-            ' Create an array of InputParameter objects.
+            ' Define TTS configuration parameters for user input
             Dim params() As SLib.InputParameter = {
                     New SLib.InputParameter("Pitch", Pitch),
                     New SLib.InputParameter("Speaking Rate", SpeakingRate),
@@ -881,7 +1029,7 @@ Partial Public Class ThisAddIn
                     New SLib.InputParameter("Clean text", CleanText)
                     }
 
-            ' Call the procedure (the parameters are passed ByRef).
+            ' Display parameter input form; exit if user cancels
             If Not ShowCustomVariableInputForm("Please enter the following parameters to apply when creating your audio file based on your text:", $"Create Audio", params) Then Return
 
             Pitch = CDbl(params(0).Value)
@@ -927,9 +1075,9 @@ Partial Public Class ThisAddIn
             Dim silenceFileTitle As String = Await GenerateSilenceAudioFileAsync(0.7)
             Dim silenceFileRegular As String = Await GenerateSilenceAudioFileAsync(0.3)
 
-            ' Process each paragraph in the selection.
+            ' Iterate through selected Word paragraphs and generate audio for each
+            ' Check for ESC key or cancel flag; abort and cleanup if triggered
             For Each para As Microsoft.Office.Interop.Word.Paragraph In selection.Paragraphs
-                ' Allow the user to abort by pressing Escape.
                 If (GetAsyncKeyState(VK_ESCAPE) And &H8000) <> 0 Or (GetAsyncKeyState(VK_ESCAPE) And 1) <> 0 Or ProgressBarModule.CancelOperation Then
                     For Each file In tempFiles
                         Try
@@ -943,39 +1091,35 @@ Partial Public Class ThisAddIn
                     Return
                 End If
 
-                ' Get the trimmed paragraph text.
+                ' Extract paragraph text with optional numbering prefix
                 Dim paraText As String
 
-                ' Check if the paragraph has numbering
+                ' Include list numbering prefix if present and ReadTitleNumbers enabled
                 If Not String.IsNullOrEmpty(para.Range.ListFormat.ListString) And ReadTitleNumbers Then
-                    ' Include the numbering before the paragraph text
                     paraText = para.Range.ListFormat.ListString.Trim("."c) & vbCrLf & para.Range.Text.Trim()
                 Else
-                    ' No numbering, just take the paragraph text
                     paraText = para.Range.Text.Trim()
                 End If
 
-
-                ' Skip paragraphs that are empty...
+                ' Skip empty paragraphs and bracketed-only text
                 If String.IsNullOrWhiteSpace(paraText) Or Regex.IsMatch(paraText, bracketedTextPattern) Then Continue For
-                ' ...or that contain only numbers or control characters.
+                ' Skip paragraphs containing only digits, whitespace, or control characters
                 If Regex.IsMatch(paraText, "^[\d\p{C}\s]+$") Then Continue For
 
                 Dim lastChar As String = paraText.Substring(paraText.Length - 1)
 
-                ' Check if the last character is one of the defined punctuation marks
+                ' Append period if paragraph doesn't end with sentence-ending punctuation
                 If Not sentenceEndPunctuation.Contains(lastChar) Then
-                    ' Append a period
                     paraText = paraText & "."
                 End If
 
-                ' Determine if this paragraph is part of a bullet list.
+                ' Detect if paragraph belongs to a numbered or bulleted list
                 Dim isBullet As Boolean = False
                 If para.Range.ListFormat IsNot Nothing AndAlso para.Range.ListFormat.ListType <> WdListType.wdListNoNumbering Then
                     isBullet = True
                 End If
 
-                ' Determine if the paragraph “looks like” a title.
+                ' Detect title paragraphs based on style, line count, and punctuation
                 Dim isTitle As Boolean = False
                 Dim styleName As String = ""
                 Try
@@ -1007,10 +1151,10 @@ Partial Public Class ThisAddIn
                 If isTitle AndAlso Alternate Then
                     If Not firstTitleEncountered Then
                         firstTitleEncountered = True
-                        ' For the very first title, keep the current voice unchanged.
+                        ' Keep current voice for first title
                     Else
                         If Not LastTextWasTitle Then
-                            ' Switch the voice if the last paragraph was not a title.
+                            ' Alternate voice for subsequent titles
                             Debug.WriteLine("Switching ...")
                             If currentVoiceName = voiceName1 Then
                                 currentVoiceName = voiceName2
@@ -1024,21 +1168,21 @@ Partial Public Class ThisAddIn
                     LastTextWasTitle = False
                 End If
 
-                ' Set the maximum value if you know the total number of steps.
+                ' Configure progress bar with total paragraph count
                 GlobalProgressMax = totalParagraphs
 
-                ' Update the current progress value and status label.
+                ' Update progress indicator
                 GlobalProgressValue = paragraphIndex + 1
                 GlobalProgressLabel = $"Paragraph {paragraphIndex + 1} of {totalParagraphs} (some may be skipped)"
 
-                ' For bullet lists, insert a short pause BEFORE the paragraph.
+                ' Insert brief silence before bullet list items
                 If isBullet Then
                     Dim silenceFileBefore As String = Await GenerateSilenceAudioFileAsync(0.1)
                     If Not String.IsNullOrEmpty(silenceFileBefore) Then tempFiles.Add(silenceFileBefore)
                 End If
 
                 If CleanText Then
-                    ' Remove any unwanted characters from the paragraph text.
+                    ' Clean paragraph text using LLM with user-defined prompt
                     paraText = Await LLM(CleanTextPrompt, "<TEXTTOPROCESS>" & paraText & "</TEXTTOPROCESS>", "", "", 0, False, True)
                     paraText = paraText.Trim().Replace("<TEXTTOPROCESS>", "").Replace("</TEXTTOPROCESS>", "").Trim()
                     CurrentPara = Left(CurrentPara, 100) & $"... [cleaned: {Left(paraText, 400)}...]"
@@ -1046,7 +1190,7 @@ Partial Public Class ThisAddIn
 
                 End If
 
-                ' Generate the audio for the paragraph via your TTS API.
+                ' Generate audio for paragraph using configured TTS engine
                 Dim paragraphAudioBytes As Byte() = Await GenerateAudioFromText(paraText, languageCode, currentVoiceName, NoSSML, Pitch, SpeakingRate, CurrentPara)
 
                 CurrentPara = ""
@@ -1054,46 +1198,45 @@ Partial Public Class ThisAddIn
                 If paragraphAudioBytes IsNot Nothing Then
                     If CleanText Then
                         cleanedTextBuilder.AppendLine(paraText)
-                        cleanedTextBuilder.AppendLine() ' Leerzeile zwischen Absätzen
+                        cleanedTextBuilder.AppendLine() ' Empty line between paragraphs
                     End If
                     Dim tempParaFile As String = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"{AN2}_temp_para_{paragraphIndex}.mp3")
                     File.WriteAllBytes(tempParaFile, paragraphAudioBytes)
                     tempFiles.Add(tempParaFile)
                     Debug.WriteLine("Created " & tempParaFile)
                 Else
-                    ' If audio generation failed, skip this paragraph.
+                    ' Skip paragraph if audio generation failed
                     Debug.WriteLine("Creation failed")
                     Continue For
                 End If
 
-                ' For bullet lists, insert a short pause AFTER the paragraph.
+                ' Insert brief silence after bullet list items
                 If isBullet Then
-
                     If Not String.IsNullOrEmpty(silenceFileAfterBullet) Then tempFiles.Add(silenceFileAfterBullet)
                 End If
 
-                ' After each paragraph, add an extra pause:
-                ' • Use a medium pause (0.7 sec) for titles.
-                ' • Otherwise use a short pause (0.3 sec).
+                ' Insert context-appropriate silence after each paragraph:
+                ' Titles receive 0.7 sec pause; regular text receives 0.3 sec pause
                 If isTitle Then
                     If Not String.IsNullOrEmpty(silenceFileTitle) Then tempFiles.Add(silenceFileTitle)
                 Else
                     If Not String.IsNullOrEmpty(silenceFileRegular) Then tempFiles.Add(silenceFileRegular)
                 End If
 
-                Await System.Threading.Tasks.Task.Delay(1000) ' Delay to not overhwelm the API
+                ' Rate-limit API requests to avoid overwhelming TTS service
+                Await System.Threading.Tasks.Task.Delay(1000)
 
                 paragraphIndex += 1
             Next
 
-            ' If no valid paragraphs were found, notify the user.
+            ' Exit if no paragraphs generated audio (all skipped)
             If tempFiles.Count = 0 Then
-                ShowCustomMessageBox("No valid paragraphs found For audio generation; skipping empty ones And {...}, [...] And (...).")
+                ShowCustomMessageBox("No valid paragraphs found For audio generation; skipping empty ones and {...}, [...] and (...).")
                 Return
             End If
 
             If Not ProgressBarModule.CancelOperation Then
-                ' Merge all the temporary audio files into one final file.
+                ' Merge all audio segments into final output file
                 GlobalProgressLabel = $"Merging audio {totalParagraphs} snippets..."
                 MergeAudioFiles(tempFiles, filepath)
             End If
@@ -1101,14 +1244,14 @@ Partial Public Class ThisAddIn
             If Not ProgressBarModule.CancelOperation AndAlso CleanText Then
                 Try
                     Dim txtPath As String = System.IO.Path.ChangeExtension(filepath, ".txt")
-                    System.IO.File.WriteAllText(txtPath, cleanedTextBuilder.ToString(), System.Text.Encoding.UTF8) ' überschreibt ohne Rückfrage
+                    System.IO.File.WriteAllText(txtPath, cleanedTextBuilder.ToString(), System.Text.Encoding.UTF8)
                 Catch ex As System.Exception
-                    ' Fehler still schlucken, Ablauf geht ungestört weiter
+                    ' Suppress errors to allow workflow to continue
                     Debug.WriteLine("Error writing cleaned text file: " & ex.Message)
                 End Try
             End If
 
-            'Cleanup Temporary files.
+            ' Delete all temporary audio segment files
             For Each file In tempFiles
                 Try
                     If IO.File.Exists(file) Then IO.File.Delete(file)
@@ -1119,7 +1262,7 @@ Partial Public Class ThisAddIn
 
             If Not ProgressBarModule.CancelOperation Then
                 ProgressBarModule.CancelOperation = True
-                ' Play the merged audio file.
+                ' Play final merged audio and cleanup temporary file if applicable
                 PlayAudio(filepath)
                 If Temporary Then
                     System.IO.File.Delete(filepath)
@@ -1135,33 +1278,44 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
+    ' ==================== SILENCE GENERATION ====================
+
+    ''' <summary>
+    ''' Asynchronously generates a silence audio file of specified duration.
+    ''' Wrapper for synchronous GenerateSilenceAudioFile.
+    ''' </summary>
+    ''' <param name="durationSeconds">Duration of silence in seconds.</param>
+    ''' <returns>Path to generated MP3 silence file, or Nothing on error.</returns>
     Private Async Function GenerateSilenceAudioFileAsync(durationSeconds As Double) As Task(Of String)
         Return Await System.Threading.Tasks.Task.Run(Function() GenerateSilenceAudioFile(durationSeconds))
     End Function
 
-    ' Synchronous helper that creates a buffer of silence and encodes it to MP3.
+    ''' <summary>
+    ''' Creates a PCM buffer filled with zeros (silence) and encodes it to MP3.
+    ''' Uses 24kHz, 16-bit, mono format by default.
+    ''' </summary>
+    ''' <param name="durationSeconds">Duration of silence in seconds.</param>
+    ''' <returns>Path to generated MP3 file, or Nothing on error.</returns>
     Private Function GenerateSilenceAudioFile(durationSeconds As Double) As String
         Try
-            ' Set audio format parameters.
-            Dim sampleRate As Integer = 24000       ' Adjust as needed to match your TTS output.
+            ' Configure audio format for silence generation (24kHz, 16-bit, mono)
+            Dim sampleRate As Integer = 24000
             Dim channels As Integer = 1
             Dim bitsPerSample As Integer = 16
             Dim blockAlign As Integer = channels * (bitsPerSample \ 8)
             Dim totalSamples As Integer = CInt(sampleRate * durationSeconds)
             Dim totalBytes As Integer = totalSamples * blockAlign
 
-            ' Create a buffer filled with zeros (silence).
+            ' Allocate byte buffer initialized to zeros (silence)
             Dim silenceBytes(totalBytes - 1) As Byte
-            ' (The array is automatically initialized to zeros.)
 
-            ' Generate a temporary file name.
+            ' Generate temporary file path with duration-based naming
             Dim tempFile As String = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"{AN2}_silence_{CInt(durationSeconds * 1000)}ms.mp3")
 
-            ' Wrap the silence buffer in a MemoryStream and then a RawSourceWaveStream.
+            ' Create WAV stream from silence buffer and encode to MP3
             Using ms As New MemoryStream(silenceBytes)
                 Dim waveFormat As New WaveFormat(sampleRate, bitsPerSample, channels)
                 Using waveStream As New RawSourceWaveStream(ms, waveFormat)
-                    ' Encode the silence to MP3.
                     MediaFoundationEncoder.EncodeToMp3(waveStream, tempFile)
                 End Using
             End Using
@@ -1173,19 +1327,24 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-    ' Legacy Text To Speech
+    ' ==================== LEGACY WINDOWS TTS (SAPI) ====================
 
+    ''' <summary>Legacy Windows SAPI speech synthesizer for fallback TTS.</summary>
     Private synth As New SpeechSynthesizer()
 
+    ''' <summary>
+    ''' Displays list of installed Windows SAPI voices, prompts user to select by number,
+    ''' speaks a confirmation message using the selected voice, and saves selection to settings.
+    ''' </summary>
     Public Shared Sub SelectVoiceByNumber()
-        ' Ensure the SpeechSynthesizer is available
+        ' Initialize SpeechSynthesizer instance
         Dim synth As New SpeechSynthesizer()
 
-        ' (1) Retrieve all available voices
+        ' Enumerate all installed SAPI voices on the system
         Dim installedVoices As List(Of InstalledVoice) = synth.GetInstalledVoices().ToList()
         Dim voiceNames As New List(Of String)()
 
-        ' (2) Populate voice list
+        ' Build voice selection menu with numeric indices
         Dim sb As New StringBuilder()
         sb.AppendLine("Available voices for Text-to-Speech:" & vbCrLf)
 
@@ -1206,7 +1365,7 @@ Partial Public Class ThisAddIn
 
         Dim selectedIndex As Integer
         If Integer.TryParse(UserInput, selectedIndex) AndAlso selectedIndex >= 0 AndAlso selectedIndex < voiceNames.Count Then
-            ' Get the selected voice name
+            ' Apply selected voice and speak confirmation message
             Dim chosenVoice As String = voiceNames(selectedIndex)
             Try
                 synth.SelectVoice(chosenVoice)
@@ -1222,6 +1381,10 @@ Partial Public Class ThisAddIn
         End If
     End Sub
 
+    ''' <summary>
+    ''' Reads selected Word text aloud using legacy Windows SpeechSynthesizer.
+    ''' Cancels ongoing speech if already speaking. Uses voice from My.Settings.LastVoice.
+    ''' </summary>
     Public Sub SpeakSelectedText()
 
         Debug.WriteLine("Status: " & synth.State.ToString())
@@ -1233,10 +1396,10 @@ Partial Public Class ThisAddIn
         End If
 
         Try
-            ' Get the active Word application
+            ' Retrieve active Word application instance
             Dim wordApp As Word.Application = Globals.ThisAddIn.Application
 
-            ' Get the selected text
+            ' Extract selected text from document
             Dim selectedText As String = wordApp.Selection.Text.Trim()
 
             If String.IsNullOrEmpty(selectedText) Then
@@ -1244,10 +1407,8 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
-            ' Speak the selected text
-
+            ' Initiate asynchronous speech synthesis with saved voice
             synth.SelectVoice(My.Settings.LastVoice)
-
             synth.SpeakAsync(selectedText)
 
             ShowCustomMessageBox($"Reading out the selected text (using {My.Settings.LastVoice}). You can stop this by again calling this function.", "Text-to-Speech")
@@ -1256,7 +1417,6 @@ Partial Public Class ThisAddIn
             MessageBox.Show("Error in SpeakSelectedText: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
         End Try
     End Sub
-
 
 
 End Class

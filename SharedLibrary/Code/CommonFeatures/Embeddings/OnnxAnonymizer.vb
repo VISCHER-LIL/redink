@@ -1,12 +1,12 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: OnnxAnonymizer.vb
 ' Part of: Red Ink Shared Library
 ' Purpose: ONNX-based Named Entity Recognition (NER) with selective anonymization
 '          and de-anonymization. Detects and replaces person names (PER), organizations
 '          (ORG), and other entity types with reversible placeholders for privacy.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' -------------

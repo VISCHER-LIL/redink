@@ -1,4 +1,7 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: WindowsWrapper.vb
 ' Purpose: Provides a lightweight wrapper to convert native window handles (HWND)
 '          into managed IWin32Window instances for use with Windows Forms dialogs
@@ -30,9 +33,6 @@
 '   (Add entries as modifications are made)
 '
 ' =============================================================================
-' Part of: Red Ink Shared Library
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see redink.ai)
 
 Option Strict On
 Option Explicit On

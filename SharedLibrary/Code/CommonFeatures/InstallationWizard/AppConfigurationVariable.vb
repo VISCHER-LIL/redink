@@ -1,12 +1,12 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: AppConfigurationVariable.vb
 ' Part of: Red Ink Shared Library
 ' Purpose: Data model for installation wizard configuration variables. Represents
 '          user-configurable settings (API keys, endpoints, timeouts, etc.) with
 '          metadata for dynamic UI generation, validation, and INI persistence.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   Simple POCO/DTO pattern with six string properties. No validation logic or

@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.Processing.InsertIntoWorksheet.vb
-' Part of: Red Ink for Excel
 ' Purpose: Parses LLM response text for cell directives and applies them to the
 '          active worksheet. Supports insertion of formulas, values, and threaded
 '          comments with undo state capture and locale-aware formula handling.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   Parsing:
@@ -139,7 +138,6 @@ Partial Public Class ThisAddIn
         Dim instruction As String
         Dim cellAddress As String
         Dim formulaOrValue As String
-        Dim formulaOrValueLocale As String = ""
         Dim cleanedValue As String
         Dim ii As Integer
 
@@ -460,7 +458,7 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Releases a COM object reference if it isnot Nothing using Marshal.ReleaseComObject,
+    ''' Releases a COM object reference if it is not Nothing using Marshal.ReleaseComObject,
     ''' sets the reference to Nothing, then forces a garbage collection. Swallows release exceptions.
     ''' </summary>
     ''' <param name="obj">COM object reference variable to release.</param>

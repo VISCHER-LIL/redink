@@ -1,11 +1,10 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.FileHelpers.vb
-' Part of: Red Ink for Excel
 ' Purpose: Provides file path acquisition via drag-and-drop form and content
 '          loading utilities for supported document types with optional OCR.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' - This file contributes to the partial class ThisAddIn.

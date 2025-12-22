@@ -1,6 +1,20 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Processing.SearchGrounding.vb
+' Purpose: Collects LLM-driven search terms, performs configured internet searches, and enriches prompts with crawled content.
+'
+' Workflow:
+'  - ConsultInternet: Builds search prompts, optionally requests approval, runs searches, and prepares follow-up prompts.
+'  - PerformSearchGrounding: Executes the HTTP search, extracts unique URLs, retrieves qualifying content, and aggregates it.
+'  - RetrieveWebsiteContent/CrawlWebsite: Crawl discovered pages within bounded depth, timeout, and error limits while harvesting paragraph text.
+'  - CrawlContext/GetAbsoluteUrl: Maintain crawl state and normalize relative links.
+'
+' External Dependencies:
+'  - SharedLibrary.SharedLibrary.SharedMethods for interpolation, UI dialogues, and LLM access.
+'  - HtmlAgilityPack for HTML parsing.
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -15,8 +29,16 @@ Imports System.Windows.Forms
 Imports HtmlAgilityPack
 Imports SharedLibrary.SharedLibrary.SharedMethods
 
+''' <summary>
+''' Provides search-grounding helpers that connect Word instructions with external internet content.
+''' </summary>
 Partial Public Class ThisAddIn
 
+    ''' <summary>
+    ''' Coordinates LLM-based search-term generation, optional approval, remote search execution, and prompt selection.
+    ''' </summary>
+    ''' <param name="DoMarkup">Determines whether the markup-specific system prompt is used when selected text exists.</param>
+    ''' <returns>True when search preparation completes successfully; otherwise False.</returns>
     Public Async Function ConsultInternet(DoMarkup As Boolean) As Task(Of Boolean)
 
         Try
@@ -66,7 +88,16 @@ Partial Public Class ThisAddIn
 
     End Function
 
-
+    ''' <summary>
+    ''' Executes the configured internet search, extracts unique URLs using response masks, retrieves qualifying content, and returns the collected snippets.
+    ''' </summary>
+    ''' <param name="SGTerms">Search expression provided to the internet search endpoint.</param>
+    ''' <param name="ISearch_URL">Base search URL that precedes the encoded search terms.</param>
+    ''' <param name="ISearch_ResponseMask1">Start delimiter used to locate URLs in the response.</param>
+    ''' <param name="ISearch_ResponseMask2">End delimiter used to locate URLs in the response.</param>
+    ''' <param name="ISearch_Tries">Maximum number of URLs that will be processed.</param>
+    ''' <param name="ISearch_MaxDepth">Maximum crawl depth per retrieved URL.</param>
+    ''' <returns>List of plain-text contents harvested from the visited URLs.</returns>
     Public Async Function PerformSearchGrounding(SGTerms As String, ISearch_URL As String, ISearch_ResponseMask1 As String, ISearch_ResponseMask2 As String, ISearch_Tries As Integer, ISearch_MaxDepth As Integer) As Task(Of List(Of String))
         Dim results As New List(Of String)
         Using httpClient As New HttpClient()
@@ -143,40 +174,47 @@ Partial Public Class ThisAddIn
         Return results
     End Function
 
+    ''' <summary>
+    ''' Crawls a base URL up to the specified depth, captures paragraph text, strips HTML, and enforces timeout plus error limits.
+    ''' </summary>
+    ''' <param name="baseUrl">Starting URL that seeds the crawl.</param>
+    ''' <param name="subTries">Maximum link depth to follow.</param>
+    ''' <param name="httpClient">HttpClient instance reused for the crawl.</param>
+    ''' <returns>Plain-text content (limited to ISearch_MaxChars) harvested from the crawl.</returns>
     Private Async Function RetrieveWebsiteContent(
                         baseUrl As String,
                         subTries As Integer,
                         httpClient As HttpClient
                     ) As Task(Of String)
 
-        ' Create a single HttpClient for the entire crawl (optional if you already have one)
-        Dim client As New HttpClient()
+        ' Use the shared HttpClient instance provided by the caller for the entire crawl
+        Dim client As HttpClient = httpClient
 
         ' Create the shared context object
         Dim context As New CrawlContext With {
                     .VisitedUrls = New HashSet(Of String)(),
                     .ContentBuilder = New StringBuilder(),
                     .ErrorCount = 0,
-                    .MaxErrors = ISearch_MaxCrawlErrors  ' e.g. the user-defined max # of errors
+                    .MaxErrors = ISearch_MaxCrawlErrors
                 }
 
-        ' Create one CancellationTokenSource for the entire crawl (30s in your example)
-        Dim cts As New CancellationTokenSource(TimeSpan.FromSeconds(INI_ISearch_Timeout))
+        ' Create one CancellationTokenSource for the entire crawl duration
+        Using cts As New CancellationTokenSource(TimeSpan.FromSeconds(INI_ISearch_Timeout))
+            ' Call the CrawlWebsite function with the context
+            '   - 'subTries' is your maxDepth
+            '   - '0' is your currentDepth
 
-        ' Call the CrawlWebsite function with the context
-        '   - 'subTries' is your maxDepth
-        '   - '0' is your currentDepth
-        '   - pass the same 'cts.Token' so the entire crawl times out in 30s
+            Await CrawlWebsite(
+                        currentUrl:=baseUrl,
+                        maxDepth:=subTries,
+                        currentDepth:=0,
+                        httpClient:=client,
+                        context:=context,
+                        cancellationToken:=cts.Token,
+                        timeOutSeconds:=CInt(INI_ISearch_Timeout)
+                         )
 
-        Await CrawlWebsite(
-                    currentUrl:=baseUrl,
-                    maxDepth:=subTries,
-                    currentDepth:=0,
-                    httpClient:=client,
-                    context:=context,
-                    cancellationToken:=cts.Token,
-                    timeOutSeconds:=CInt(INI_ISearch_Timeout)
-                     )
+        End Using
 
         ' Return plain text with HTML tags removed (up to ISearch_MaxChars)
         Return Left(
@@ -185,6 +223,9 @@ Partial Public Class ThisAddIn
                     )
     End Function
 
+    ''' <summary>
+    ''' Holds crawl state across recursive invocations so that visited urls, aggregated content, and error limits stay consistent.
+    ''' </summary>
     Public Class CrawlContext
         Public Property VisitedUrls As HashSet(Of String)
         Public Property ContentBuilder As StringBuilder
@@ -192,7 +233,17 @@ Partial Public Class ThisAddIn
         Public Property MaxErrors As Integer
     End Class
 
-
+    ''' <summary>
+    ''' Recursively crawls a URL, collecting paragraph text and following links while honoring depth, timeout, and error thresholds.
+    ''' </summary>
+    ''' <param name="currentUrl">The URL currently being crawled.</param>
+    ''' <param name="maxDepth">Maximum depth allowed for recursion.</param>
+    ''' <param name="currentDepth">Current recursion depth.</param>
+    ''' <param name="httpClient">HttpClient used for fetching page content.</param>
+    ''' <param name="context">Shared crawl context for deduplication and aggregation.</param>
+    ''' <param name="cancellationToken">Cancellation token controlling crawl timeout.</param>
+    ''' <param name="timeOutSeconds">Timeout used when the caller does not supply a token.</param>
+    ''' <returns>Empty string because content is accumulated through the shared context.</returns>
     Private Async Function CrawlWebsite(
     currentUrl As String,
     maxDepth As Integer,
@@ -286,7 +337,12 @@ Partial Public Class ThisAddIn
         Return results
     End Function
 
-
+    ''' <summary>
+    ''' Resolves a possibly relative link against the provided base URL and returns the absolute URL string.
+    ''' </summary>
+    ''' <param name="baseUrl">Page URL that acts as the anchor for relative links.</param>
+    ''' <param name="relativeUrl">Relative or absolute href value extracted from a link.</param>
+    ''' <returns>Absolute URL when resolvable; otherwise an empty string.</returns>
     Private Function GetAbsoluteUrl(baseUrl As String, relativeUrl As String) As String
         Try
             Dim baseUri As New Uri(baseUrl)

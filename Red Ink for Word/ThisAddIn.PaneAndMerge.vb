@@ -1,6 +1,27 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.PaneAndMerge.vb
+' Purpose: Provides custom task pane display and intelligent text merging
+'          capabilities for Word document editing with LLM integration.
+'
+' Architecture:
+'  - Pane Display: ShowPaneAsync displays formatted content in custom pane with
+'    optional markdown conversion and document insertion.
+'  - Intelligent Merge: Merges LLM-generated or selected text into document
+'    with configurable formatting and markup options (Word track changes, diff,
+'    diff window, regex).
+'  - Comment Integration: BalloonMerge processes Word comment text and merges
+'    into anchor text or paragraph with LLM processing.
+'  - UI Thread Management: Uses EnsureUIThread and SwitchToUi for thread-safe
+'    Word interop operations.
+'  - ONNX Initialization: Lazy-loads local NER model for anonymization features.
+'  - Markdown Support: Converts markdown to RTF for clipboard or inserts formatted
+'    text into new/existing documents.
+'  - Callback Pattern: IntelligentMergeCallback delegates pane selections to
+'    merge handler.
+' =============================================================================
 
 Option Explicit On
 Option Strict Off
@@ -14,6 +35,16 @@ Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
+    ''' <summary>
+    ''' Displays content in a custom task pane with optional markdown formatting.
+    ''' Supports insertion into new or existing documents.
+    ''' </summary>
+    ''' <param name="introLine">Introduction text displayed at top of pane.</param>
+    ''' <param name="bodyText">Main content to display; may contain markdown if insertMarkdown is True.</param>
+    ''' <param name="finalRemark">Closing text displayed at bottom of pane.</param>
+    ''' <param name="header">Pane header/title text.</param>
+    ''' <param name="noRTF">If True, disables RTF formatting in pane display.</param>
+    ''' <param name="insertMarkdown">If True, enables markdown conversion and insertion options.</param>
     Private Async Sub ShowPaneAsync(
                           introLine As String,
                           bodyText As String,
@@ -28,16 +59,7 @@ Partial Public Class ThisAddIn
 
             Await EnsureUIThread()
 
-            ' Ensure we're on the UI thread for the pane operation
-            'If mainThreadControl.InvokeRequired Then
-            'result = Await mainThreadControl.Invoke(
-            'Function() As Task(Of String)
-            'Return PaneManager.ShowMyPane(introLine, bodyText, finalRemark, header, noRTF, insertMarkdown, New IntelligentMergeCallback(AddressOf HandleIntelligentMerge))
-            'End Function
-            ')
-            'Else
             result = Await PaneManager.ShowMyPane(introLine, bodyText, finalRemark, header, noRTF, insertMarkdown, New IntelligentMergeCallback(AddressOf HandleIntelligentMerge))
-            'End If
 
             If result <> "" Then
                 If result = "Markdown" Then
@@ -72,12 +94,19 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-
+    ''' <summary>
+    ''' Callback handler for pane text selection events. Delegates to IntelligentMerge.
+    ''' </summary>
+    ''' <param name="selectedText">Text selected by user in custom pane.</param>
     Private Sub HandleIntelligentMerge(selectedText As String)
-        ' Hier Deine bestehende Merge-Logik aufrufen:
         IntelligentMerge(selectedText)
     End Sub
 
+    ''' <summary>
+    ''' Intelligently merges new text into selected document text using LLM processing.
+    ''' Prompts user for merge instructions and applies configured formatting/markup.
+    ''' </summary>
+    ''' <param name="newtext">Text to merge into document (typically from pane selection).</param>
     Public Async Sub IntelligentMerge(newtext As String)
         Dim application As Word.Application = Globals.ThisAddIn.Application
         Dim selection As Microsoft.Office.Interop.Word.Selection = application.Selection
@@ -90,11 +119,12 @@ Partial Public Class ThisAddIn
         Dim result As String = Await ProcessSelectedText(OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" & newtext & "</INSERT> ", True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap)
     End Sub
 
-
     ''' <summary>
-    ''' Collects comment text in <c>newtext</c>, selects either the anchor
-    ''' text or its paragraph, and continues with your downstream processing.
+    ''' Merges Word comment text into document text using LLM processing.
+    ''' Selects comment anchor text or entire paragraph(s) based on parameters.
     ''' </summary>
+    ''' <param name="selectWholeParagraph">If True, selects entire paragraph(s) containing comment anchor; if False, selects only anchor text.</param>
+    ''' <param name="Silent">If True, uses cached prompt without user input; if False, prompts user for merge instructions.</param>
     Public Async Function BalloonMerge(
         ByVal selectWholeParagraph As Boolean, Silent As Boolean) As System.Threading.Tasks.Task
 
@@ -106,7 +136,7 @@ Partial Public Class ThisAddIn
         Dim newtext As String = String.Empty
 
         Try
-            '------------ 1) Find the comment the caret belongs to ------------------------
+            ' Find the comment at current cursor position
             If sel.StoryType = WdStoryType.wdCommentsStory Then
                 For Each c As Microsoft.Office.Interop.Word.Comment In doc.Comments
                     If sel.Range.Start >= c.Range.Start AndAlso
@@ -124,7 +154,7 @@ Partial Public Class ThisAddIn
                 Next
             End If
 
-            '------------ 2) Quit if we are not in / on a comment -------------------------
+            ' Validate cursor is in or on a comment
             If activeComment Is Nothing Then
                 ShowCustomMessageBox(
                 "This command only works when the cursor is inside a comment " &
@@ -132,7 +162,7 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
-            '------------ 3) Determine what goes into newtext -----------------------------
+            ' Extract text from comment or selection
             Dim selectedText As String = SafeRangeText(sel.Range)
 
             If sel.StoryType = WdStoryType.wdCommentsStory Then
@@ -152,19 +182,18 @@ Partial Public Class ThisAddIn
                 End If
             End If
 
-            '------------ 4) Adjust the selection in the main story -----------------------
+            ' Select target range in main document
             Dim anchorRange As Range = activeComment.Scope
             Dim targetRange As Range
 
             If selectWholeParagraph Then
                 If anchorRange.Paragraphs.Count > 0 Then
-                    '–– The anchor spans ≥ 1 paragraphs → select them ALL ––
+                    ' Anchor spans one or more paragraphs - select them all
                     Dim firstPara As Range = anchorRange.Paragraphs(1).Range
                     Dim lastPara As Range = anchorRange.Paragraphs(anchorRange.Paragraphs.Count).Range
                     targetRange = doc.Range(firstPara.Start, lastPara.End)
                 Else
-                    '–– Collapsed anchor (no text selected when comment was made) ––
-                    '   Select the paragraph where the anchor is located.
+                    ' Collapsed anchor (no text selected when comment was made) - select containing paragraph
                     targetRange = doc.Range(anchorRange.Start, anchorRange.Start).Paragraphs(1).Range
                 End If
             Else
@@ -174,7 +203,7 @@ Partial Public Class ThisAddIn
 
             targetRange.Select()
 
-            '------------ 5) Your downstream processing -----------------------------------
+            ' Get merge prompt from user or cached value
             If Not Silent Or String.IsNullOrWhiteSpace(SP_MergePrompt2) Then
                 OtherPrompt = SLib.ShowCustomInputBox(
                 "If you want, you can amend the prompt that will be used to " &
@@ -185,6 +214,7 @@ Partial Public Class ThisAddIn
                 OtherPrompt = SP_MergePrompt2
             End If
 
+            ' Prompt user for markup method
             Dim items = {
                 New SelectionItem("Word", 1),
                 New SelectionItem("Diff", 2),
@@ -199,6 +229,7 @@ Partial Public Class ThisAddIn
 
             If picked < 1 Then Return
 
+            ' Process merge with LLM
             Dim result As String = Await ProcessSelectedText(
             OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" &
             newtext & "</INSERT> ",
@@ -213,20 +244,28 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-    ''' <summary>Returns <c>r.Text</c> or an empty string when Word gives back Nothing.</summary>
+    ''' <summary>
+    ''' Safely retrieves text from a Word range, returning empty string if range is Nothing or text is inaccessible.
+    ''' </summary>
+    ''' <param name="r">Word range to extract text from.</param>
+    ''' <returns>Range text or empty string on error.</returns>
     Private Function SafeRangeText(r As Word.Range) As String
         If r Is Nothing Then Return String.Empty
         Try
-            Dim t As String = r.Text          ' can be Nothing in edge-cases
+            Dim t As String = r.Text
             If t Is Nothing Then t = String.Empty
             Return t
         Catch
-            ' extremely rare: r.Text itself can throw in corrupt docs
+            ' Range.Text can throw in corrupt documents
             Return String.Empty
         End Try
     End Function
 
-
+    ''' <summary>
+    ''' Merges comment balloon text into selected document text using LLM processing.
+    ''' Requires active text selection in document.
+    ''' </summary>
+    ''' <param name="newtext">Comment text to merge into document selection.</param>
     Public Async Sub IntelligentMergeBalloon(newtext As String)
         Dim application As Word.Application = Globals.ThisAddIn.Application
         Dim selection As Microsoft.Office.Interop.Word.Selection = application.Selection
@@ -239,12 +278,19 @@ Partial Public Class ThisAddIn
         Dim result As String = Await ProcessSelectedText(OtherPrompt & " " & SP_Add_MergePrompt & " <INSERT>" & newtext & "</INSERT> ", True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap)
     End Sub
 
+    ''' <summary>
+    ''' Tracks whether the ONNX NER model has been successfully initialized.
+    ''' </summary>
     Public ONNX_initialized As Boolean = False
 
+    ''' <summary>
+    ''' Lazily initializes the ONNX-based Named Entity Recognition model for anonymization.
+    ''' Loads model, vocabulary, and label files from configured local path.
+    ''' </summary>
+    ''' <returns>True if already initialized or initialization succeeds; False on error.</returns>
     Private Function EnsureInitialized() As Boolean
 
         If Not ONNX_initialized AndAlso Not String.IsNullOrEmpty(Globals.ThisAddIn.INI_LocalModelPath) Then
-            ' Pfade an dein Add-In anpassen oder aus der Config laden
             Try
                 Dim modelpath As String = System.IO.Path.Combine(ExpandEnvironmentVariables(Globals.ThisAddIn.INI_LocalModelPath), NER_Model)
                 Dim vocabpath As String = System.IO.Path.Combine(ExpandEnvironmentVariables(Globals.ThisAddIn.INI_LocalModelPath), NER_Token)

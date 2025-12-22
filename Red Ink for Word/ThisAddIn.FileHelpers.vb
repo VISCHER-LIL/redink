@@ -1,6 +1,18 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.FileHelpers.vb
+' Purpose: Supplies helper routines for acquiring a file path and reading supported
+'          document types into plain text for downstream processing.
+'
+' Architecture:
+'  - File Selection: Accepts an optional path (with environment expansion) or invokes DragDropForm for user input.
+'  - Normalization & Validation: Trims CR characters, resolves absolute paths, and confirms file existence.
+'  - Content Extraction: Dispatches to SharedMethods readers based on extension (.txt/.rtf/.doc/.pdf/.pptx, etc.),
+'                        optionally enabling OCR for PDF input.
+'  - Error Reporting: Surfaces validation or parsing issues through ShowCustomMessageBox unless Silent mode is enabled.
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -12,6 +24,14 @@ Imports SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
+    ''' <summary>
+    ''' Retrieves textual content from a supported file by using the provided path or prompting the user when no path is supplied.
+    ''' </summary>
+    ''' <param name="optionalFilePath">File path to load; environment variables are expanded when provided.</param>
+    ''' <param name="Silent">Suppresses UI error/notification messages when set to True.</param>
+    ''' <param name="DoOCR">Enables OCR while reading PDF files when True.</param>
+    ''' <param name="AskUser">Indicates whether PDF processing may prompt the user (passed through to PDF reader).</param>
+    ''' <returns>The file content as plain text, or an empty string when the operation is cancelled or fails.</returns>
     Public Async Function GetFileContent(Optional ByVal optionalFilePath As String = Nothing, Optional Silent As Boolean = False, Optional DoOCR As Boolean = False, Optional AskUser As Boolean = True) As Task(Of String)
         Dim filePath As String = ""
         Try
@@ -68,6 +88,10 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
+    ''' <summary>
+    ''' Prompts the user for a file via DragDropForm, validates the selection, and returns the absolute path.
+    ''' </summary>
+    ''' <returns>The normalized file path, or an empty string when the user cancels or validation fails.</returns>
     Public Function GetFileName() As String
         Dim filePath As String = ""
         Try

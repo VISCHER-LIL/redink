@@ -1,6 +1,24 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Processing.FormatSaveAndRestore.vb
+' Purpose: Extracts Word range content together with formatting placeholders,
+'          serializes special elements (notes, fields, highlights, paragraph formats),
+'          and restores them back into the document for Red Ink for Word workflows.
+'
+' Architecture:
+'  - Paragraph Format Capture: Builds ParagraphFormatStructure arrays and injects {{PFOR:n}} markers.
+'  - Markdown Conversion: Iteratively replaces bold/italic/underline/strike/highlight formatting
+'    with Markdown-compatible tokens while preserving range integrity.
+'  - Placeholder Pipeline: Scans ranges for footnotes, endnotes, fields, and paragraph formats,
+'    converts them to inline placeholders, sorts them, and merges them into the extracted text.
+'  - Restoration: Replays placeholders back into Word by recreating notes, fields, and formatting.
+'  - Safety: Uses ProgressScope/ProgressBarModule for cancellation, preserves selection settings,
+'    and avoids altering user formatting when not explicitly requested.
+'  - Dependencies: Microsoft.Office.Interop.Word, SharedLibrary.SharedLibrary, ProgressScope,
+'    and ParagraphFormatStructure definitions elsewhere in the add-in.
+' =============================================================================
 
 Option Explicit On
 Option Strict Off
@@ -11,8 +29,11 @@ Imports SharedLibrary.SharedLibrary
 
 Partial Public Class ThisAddIn
 
+    ''' <summary>
+    ''' Applies previously captured paragraph formatting metadata to the supplied range.
+    ''' </summary>
+    ''' <param name="rng">Target range whose paragraphs are updated.</param>
     Public Sub ApplyParagraphFormat(ByRef rng As Word.Range)
-
         Dim maxParaStylesCount As Integer = paragraphFormat.Length
         Dim paraCount As Integer = rng.Paragraphs.Count
 
@@ -81,7 +102,11 @@ Partial Public Class ThisAddIn
         Next
     End Sub
 
-
+    ''' <summary>
+    ''' Ensures {{PFOR:n}} markers begin on their own line, except for {{PFOR:0}}.
+    ''' </summary>
+    ''' <param name="input">Text containing paragraph format markers.</param>
+    ''' <returns>Adjusted text with corrected marker placement.</returns>
     Public Function CorrectPFORMarkers(ByVal input As String) As String
         Try
             Dim output As New StringBuilder()
@@ -128,14 +153,18 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-
+    ''' <summary>
+    ''' Stores positional and replacement data for placeholder tokens.
+    ''' </summary>
     Private Structure PlaceholderInfo
         Public Offset As Integer     'offset relative to rng.Start (0-based)
         Public Length As Integer     'chars to skip in Word range
         Public Token As String       'replacement text ({{WFNT:…}}, {{PFOR:…}}, …)
     End Structure
 
-
+    ''' <summary>
+    ''' Orders placeholders by offset and then by length.
+    ''' </summary>
     Private Shared ReadOnly PlaceholderComparer As Comparison(Of PlaceholderInfo) =
     Function(a, b)
         If a.Offset <> b.Offset Then
@@ -144,6 +173,14 @@ Partial Public Class ThisAddIn
         Return a.Length.CompareTo(b.Length)
     End Function
 
+    ''' <summary>
+    ''' Extracts text from a Word range, replaces special elements with inline placeholders,
+    ''' and optionally converts formatting to Markdown-compatible markers.
+    ''' </summary>
+    ''' <param name="workingrange">Range whose content is extracted.</param>
+    ''' <param name="PreserveParagraphFormatInline">True to capture per-paragraph formatting.</param>
+    ''' <param name="DoMarkdown">True to emit Markdown markers for styles.</param>
+    ''' <returns>Serialized text containing placeholder tokens.</returns>
     Public Function GetTextWithSpecialElementsInline(
         ByVal workingrange As Word.Range,
         PreserveParagraphFormatInline As Boolean, DoMarkdown As Boolean) As String
@@ -196,7 +233,7 @@ Partial Public Class ThisAddIn
                 End Function
 
             Try
-                '──────────── 0)  Vorbereitung (Range klonen, Settings) ───────────────
+                '──────────── 0)  Preparation (range clone, settings) ───────────────
                 Dim rng As Word.Range = workingrange.Duplicate
                 Dim expandedEnd As Boolean = False
                 If rng.End < rng.Document.Content.End - 1 Then
@@ -207,16 +244,16 @@ Partial Public Class ThisAddIn
                 ProgressScope.Report(System.Threading.Interlocked.Increment(current), label:="Prepping selection …")
                 If Cancelled() Then Return rng.Text
 
-                '──────────── Formatierungen vornehmen ────────────────────────────
+                '──────────── Apply formatting ────────────────────────────
 
                 Debug.WriteLine($"4-1 Range Start = {rng.Start} Selection Start = {Application.Selection.Start}")
                 Debug.WriteLine($"Range End = {rng.End} Selection End = {Application.Selection.End}")
 
-                ' 0a) Markdown für Kombinationen & Einzelformate (mit CR-Handling)
+                ' 0a) Markdown for combinations & single formats (with CR handling)
                 Dim origSel As Word.Range = app.Selection.Range.Duplicate
 
                 If DoMarkdown Then
-                    ' 1) Fett + Italic  (Absatz)
+                    ' 1) Bold + Italic  (paragraph)
                     ReplaceWithinRange(rng,
                             Sub(f)
                                 f.Font.Bold = True
@@ -233,7 +270,7 @@ Partial Public Class ThisAddIn
                     ProgressScope.Report(System.Threading.Interlocked.Increment(current), label:="Markdown: bold+italic (para) …")
                     If Cancelled() Then Return rng.Text
 
-                    ' 2) Fett + Italic  (Inline)
+                    ' 2) Bold + Italic  (inline)
                     ReplaceWithinRange(rng,
                             Sub(f)
                                 f.Font.Bold = True
@@ -253,7 +290,7 @@ Partial Public Class ThisAddIn
                     Debug.WriteLine($"4-2 Range Start = {rng.Start} Selection Start = {Application.Selection.Start}")
                     Debug.WriteLine($"Range End = {rng.End} Selection End = {Application.Selection.End}")
 
-                    ' 3) Nur Fett  (Absatz)
+                    ' 3) Bold only  (paragraph)
                     ReplaceWithinRange(rng,
                             Sub(f)
                                 f.Font.Bold = True
@@ -267,7 +304,7 @@ Partial Public Class ThisAddIn
                     ProgressScope.Report(System.Threading.Interlocked.Increment(current), label:="Markdown: bold (para) …")
                     If Cancelled() Then Return rng.Text
 
-                    ' 4) Nur Fett  (Inline)
+                    ' 4) Bold only  (inline)
                     ReplaceWithinRange(rng,
                             Sub(f)
                                 f.Font.Bold = True
@@ -284,7 +321,7 @@ Partial Public Class ThisAddIn
                     Debug.WriteLine($"4-3 Range Start = {rng.Start} Selection Start = {Application.Selection.Start}")
                     Debug.WriteLine($"Range End = {rng.End} Selection End = {Application.Selection.End}")
 
-                    ' 5) Nur Italic  (Absatz)
+                    ' 5) Italic only  (paragraph)
                     ReplaceWithinRange(rng,
                             Sub(f)
                                 f.Font.Italic = True
@@ -298,7 +335,7 @@ Partial Public Class ThisAddIn
                     ProgressScope.Report(System.Threading.Interlocked.Increment(current), label:="Markdown: italic (para) …")
                     If Cancelled() Then Return rng.Text
 
-                    ' 6) Nur Italic  (Inline)
+                    ' 6) Italic only  (inline)
                     ReplaceWithinRange(rng,
                             Sub(f)
                                 f.Font.Italic = True
@@ -315,7 +352,7 @@ Partial Public Class ThisAddIn
                     Debug.WriteLine($"4-4 Range Start = {rng.Start} Selection Start = {Application.Selection.Start}")
                     Debug.WriteLine($"Range End = {rng.End} Selection End = {Application.Selection.End}")
 
-                    ' 8) Underline  (Inline)
+                    ' 8) Underline  (inline)
                     ReplaceWithinRange(rng,
                             Sub(f)
                                 f.Font.Underline = Word.WdUnderline.wdUnderlineSingle
@@ -329,7 +366,7 @@ Partial Public Class ThisAddIn
                     ProgressScope.Report(System.Threading.Interlocked.Increment(current), label:="Markdown: underline (inline) …")
                     If Cancelled() Then Return rng.Text
 
-                    ' 9) Strikethrough  (Absatz)
+                    ' 9) Strikethrough  (paragraph)
                     ReplaceWithinRange(rng,
                             Sub(f)
                                 f.Font.StrikeThrough = True
@@ -343,7 +380,7 @@ Partial Public Class ThisAddIn
                     ProgressScope.Report(System.Threading.Interlocked.Increment(current), label:="Markdown: strike (para) …")
                     If Cancelled() Then Return rng.Text
 
-                    '10) Strikethrough  (Inline)
+                    '10) Strikethrough  (inline)
                     ReplaceWithinRange(rng,
                             Sub(f)
                                 f.Font.StrikeThrough = True
@@ -376,32 +413,32 @@ Partial Public Class ThisAddIn
                 Debug.WriteLine($"4-5 Range Start = {rng.Start} Selection Start = {Application.Selection.Start}")
                 Debug.WriteLine($"Range End = {rng.End} Selection End = {Application.Selection.End}")
 
-                '──────────── Platzhalter vorbereiten ────────────────────────────
+                '──────────── Prepare placeholders ────────────────────────────
 
                 Dim doc As Word.Document = workingrange.Application.ActiveDocument
                 Dim bmName As String = "__TMP_RNG_" & Guid.NewGuid().ToString("N")
 
-                ' Bookmark anlegen (speichert Start & End)
+                ' Create bookmark (stores start & end)
                 doc.Bookmarks.Add(Name:=bmName, Range:=rng)
                 ProgressScope.Report(System.Threading.Interlocked.Increment(current), label:="Preparing placeholders …")
                 If Cancelled() Then Return rng.Text
 
-                ' Umschalten
+                ' Switch retrieval mode
                 With rng.TextRetrievalMode
                     .IncludeHiddenText = True
                     .IncludeFieldCodes = True
                 End With
 
-                ' Bookmark auslesen und rng zurücksetzen
+                ' Read bookmark and reset range
                 Dim bmRange As Word.Range = doc.Bookmarks(bmName).Range
                 rng.SetRange(bmRange.Start, bmRange.End)
 
-                ' Aufräumen
+                ' Cleanup
                 doc.Bookmarks(bmName).Delete()
 
                 Dim placeholders As New List(Of PlaceholderInfo)
 
-                '──────────── Fuß- & Endnoten sammeln ────────────────────────────
+                '──────────── Collect footnotes & endnotes ────────────────────────────
                 Dim processed As Integer
 
                 processed = 0
@@ -469,7 +506,7 @@ Partial Public Class ThisAddIn
                     Return sbCancel.ToString()
                 End If
 
-                '──────────── Felder – GANZES Feld bestimmen ──────────────
+                '──────────── Fields – determine entire field ──────────────
                 Const WD_FIELD_BEGIN As Integer = 19   'Chr(19)
                 Const WD_FIELD_END As Integer = 21     'Chr(21)
 
@@ -477,7 +514,7 @@ Partial Public Class ThisAddIn
                 For Each fld As Word.Field In rng.Fields
                     Dim codeText As String = fld.Code.Text.Trim()
 
-                    ' A) exakten Feld-Begin ermitteln
+                    ' A) determine exact field begin
                     Dim fldStartAbs As Integer = fld.Code.Start
                     Do While fldStartAbs > rng.Start AndAlso
                         AscW(rng.Characters(fldStartAbs - rng.Start + 1).Text) <> WD_FIELD_BEGIN
@@ -490,7 +527,7 @@ Partial Public Class ThisAddIn
                         Continue For
                     End If
 
-                    ' B) Feld-Ende (0x15) suchen
+                    ' B) search field end (0x15)
                     Dim scanAbs As Integer = fldStartAbs
                     Do While scanAbs < rng.End
                         Dim relIdx As Integer = scanAbs - rng.Start + 1
@@ -547,7 +584,7 @@ Partial Public Class ThisAddIn
                     Return sbCancel.ToString()
                 End If
 
-                '──────────── Absatz-Platzhalter (optional) ───────────────────────
+                '──────────── Paragraph placeholders (optional) ───────────────────────
                 If PreserveParagraphFormatInline AndAlso rng.Paragraphs.Count > 0 Then
                     Dim paraCountLocal As Integer = rng.Paragraphs.Count
                     ReDim paragraphFormat(paraCountLocal - 1)
@@ -610,7 +647,7 @@ Partial Public Class ThisAddIn
                     End If
                 End If
 
-                '──────────── Platzhalter sortieren (Offset ↑, Length ↑) ──────────
+                '──────────── Sort placeholders (Offset ↑, Length ↑) ──────────
                 Debug.WriteLine($"4-6 Range Start = {rng.Start} Selection Start = {Application.Selection.Start}")
                 Debug.WriteLine($"Range End = {rng.End} Selection End = {Application.Selection.End}")
 
@@ -639,7 +676,7 @@ Partial Public Class ThisAddIn
                 Dim newMax As Integer = System.Math.Max(total, current + System.Math.Max(1, placeholders.Count) + 1)
                 ProgressScope.Report(current, max:=newMax, label:="Building result …")
 
-                ' ───── Platzhalter einfügen ────────────────────────────────
+                ' ───── Insert placeholders ────────────────────────────────
                 Dim fullText As String = rng.Text
                 Dim sbInline As New System.Text.StringBuilder(fullText.Length + placeholders.Count * 16)
                 Dim lastPos As Integer = 0
@@ -686,7 +723,11 @@ Partial Public Class ThisAddIn
         End Using
     End Function
 
-
+    ''' <summary>
+    ''' Removes outer <u> … </u> tags (case-insensitive) from the supplied string.
+    ''' </summary>
+    ''' <param name="input">Text that may contain underline tags.</param>
+    ''' <returns>Inner text without wrapping underline tags.</returns>
     Private Shared Function StripSurroundingUTags(input As String) As String
         If String.IsNullOrEmpty(input) Then Return input
         Dim s = input.Trim()
@@ -707,7 +748,13 @@ Partial Public Class ThisAddIn
         Return input
     End Function
 
-
+    ''' <summary>
+    ''' Generic helper that finds formatted fragments inside a range and wraps them with the provided markers.
+    ''' </summary>
+    ''' <param name="rng">Range to scan.</param>
+    ''' <param name="configureFind">Action configuring Word.Find before execution.</param>
+    ''' <param name="replacementText">String containing \1 or ^& tokens.</param>
+    ''' <param name="tweakReplacement">Action clearing formatting on inserted tokens.</param>
     Private Sub ReplaceWithinRange(
     ByVal rng As Microsoft.Office.Interop.Word.Range,
     ByVal configureFind As System.Action(Of Microsoft.Office.Interop.Word.Find),
@@ -955,11 +1002,13 @@ ContinueLoop:
         rng.SetRange(Start:=originalStart, [End]:=allowedEnd)
     End Sub
 
-
-    ' Wrap highlighted text with <mark>…</mark>.
-    ' Options:
-    '  - keepParagraphBreakOutside: keep trailing ^13 outside the tag (paragraph-like behavior)
-    '  - includeColorInTag: for non-yellow highlights, emit <mark:color>…</mark>
+    ''' <summary>
+    ''' Replaces highlighted portions with <mark> tags, optionally retaining paragraph breaks
+    ''' and including highlight color metadata.
+    ''' </summary>
+    ''' <param name="rng">Range to process.</param>
+    ''' <param name="keepParagraphBreakOutside">True to keep trailing paragraph marks outside the tag.</param>
+    ''' <param name="includeColorInTag">True to emit data-ri-color attributes for non-yellow highlights.</param>
     Private Sub ReplaceWithinRange_Highlight(
     ByVal rng As Microsoft.Office.Interop.Word.Range,
     Optional ByVal keepParagraphBreakOutside As Boolean = False,
@@ -1038,12 +1087,17 @@ ContinueLoop:
         End While
     End Sub
 
+    ''' <summary>
+    ''' Maps Word highlight colors to data-ri-color attribute suffixes.
+    ''' </summary>
+    ''' <param name="idx">Word highlight color index.</param>
+    ''' <returns>Suffix appended to the opening &lt;mark&gt; tag or empty string.</returns>
     Private Shared Function HighlightIndexToMarkSuffix(idx As Word.WdColorIndex) As String
         ' Return a valid-HTML attribute suffix for use on the opening <mark ...> tag.
         ' Example usage (caller concatenates): "<mark" & suffix & ">"
         ' Note: Closing tag should remain plain "</mark>" (no attributes).
         Select Case idx
-            Case Word.WdColorIndex.wdNoHighlight, Word.WdColorIndex.wdYellow : Return ""                              ' default <mark>
+            Case Word.WdColorIndex.wdNoHighlight, Word.WdColorIndex.wdYellow : Return ""        ' default <mark>
             Case Word.WdColorIndex.wdBrightGreen : Return " data-ri-color=""brightgreen"""
             Case Word.WdColorIndex.wdTurquoise : Return " data-ri-color=""turquoise"""
             Case Word.WdColorIndex.wdPink : Return " data-ri-color=""pink"""
@@ -1062,8 +1116,11 @@ ContinueLoop:
         End Select
     End Function
 
-
-
+    ''' <summary>
+    ''' Restores serialized placeholder tokens within a range by recreating footnotes,
+    ''' endnotes, fields, and paragraph formatting.
+    ''' </summary>
+    ''' <param name="workingrange">Range containing placeholder tokens to restore.</param>
     Private Sub RestoreSpecialTextElements(workingrange As Word.Range)
 
         Try
@@ -1117,6 +1174,15 @@ ContinueLoop:
         End Try
 
     End Sub
+
+    ''' <summary>
+    ''' Searches a range for placeholders with the specified prefix and invokes a callback
+    ''' to recreate the associated element (footnote, endnote, field, or format).
+    ''' </summary>
+    ''' <param name="workingrange">Range to scan.</param>
+    ''' <param name="doc">Owning document.</param>
+    ''' <param name="placeholderPrefix">Token prefix (e.g., WFNT:).</param>
+    ''' <param name="addNoteAction">Callback that handles reinsertion.</param>
     Private Sub ProcessInTextPlaceholders(ByRef workingrange As Word.Range, doc As Word.Document, placeholderPrefix As String, addNoteAction As Action(Of Word.Document, Word.Range, String))
         Dim PreserveRange As Range = workingrange
         With workingrange.Find
@@ -1158,13 +1224,24 @@ ContinueLoop:
             Loop
         End With
     End Sub
+
+    ''' <summary>
+    ''' Adds a footnote at the specified location.
+    ''' </summary>
     Private Sub AddFootnote(doc As Word.Document, insertionRange As Word.Range, noteText As String)
         doc.Footnotes.Add(Range:=insertionRange, Text:=noteText)
     End Sub
+
+    ''' <summary>
+    ''' Adds an endnote at the specified location.
+    ''' </summary>
     Private Sub AddEndnote(doc As Word.Document, insertionRange As Word.Range, noteText As String)
         doc.Endnotes.Add(Range:=insertionRange, Text:=noteText)
     End Sub
 
+    ''' <summary>
+    ''' Inserts a Word field and restores its code plus optional display text.
+    ''' </summary>
     Private Sub AddField(doc As Word.Document, insertionRange As Word.Range, fieldText As String)
         ' fieldText may be either just the code
         ' or "code|||base64(displayText)" for hyperlink fields
@@ -1196,7 +1273,10 @@ ContinueLoop:
         End If
     End Sub
 
-
+    ''' <summary>
+    ''' Applies a captured paragraph format (style, font, list, spacing) to the paragraph
+    ''' containing the specified insertion range.
+    ''' </summary>
     Private Sub AddFormat(doc As Word.Document, insertionRange As Word.Range, formatIndexText As String)
         Try
             ' Parse the format index from the input text

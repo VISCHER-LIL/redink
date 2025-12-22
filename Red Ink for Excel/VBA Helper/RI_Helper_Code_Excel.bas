@@ -9,9 +9,9 @@ Attribute VB_Name = "RI_Helper_Code"
 ' procedure within the VSTO Add-in of Red Ink for Excel. If you are not allowed to run them, the
 ' add-in will still work, but you can't use the key shortcuts defined.
 '
-' All Rights Reserved. david.rosenthal@vischer.com  https://www.vischer.com/redink
+' Copyright (c) LawDigital Ltd., Switzerland. All Rights Reserved.
 
-Option Explicit
+Option ExplicitOn
 
 Const CurrentVersion As Integer = 1
 Const AddinName As String = "Red Ink for Excel"

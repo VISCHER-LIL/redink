@@ -1,11 +1,22 @@
-﻿Imports System.Drawing
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
 
+Imports System.Drawing
+
+''' <summary>
+''' Designer-generated partial class providing the visual layout for the drag-and-drop dialog.
+''' </summary>
 <Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()>
 Partial Class DragDropForm
     Inherits System.Windows.Forms.Form
 
     'Form overrides dispose to clean up the component list.
-    <System.Diagnostics.DebuggerNonUserCode()> _
+    ''' <summary>
+    ''' Releases managed resources when disposing the designer components container.
+    ''' </summary>
+    ''' <param name="disposing">True when invoked from managed code; False when finalizing.</param>
+    <System.Diagnostics.DebuggerNonUserCode()>
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
             If disposing AndAlso components IsNot Nothing Then
@@ -21,8 +32,8 @@ Partial Class DragDropForm
 
     'NOTE: The following procedure is required by the Windows Form Designer
     'It can be modified using the Windows Form Designer.  
-    'Do not modify it using the code editor.
-    <System.Diagnostics.DebuggerStepThrough()> _
+    'Do not modify it using the code editor.    
+    <System.Diagnostics.DebuggerStepThrough()>
     Private Sub InitializeComponent()
         Me.btnBrowse = New System.Windows.Forms.Button()
         Me.Label1 = New System.Windows.Forms.Label()
@@ -78,8 +89,10 @@ Partial Class DragDropForm
 
     End Sub
 
-
     Friend WithEvents btnBrowse As Windows.Forms.Button
+
     Friend WithEvents Label1 As Windows.Forms.Label
+
     Friend WithEvents Label2 As Windows.Forms.Label
+
 End Class

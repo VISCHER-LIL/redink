@@ -1,12 +1,12 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: TextChunk.vb
 ' Part of: Red Ink Shared Library
 ' Purpose: Lightweight data model representing a text segment with position metadata
 '          and optional vector embedding. Fundamental indexing unit for embedding-based
 '          search systems and bag-of-words stores.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 ' -------------

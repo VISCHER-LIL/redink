@@ -33,21 +33,38 @@
     <IsWebBootstrapper>True</IsWebBootstrapper>
     <TargetFrameworkProfile />
     <BootstrapperEnabled>true</BootstrapperEnabled>
-    <PublishUrl>\\192.168.168.5\datastore\Develop\Web\rosenthal.ch\downloads\redink_prerelease\outlook\</PublishUrl>
-    <InstallUrl>https://apps.vischer.com/redink/outlook/</InstallUrl>
-    <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>0.1.1.88</ApplicationVersion>
+    <TargetCulture>en</TargetCulture>    
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
     <UpdateIntervalUnits>days</UpdateIntervalUnits>
-    <ProductName>Red Ink for Outlook</ProductName>
-    <PublisherName>VISCHER AG</PublisherName>
-    <SupportUrl>https://www.vischer.com/redink</SupportUrl>
+    <PublisherName>LawDigital Ltd.</PublisherName>
+    <SupportUrl>https://redink.ai</SupportUrl>
     <FriendlyName>Red Ink for Outlook</FriendlyName>
     <OfficeApplicationDescription />
     <LoadBehavior>3</LoadBehavior>
   </PropertyGroup>
+	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
+		<ApplicationVersion>1.0.0.700</ApplicationVersion>
+		<PublishUrl>..\clickonce\apps\develop\outlook\</PublishUrl>
+		<InstallUrl>https://redink.ai/apps/develop/outlook/</InstallUrl>
+		<ProductName>Red Ink for Outlook %28Develop%29</ProductName>
+		<FriendlyName>Red Ink for Outlook %28Develop%29</FriendlyName>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
+		<ApplicationVersion>1.0.0.200</ApplicationVersion>
+		<PublishUrl>..\clickonce\apps\preview\outlook\</PublishUrl>
+		<InstallUrl>https://redink.ai/apps/preview/outlook/</InstallUrl>
+		<ProductName>Red Ink for Outlook %28Preview%29</ProductName>
+		<FriendlyName>Red Ink for Outlook %28Preview%29</FriendlyName>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'GA'">
+		<ApplicationVersion>1.0.0.0</ApplicationVersion>
+		<PublishUrl>..\clickonce\apps\ga\outlook\</PublishUrl>
+		<InstallUrl>https://redink.ai/apps/ga/outlook/</InstallUrl>
+		<ProductName>Red Ink for Outlook</ProductName>
+		<FriendlyName>Red Ink for Outlook</FriendlyName>
+	</PropertyGroup>
   <ItemGroup>
     <BootstrapperPackage Include=".NETFramework,Version=v4.7.2">
       <Visible>False</Visible>

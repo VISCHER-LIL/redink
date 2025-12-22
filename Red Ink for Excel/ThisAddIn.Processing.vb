@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.Processing.vb
-' Part of: Red Ink for Excel
 ' Purpose: Cell and range processing with LLM integration. Handles individual cell
 '          processing (formulas and values), range-based operations, batch file
 '          processing, and worksheet content extraction for LLM prompts.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   - ProcessSelectedRange: Main entry point for cell/range processing. Supports
@@ -197,8 +196,6 @@ Partial Public Class ThisAddIn
                             ElseIf Not CBool(cell.HasFormula) Then
                                 ' Handle plain text cells
                                 SelectedText = CStr(cell.Value)
-
-                                Dim regex As New Regex("((\r\n)|\n|\r){2,}$")
 
                                 If DoShorten Then
                                     Dim Textlength As Integer = SelectedText.Length
@@ -783,7 +780,6 @@ Partial Public Class ThisAddIn
                             Marshal.ReleaseComObject(cell)
                         End Try
                     End If
-                    Marshal.ReleaseComObject(cell)
                 Next
             Next
 

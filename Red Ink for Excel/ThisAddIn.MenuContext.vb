@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.MenuContext.vb
-' Part of: Red Ink for Excel
 ' Purpose: Adds a custom popup menu (RIMenu) to relevant Excel context menus; populates
 '          submenu items and assigns optional keyboard shortcuts derived from INI settings.
 '          This requires the VBA helper macros to be loaded and functional.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   - Partial class ThisAddIn manages lifecycle of a context popup named RIMenu.

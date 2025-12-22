@@ -1,7 +1,5 @@
-﻿' Part of: Red Ink Shared Library
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
-
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 
 Option Strict On
 Option Explicit On
@@ -10,18 +8,15 @@ Namespace SharedLibrary
 
     Partial Public Class SharedMethods
 
-        ' Amend the following two values to hard code the encryption key and permitted domains (otherwise the values are taken from the registry at the path below)
-
-        Private Const Int_CodeBasis As String = ""
-        Public Const alloweddomains As String = ""
-
         Public Const AN As String = "Red Ink"
         Public Const AN2 As String = "redink"
         Public Const AN3 As String = "Red Ink" ' Name used for Visual Studio Project 
-        Public Const AN4 As String = "https://vischer.com/redink"  ' Home Website of Red Ink
+        Public Const AN4 As String = "https://redink.ai"  ' Home Website of Red Ink
         Public Const AN5 As String = "Red%20Ink"  ' Name of first part of VSTO installer subdirectory (before "for Word" etc)
         Public Const AN7 As String = "http://localhost:12333/inky"  ' Localhost URL for Inky
         Public Const AN8 As String = "Inky"
+
+        Public Shared CopyrightNotice As String = "Copyright © LawDigital Ltd. 2025"
 
         Public Const NoThinkTrigger As String = "(nothink)"
         Public Const RKModeTrigger1 As String = "(rkmode_all)"
@@ -66,23 +61,23 @@ Namespace SharedLibrary
 
         Public Shared RemoveMenu As Boolean = False
 
-        ' App Updating and Download Urls
+        ' App Updating and Download Urls and VersionQualifier (will be added to the version string in the add-ins and the About box)
 
-        ' Beta Test Phase
+        ' Note: The properties for DEVELOP are defined at SharedMethods.OwnBuild.UpdateURLs.vb, so you can keep it untouched if you update your codebase with code from the repo
 
-        Public Shared AppsUrl As String = "https://apps.vischer.com"
-        Public Shared AppsUrlDir As String = "/redink/"
+#If PREVIEW Then
 
-        ' Preview Phase
+        Public Shared ReadOnly Property AppsUrl As String = "https://redink.ai"
+        Public Shared ReadOnly Property AppsUrlDir As String = "/apps/preview/"
+        Public Shared ReadOnly Property VersionQualifier As String = " Preview"
 
-        'Public Shared AppsUrl As String = "https://redink.ai"
-        'Public Shared AppsUrlDir As String = "/apps/preview/"
+#ElseIf Not DEVELOP Then    ' This is for General Audience (GA)
 
-        ' GA Phase
+        Public Shared ReadOnly Property AppsUrl As String = "https://redink.ai"
+        Public Shared ReadOnly Property AppsUrlDir As String = "/apps/ga/"
+        Public Shared ReadOnly Property VersionQualifier As String = ""
 
-        'Public Shared AppsUrl As String = "https://redink.ai"
-        'Public Shared AppsUrlDir As String = "/apps/ga/"
-
+#End If
 
         Public Shared LicenseText As String =
             $"{AN} for Word, Excel And Outlook has been created In VB.net (handlers: VBA) and uses:" & vbCrLf & vbCrLf &
@@ -131,7 +126,7 @@ Namespace SharedLibrary
             "22. Includes System.Interactive.Async in unchanged form; Copyright (c) 2025 by .NET Foundation and Contributors; " &
             "licensed under the MIT license (https://licenses.nuget.org/MIT) at https://github.com/dotnet/reactive" & vbCrLf &
             "23. Includes also various Microsoft distributables and libraries copyrighted by Microsoft Corporation and available, among others, " &
-            "under the Microsoft EULA and the MIT License (including Microsoft.Bcl.*, Microsoft.Extensions.*, System.*, System.Security.*, System.CodeDom, " &
+            "under the Microsoft EULA, the Visual Studio Community 2022 License and the MIT License (including Microsoft.Bcl.*, Microsoft.Extensions.*, System.*, System.Security.*, System.CodeDom, " &
             "DocumentFormat.OpenXml.*, Microsoft.ml.*, CommunityToolkit.HighPerformance licensed under MIT License) (https://licenses.nuget.org/MIT); " &
             "Copyright (c) 2016- Microsoft Corp." & vbCrLf & vbCrLf & "Disclaimer:" & vbCrLf & vbCrLf &
             "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 'As Is' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE." & vbCrLf & vbCrLf &
@@ -257,7 +252,7 @@ Namespace SharedLibrary
         Public Const BetaUpgradeInstructions As String = "https://redink.ai/beta-upgrade"
 
         ' License constants
-        Public Const PrivateLicenseYears As Integer = 5
+        Public Const PrivateLicenseYears As Integer = 3
         Public Const TestingPeriod As Integer = 6  ' months
         Public Const MaxLicenseYearsInFuture As Integer = 5
         Public Const LicenseCheckDisabledYears As Integer = 100
