@@ -252,7 +252,7 @@ Namespace SharedLibrary
         Public Const BetaUpgradeInstructions As String = "https://redink.ai/beta-upgrade"
 
         ' License constants
-        Public Const PrivateLicenseYears As Integer = 5
+        Public Const PrivateLicenseYears As Integer = 3
         Public Const TestingPeriod As Integer = 6  ' months
         Public Const MaxLicenseYearsInFuture As Integer = 5
         Public Const LicenseCheckDisabledYears As Integer = 100

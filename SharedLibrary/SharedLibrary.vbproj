@@ -17,9 +17,17 @@
     </NuGetPackageImportStamp>
     <TargetFrameworkProfile />
   </PropertyGroup>
-  <PropertyGroup>
-    <DefineConstants>DEVELOP</DefineConstants>
-  </PropertyGroup>
+	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
+		<DefineConstants>DEVELOP</DefineConstants>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
+		<DefineConstants>PREVIEW</DefineConstants>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(RedInkEnvironment)' != 'Develop' and '$(RedInkEnvironment)' != 'Preview'">
+		<DefineConstants>GA</DefineConstants>
+	</PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
