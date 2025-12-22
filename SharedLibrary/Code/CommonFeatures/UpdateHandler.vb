@@ -1,6 +1,5 @@
-﻿' Part of: Red Ink Shared Library
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 
 
 Option Strict On
@@ -857,6 +856,8 @@ Namespace SharedLibrary
                 UIInvokeMessage(
                     $"The update could not be completed: {ex.Message}. Please inform your administrator. You can always try a manual install by visiting {AppsUrl}.",
                     $"{SharedMethods.AN} Updater")
+            Finally
+                CloseUpdatingSplash()
             End Try
         End Sub
 

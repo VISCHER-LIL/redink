@@ -1,7 +1,5 @@
-﻿' Part of: Red Ink Shared Library
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
-
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland (and Gustavo Hennig, as a licensor for the original MarkdowntoRTF code). All rights reserved. For license to use see https://redink.ai.
 
 Option Strict On
 Option Explicit On

@@ -1,12 +1,11 @@
-﻿' =============================================================================
+﻿' Part of "Red Ink for Excel"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
 ' File: ThisAddIn.CSVAnalyzer.vb
-' Part of: Red Ink for Excel
 ' Purpose: Provides CSV/TXT analysis via an LLM and writes structured results
 '          into the active Excel worksheet. Supports dynamic column selection,
 '          chunked processing, progress reporting, and optional secondary model use.
-'
-' Copyright: David Rosenthal, david.rosenthal@vischer.com
-' License: May only be used with an appropriate license (see redink.ai)
 '
 ' Architecture:
 '   1. File Selection: Prompts user to choose a CSV/TXT file (drag/drop dialog).
@@ -276,7 +275,7 @@ Partial Public Class ThisAddIn
                         CType(ws.Cells(outRow, outCol + 1), Excel.Range).Value = chunkSize.ToString()
                         outRow += 1
 
-                        ' Chunksize fields
+                        ' Columns row
                         CType(ws.Cells(outRow, outCol), Excel.Range).Value = "Columns:"
                         CType(ws.Cells(outRow, outCol + 1), Excel.Range).Value = columnsToProcessRaw.ToString()
                         outRow += 1

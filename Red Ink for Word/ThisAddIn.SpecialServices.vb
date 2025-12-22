@@ -1,6 +1,32 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
+' =============================================================================
+' File: ThisAddIn.SpecialServices.vb
+' Purpose: Executes user-selected special services by collecting parameters,
+'          preparing prompts, invoking configured LLM endpoints, and displaying
+'          the returned content inside Word.
+'
+' Architecture:
+'  - Configuration Validation: Ensures INI data is loaded and the special service
+'    path is available before proceeding.
+'  - Parameter Parsing: Reads up to four INI-defined parameter strings, extracts
+'    types/ranges/options, and builds SharedMethods.InputParameter definitions for
+'    user input via ShowCustomVariableInputForm.
+'  - Query Assistant (optional): Offers a helper prompt derived from the current
+'    selection when SP_QueryPrompt is configured.
+'  - Prompt Execution: Calls LLM with the collected prompt/selection data and
+'    retains SP_MergePrompt state for downstream use.
+'  - Result Presentation: Displays responses in a side pane or custom window,
+'    supports markdown insertion into Word, and handles clipboard operations.
+'  - Post-processing: Restores special text elements, updates fields, and reverts
+'    configuration overrides.
+'
+' External Dependencies:
+'  - SharedLibrary.SharedLibrary.SharedMethods for UI helpers, clipboard, markdown,
+'    prompt interpolation, and LLM invocation.
+'  - Microsoft.Office.Interop.Word for document and selection manipulation.
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -15,10 +41,14 @@ Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
+
+    ''' <summary>
+    ''' Drives the special service workflow by validating configuration, collecting optional parameters,
+    ''' invoking the configured LLM, and presenting the generated content to the user.
+    ''' </summary>
     Public Async Sub SpecialModel()
         Try
             If INILoadFail() Then Return
-
             Dim DoPane As Boolean = True
             Dim NoSelectedText As Boolean = False
             Dim AlternateText As String = ""
@@ -439,7 +469,7 @@ Partial Public Class ThisAddIn
                     InsertTextWithMarkdown(Globals.ThisAddIn.Application.Selection, llmresult, False)
                     Dim pattern As String = "\{\{(WFLD|WENT|WFNT):.*?\}\}"
                     If Regex.IsMatch(llmresult, pattern) Then
-                        Dim rng As Range = wordApp.Selection.Range
+                        Dim rng As Range = Globals.ThisAddIn.Application.Selection.Range
                         RestoreSpecialTextElements(rng)
                         rng.Document.Fields.Update()
                     End If

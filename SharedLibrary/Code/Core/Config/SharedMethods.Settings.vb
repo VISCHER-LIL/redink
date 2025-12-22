@@ -1,7 +1,5 @@
-﻿' Part of: Red Ink Shared Library
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
-
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 
 Option Strict On
 Option Explicit On
@@ -170,6 +168,7 @@ Namespace SharedLibrary
 
             Dim CentralConfigAvailable As Boolean = System.IO.File.Exists(System.IO.Path.Combine(ExpandEnvironmentVariables(GetFromRegistry(RegPath_Base, RegPath_IniPath, True)), $"{AN2}.ini"))
             Dim delLocalConfigButton As New System.Windows.Forms.Button()
+            Dim LocalConfigAvailable As Boolean = System.IO.File.Exists(GetDefaultINIPath(context.RDV))
             If CentralConfigAvailable Then
                 delLocalConfigButton.Text = "Give Up Local Config"
             Else
@@ -179,6 +178,9 @@ Namespace SharedLibrary
             delLocalConfigButton.Size = New System.Drawing.Size(delLocalButtonSize.Width + 20, delLocalButtonSize.Height + 10)
             delLocalConfigButton.Location = New System.Drawing.Point(saveConfigButton.Right + buttonSpacing, buttonYPos)
             settingsForm.Controls.Add(delLocalConfigButton)
+            If Not LocalConfigAvailable Then
+                delLocalConfigButton.Enabled = False
+            End If
 
             Dim delLocalConfigToolTip As New System.Windows.Forms.ToolTip()
             If CentralConfigAvailable Then
@@ -2330,20 +2332,33 @@ Namespace SharedLibrary
             ' Example of using the same font and appearance as ShowWindowsSettings
             Dim standardFont As New System.Drawing.Font("Segoe UI", 9.0F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point)
 
-            ' Adjusted dimensions 
-            Dim formWidth As Integer = CInt(450)
+            ' Make the form 30% wider than the original 450
+            Dim baseWidth As Integer = 450
+            Dim formWidth As Integer = CInt(baseWidth * 1.3)
 
             ' Calculate height based on text content
             Dim ExpireText As String = $"{vbCrLf}{vbCrLf}(your {If(String.IsNullOrEmpty(LicenseStatus), "(undefined license type)", LicenseStatus)} for {LicenseUsers} user(s) expires on {LicensedTill.ToString("dd-MMM-yyyy")})"
             Dim testRichTextBox As New System.Windows.Forms.RichTextBox() With {
-        .Font = standardFont,
-        .Text = $"{AN}{vbCrLf}{context.RDV}{ExpireText}{vbCrLf}{vbCrLf}Created by David Rosenthal{vbCrLf}david.rosenthal@vischer.com{vbCrLf}{vbCrLf}VISCHER AG, Zürich, Switzerland{vbCrLf}Swiss Law & Tax{vbCrLf}{vbCrLf}All rights reserved.{vbCrLf}{vbCrLf}{AN4}"
-    }
+                            .Font = standardFont,
+                            .Text = $"{AN}{vbCrLf}{context.RDV}{ExpireText}{vbCrLf}{vbCrLf}By David Rosenthal & Team{vbCrLf}{vbCrLf}{CopyrightNotice}{vbCrLf}{vbCrLf}All rights reserved.{vbCrLf}{vbCrLf}{AN4}{vbCrLf}{vbCrLf}Local Chat: {AN7}"
+                        }
             Dim graphics As System.Drawing.Graphics = testRichTextBox.CreateGraphics()
             Dim textSize As System.Drawing.SizeF = graphics.MeasureString(testRichTextBox.Text, standardFont, formWidth - 40)
-            Dim formHeight As Integer = CInt(textSize.Height + 260 + 60) ' Add padding for margins, logo, buttons, extra button row, and 1–2 extra lines
             graphics.Dispose()
             testRichTextBox.Dispose()
+
+            ' Calculate required height: logo + text + buttons + margins
+            Dim logoSize As Integer = 120
+            Dim buttonHeight As Integer = 30
+            Dim buttonSpacing As Integer = 10
+            Dim margins As Integer = 80 ' top/bottom margins and spacing
+
+            Dim requiredHeight As Integer = logoSize + CInt(textSize.Height) + (buttonHeight * 3) + (buttonSpacing * 4) + margins
+
+            ' Clamp to screen working area if needed
+            Dim workArea = Screen.FromPoint(Cursor.Position).WorkingArea
+            Dim maxHeight As Integer = CInt(workArea.Height * 0.85)
+            Dim formHeight As Integer = Math.Min(requiredHeight, maxHeight)
 
             ' Create the form
             Dim aboutForm As New System.Windows.Forms.Form() With {
@@ -2359,7 +2374,6 @@ Namespace SharedLibrary
                     }
 
             ' Add a logo
-            Dim logoSize As Integer = 120
             Dim logo As New System.Windows.Forms.PictureBox() With {
                         .Image = My.Resources.Red_Ink_Logo_Large,
                         .SizeMode = System.Windows.Forms.PictureBoxSizeMode.Zoom,
@@ -2374,18 +2388,19 @@ Namespace SharedLibrary
                         .BorderStyle = System.Windows.Forms.BorderStyle.None,
                         .BackColor = owner.BackColor,
                         .Font = standardFont,
-                        .DetectUrls = True
+                        .DetectUrls = True,
+                        .ScrollBars = RichTextBoxScrollBars.None
                     }
 
             Dim topOffset As Integer = logo.Bottom + 10
-            Dim bottomPadding As Integer = 140
+            Dim bottomPadding As Integer = (buttonHeight * 3) + (buttonSpacing * 4) + 20
             Dim availableHeight As Integer = formHeight - topOffset - bottomPadding
             aboutTextBox.Size = New System.Drawing.Size(formWidth - 40, availableHeight)
             aboutTextBox.Location = New System.Drawing.Point(20, topOffset)
             aboutForm.Controls.Add(aboutTextBox)
 
             Dim aboutContent As String =
-        $"{AN}<P>{context.RDV}{ExpireText}<P><P>Created by David Rosenthal<P>david.rosenthal@vischer.com<P>VISCHER AG, Zürich, Switzerland<P><P>All rights reserved.<P><P>{AN4}<P><P>Local Chat: {AN7}"
+        $"{AN}<P>{context.RDV}{ExpireText}<P><P>By David Rosenthal & Team<P><P>{CopyrightNotice}<P><P>All rights reserved.<P><P>{AN4}<P><P>Local Chat: {AN7}"
 
             ' Replace <P> with vbCrLf
             Dim plainText As New System.Text.StringBuilder()
@@ -2426,19 +2441,17 @@ Namespace SharedLibrary
             Dim resetButtonText As String = "Update License Info"
             Dim licenseTextSize As Size = TextRenderer.MeasureText(licenseButtonText, standardFont)
             Dim resetTextSize As Size = TextRenderer.MeasureText(resetButtonText, standardFont)
-            Dim buttonHeight As Integer = 30
             Dim buttonPadding As Integer = 20
-            Dim buttonSpacing As Integer = 10
 
             Dim licenseButtonWidth As Integer = licenseTextSize.Width + buttonPadding
             Dim resetButtonWidth As Integer = resetTextSize.Width + buttonPadding
-            Dim totalButtonWidth As Integer = licenseButtonWidth + buttonSpacing + resetButtonWidth
-            Dim buttonsLeft As Integer = (formWidth - totalButtonWidth) \ 2
+            Dim stackedButtonWidth As Integer = Math.Max(licenseButtonWidth, resetButtonWidth)
+            Dim buttonsLeft As Integer = (formWidth - stackedButtonWidth) \ 2
 
             ' Add a "License" button
             Dim licenseButton As New System.Windows.Forms.Button() With {
                         .Text = licenseButtonText,
-                        .Size = New System.Drawing.Size(licenseButtonWidth, buttonHeight),
+                        .Size = New System.Drawing.Size(stackedButtonWidth, buttonHeight),
                         .Location = New System.Drawing.Point(buttonsLeft, aboutTextBox.Bottom + 10)
                     }
             AddHandler licenseButton.Click, Sub(sender, e) ShowRTFCustomMessageBox(ConvertMarkupToRTF(LicenseText), AN)
@@ -2447,9 +2460,9 @@ Namespace SharedLibrary
             ' Add a "Reset License" button
             Dim resetLicenseButton As New System.Windows.Forms.Button() With {
                         .Text = resetButtonText,
-                        .Size = New System.Drawing.Size(resetButtonWidth, buttonHeight),
-                        .Location = New System.Drawing.Point(licenseButton.Right + buttonSpacing, aboutTextBox.Bottom + 10),
-                        .Enabled = Not LicenseFromConfig AndAlso Not IsBetaVersion() AndAlso Not LicenseStatus = "Beta Test License"  ' Only enable if license is from config and not beta test
+                        .Size = New System.Drawing.Size(stackedButtonWidth, buttonHeight),
+                        .Location = New System.Drawing.Point(buttonsLeft, licenseButton.Bottom + buttonSpacing),
+                        .Enabled = Not LicenseFromConfig AndAlso Not IsBetaVersion() AndAlso Not LicenseStatus = "Beta Test License"
                     }
             AddHandler resetLicenseButton.Click, Sub(sender, e)
                                                      Try
@@ -2481,11 +2494,17 @@ Namespace SharedLibrary
             ' Add an OK button
             Dim okButton As New System.Windows.Forms.Button() With {
                         .Text = "OK",
-                        .Size = New System.Drawing.Size(80, 30),
-                        .Location = New System.Drawing.Point((formWidth - 80) \ 2, formHeight - 40)
+                        .Size = New System.Drawing.Size(80, buttonHeight),
+                        .Location = New System.Drawing.Point((formWidth - 80) \ 2, resetLicenseButton.Bottom + buttonSpacing)
                     }
             AddHandler okButton.Click, Sub(sender, e) aboutForm.Close()
             aboutForm.Controls.Add(okButton)
+
+            ' Adjust form height to fit OK button if needed
+            Dim finalHeight As Integer = okButton.Bottom + 20
+            If finalHeight > formHeight Then
+                aboutForm.ClientSize = New System.Drawing.Size(formWidth, Math.Min(finalHeight, maxHeight))
+            End If
 
             ' Show the form
             aboutForm.ShowDialog(owner)

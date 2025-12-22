@@ -1,6 +1,38 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Commands.vb
+' Purpose: Implements command handlers for the Red Ink Word add-in, providing
+'          AI-powered text processing operations including translation, correction,
+'          improvement, anonymization, summarization, and style analysis.
+'
+' Architecture:
+'  - Command Methods: Each public Sub corresponds to a ribbon button or context menu action
+'  - INI Configuration: Commands check INILoadFail() and use INI_* settings for behavior
+'  - Async Processing: Most commands use ProcessSelectedText() for asynchronous LLM calls
+'  - Markup Support: Multiple markup methods (Word Track Changes, Diff, Regex) for showing changes
+'  - Format Preservation: HTML/Markdown encoding to maintain text formatting through LLM processing
+'  - Override System: Settings support personal overrides (e.g., INI_ReplaceText2Override)
+'  - Model Selection: Support for alternate models via INI_AlternateModelPath
+'  - MyStyle System: User writing style profiles stored in prompt files
+'  - Anonymization: File-based or prompt-based entity replacement
+'  - Dialog Integration: Custom input boxes, message boxes, and progress indicators
+'
+' Dependencies:
+'  - SharedLibrary.SharedLibrary.SharedMethods: UI helpers, LLM communication, text processing
+'  - Whisper.net.LibraryLoader: Speech-to-text functionality
+'  - DocumentFormat.OpenXml: Document format handling
+'  - Microsoft.Office.Interop.Word: Word automation
+'
+' Key Methods:
+'  - Translation: InLanguage1(), InLanguage2(), InOther()
+'  - Text Enhancement: Correct(), Improve(), Friendly(), Convincing(), NoFillers()
+'  - Analysis: CheckDocumentII(), Explain(), SuggestTitles()
+'  - Transformation: Anonymize(), Shorten(), Filibuster(), SwitchParty()
+'  - Style: ApplyMyStyle(), DefineMyStyle()
+'  - Utilities: ShowSettings(), Transcriptor(), ShowChatForm()
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -22,17 +54,31 @@ Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 Partial Public Class ThisAddIn
 
 
+    ''' <summary>
+    ''' Translates selected text to the primary language configured in INI_Language1.
+    ''' Uses ProcessSelectedText with SP_Translate prompt and INI_KeepFormat1 settings.
+    ''' </summary>
     Public Async Sub InLanguage1()
         If INILoadFail() Then Return
         TranslateLanguage = INI_Language1
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Translate), True, INI_KeepFormat1, INI_KeepParaFormatInline, INI_ReplaceText1, False, 0, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not INI_ReplaceText1)
     End Sub
+
+    ''' <summary>
+    ''' Translates selected text to the secondary language configured in INI_Language2.
+    ''' Uses ProcessSelectedText with SP_Translate prompt and INI_KeepFormat1 settings.
+    ''' </summary>
     Public Async Sub InLanguage2()
 
         If INILoadFail() Then Return
         TranslateLanguage = INI_Language2
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Translate), True, INI_KeepFormat1, INI_KeepParaFormatInline, INI_ReplaceText1, False, 0, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not INI_ReplaceText1)
     End Sub
+
+    ''' <summary>
+    ''' Prompts user for target language and translates selected text.
+    ''' Uses ProcessSelectedText with SP_Translate prompt and INI_KeepFormat1 settings.
+    ''' </summary>
     Public Async Sub InOther()
         If INILoadFail() Then Return
         TranslateLanguage = SLib.ShowCustomInputBox("Enter your target language", $"{AN} Translate", True)
@@ -41,28 +87,51 @@ Partial Public Class ThisAddIn
         End If
     End Sub
 
+    ''' <summary>
+    ''' Corrects grammar and spelling in selected text using SP_Correct prompt.
+    ''' Applies optional markup based on INI_DoMarkupWord and INI_MarkupMethodWord settings.
+    ''' </summary>
     Public Async Sub Correct()
         If INILoadFail() Then Return
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Correct), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
+    ''' <summary>
+    ''' Enhances the selected text using the SP_Improve prompt while honoring the configured formatting and markup settings.
+    ''' </summary>
     Public Async Sub Improve()
         If INILoadFail() Then Return
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Improve), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
+
+    ''' <summary>
+    ''' Rewrites the selection with a friendlier tone through the SP_Friendly prompt, respecting the current formatting and markup options.
+    ''' </summary>
     Public Async Sub Friendly()
         If INILoadFail() Then Return
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Friendly), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
+
+    ''' <summary>
+    ''' Strengthens the persuasiveness of the selected text by invoking SP_Convincing with the active formatting and markup configuration.
+    ''' </summary>
     Public Async Sub Convincing()
         If INILoadFail() Then Return
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Convincing), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
+
+    ''' <summary>
+    ''' Removes filler phrases from the selection via SP_NoFillers while keeping the configured formatting logic intact.
+    ''' </summary>
     Public Async Sub NoFillers()
         If INILoadFail() Then Return
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_NoFillers), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
+    ''' <summary>
+    ''' Applies user-defined writing style from MyStyle prompt file to selected text.
+    ''' Validates MyStyle configuration, prompts for style selection, then processes text.
+    ''' </summary>
     Public Async Sub ApplyMyStyle()
         If INILoadFail() Then Return
 
@@ -71,6 +140,7 @@ Partial Public Class ThisAddIn
 
         Dim StylePath As String = ExpandEnvironmentVariables(INI_MyStylePath)
 
+        ' Validate MyStyle configuration
         If String.IsNullOrWhiteSpace(StylePath) Then
             ShowCustomMessageBox("You have not defined a MyStyle prompt file. Please do so first in the configuration file or using 'Settings'.")
             Return
@@ -84,17 +154,23 @@ Partial Public Class ThisAddIn
             Return
         End If
 
+        ' Prompt user to select style from MyStyle file
         MyStyleInsert = MyStyleHelpers.SelectPromptFromMyStyle(StylePath, "Word", 0, "Choose the style prompt to apply …", $"{AN} MyStyle", False)
         If MyStyleInsert = "ERROR" Then Return
         If MyStyleInsert = "NONE" OrElse String.IsNullOrWhiteSpace(MyStyleInsert) Then
             Return
         End If
 
+        ' Apply selected style to text
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_MyStyle_Apply) & " " & MyStyleInsert, True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
 
-
+    ''' <summary>
+    ''' Checks document for identifiable information (PII/sensitive data).
+    ''' Supports processing from selection, entire document, or external file.
+    ''' Uses SP_CheckforII prompt with bubble extraction for results display.
+    ''' </summary>
     Public Async Sub CheckDocumentII()
         If INILoadFail() Then Return
 
@@ -107,21 +183,20 @@ Partial Public Class ThisAddIn
             If sel Is Nothing Then Return
 
             Dim rng As Microsoft.Office.Interop.Word.Range = sel.Range
-
             Dim FromFile As String = ""
 
+            ' Handle no selection case - offer file import
             If sel.Type = WdSelectionType.wdSelectionIP Then
-
                 Dim answer As Integer = ShowCustomYesNoBox("You have not selected any text. Do you instead want to analyze text from a document file or Powerpoint presentation?", "Yes", "No, proceed with this text", AN & " Check for Identifiable Information")
                 If answer = 1 Then
-
+                    ' Configure supported file types
                     DragDropFormLabel = "Document files (.txt, .docx, .pdf) or Powerpoint (.pptx)."
-                    DragDropFormFilter = "Supported Files|*.txt;*.rtf;*.doc;*.docx;*.pdf;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm)|*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm;*.pptx||" &
-                                 "Text Files (*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm)|*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm|" &
-                                 "Rich Text Files (*.rtf)|*.rtf|" &
-                                 "Word Documents (*.doc;*.docx)|*.doc;*.docx|" &
-                                 "PDF Files (*.pdf)|*.pdf" &
-                                 "Powerpoint Files (*.pptx)|*.pptx"
+                    DragDropFormFilter = "Supported Files|*.txt;*.rtf;*.doc;*.docx;*.pdf;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm;*.pptx|" &
+                             "Text Files (*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm)|*.txt;*.ini;*.csv;*.log;*.json;*.xml;*.html;*.htm|" &
+                             "Rich Text Files (*.rtf)|*.rtf|" &
+                             "Word Documents (*.doc;*.docx)|*.doc;*.docx|" &
+                             "PDF Files (*.pdf)|*.pdf|" &
+                             "Powerpoint Files (*.pptx)|*.pptx"
 
                     Dim FilePath As String = GetFileName()
                     DragDropFormLabel = ""
@@ -131,6 +206,7 @@ Partial Public Class ThisAddIn
                         Return
                     End If
 
+                    ' Extract content from selected file
                     Dim ext As String = IO.Path.GetExtension(FilePath).ToLowerInvariant()
                     FromFile = Await GetFileContent(FilePath, False, True, True)
 
@@ -143,13 +219,14 @@ Partial Public Class ThisAddIn
                         Return
                     End If
 
+                    ' Create new document with imported content
                     Dim newDoc As Word.Document = Globals.ThisAddIn.Application.Documents.Add()
                     newDoc.Activate()
 
                     rng = newDoc.Content
                     rng.Collapse(Word.WdCollapseDirection.wdCollapseEnd)
 
-                    ' Sanitize: remove NULs and normalize line breaks to CRLF
+                    ' Sanitize: remove NULs and normalize line breaks
                     Dim safeText As String = If(FromFile, String.Empty)
                     safeText = safeText.Replace(ChrW(0), String.Empty)
 
@@ -166,34 +243,38 @@ Partial Public Class ThisAddIn
                 End If
             End If
 
-            ' No selection -> select the entire document content
+            ' If no selection, select entire document
             If rng Is Nothing OrElse rng.Start = rng.End Then
                 doc.Content.Select()
             End If
 
+            ' Process document for identifiable information
             Dim result As System.String = Await ProcessSelectedText(
-            InterpolateAtRuntime(SP_CheckforII),
-            True,
-            INI_KeepFormat2,
-            INI_KeepParaFormatInline,
-            Override(INI_ReplaceText2, INI_ReplaceText2Override),
-            INI_DoMarkupWord,
-            Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride),
-            True,
-            False,
-            True,
-            False,
-            INI_KeepFormatCap,
-            NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override),
-            DoBubblesExtract:=True
-        )
+        InterpolateAtRuntime(SP_CheckforII),
+        True,
+        INI_KeepFormat2,
+        INI_KeepParaFormatInline,
+        Override(INI_ReplaceText2, INI_ReplaceText2Override),
+        INI_DoMarkupWord,
+        Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride),
+        True,
+        False,
+        True,
+        False,
+        INI_KeepFormatCap,
+        NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override),
+        DoBubblesExtract:=True
+    )
 
         Catch ex As System.Exception
-            ' 
+            ' Silent catch
         End Try
     End Sub
 
-
+    ''' <summary>
+    ''' Opens text editor for local or central redaction instructions file.
+    ''' Creates file with template if it doesn't exist.
+    ''' </summary>
     Public Async Sub EditRedactionInstructions()
         If INILoadFail() Then Return
         Dim chosenPath As String = ""
@@ -233,7 +314,11 @@ Partial Public Class ThisAddIn
     End Sub
 
 
-
+    ''' <summary>
+    ''' Anonymizes selected text by replacing identifiable entities.
+    ''' Supports multiple markup methods; prompts user for method if configuration suggests alternatives.
+    ''' Uses SP_Anonymize prompt with optional Regex markup for larger texts.
+    ''' </summary>
     Public Async Sub Anonymize()
         If INILoadFail() Then Return
 
@@ -268,6 +353,11 @@ Partial Public Class ThisAddIn
 
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Anonymize), True, INI_KeepFormat2, INI_KeepParaFormatInline, DoReplace, DoMarkup, MarkupMethod, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not DoReplace)
     End Sub
+
+
+    ''' <summary>
+    ''' Provides explanations for the selected text using the SP_Explain prompt.
+    ''' </summary>
     Public Async Sub Explain()
         If INILoadFail() Then Return
 
@@ -314,11 +404,18 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
+    ''' <summary>
+    ''' Suggests titles for the selected text using the SP_SuggestTitles prompt.
+    ''' Honors formatting and markup settings from configuration.
+    ''' </summary>
     Public Async Sub SuggestTitles()
         If INILoadFail() Then Return
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_SuggestTitles), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), True, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
+    ''' <summary>
+    ''' Sends clipboard content to the SP_InsertClipboard prompt (requires INI_APICall_Object) and inserts the LLM response beneath the caret.
+    ''' </summary>
     Public Async Sub InsertClipboard()
 
         If String.IsNullOrWhiteSpace(INI_APICall_Object) Then
@@ -345,7 +442,10 @@ Partial Public Class ThisAddIn
 
     End Sub
 
-
+    ''' <summary>
+    ''' Shortens selected text by specified percentage.
+    ''' Prompts user for target reduction percentage, calculates word count, applies SP_Shorten prompt.
+    ''' </summary>
     Public Async Sub Shorten()
 
         If INILoadFail() Then Return
@@ -377,6 +477,9 @@ Partial Public Class ThisAddIn
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Shorten), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
+    ''' <summary>
+    ''' Expands the selected text to a user-defined word count using SP_Filibuster and the current formatting/markup preferences.
+    ''' </summary>
     Public Async Sub Filibuster()
 
         If INILoadFail() Then Return
@@ -406,6 +509,9 @@ Partial Public Class ThisAddIn
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Filibuster), True, INI_KeepFormat2, INI_KeepParaFormatInline, Override(INI_ReplaceText2, INI_ReplaceText2Override), INI_DoMarkupWord, Override(INI_MarkupMethodWord, INI_MarkupMethodWordOverride), False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not Override(INI_ReplaceText2, INI_ReplaceText2Override))
     End Sub
 
+    ''' <summary>
+    ''' Generates an opposing argument of the requested length against the selection by calling SP_ArgueAgainst without replacement markup.
+    ''' </summary>
     Public Async Sub ArgueAgainst()
 
         If INILoadFail() Then Return
@@ -434,6 +540,9 @@ Partial Public Class ThisAddIn
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_ArgueAgainst), False, False, False, False, False, 0, True, False, True, False, 0)
     End Sub
 
+    ''' <summary>
+    ''' Swaps occurrences of two user-specified party names through SP_SwitchParty, optionally forcing Regex markup for larger texts.
+    ''' </summary>
     Public Async Sub SwitchParty()
         If INILoadFail() Then Return
         Dim UserInput As String
@@ -486,6 +595,10 @@ Partial Public Class ThisAddIn
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_SwitchParty), True, INI_KeepFormat2, INI_KeepParaFormatInline, DoReplace, DoMarkup, MarkupMethod, False, False, True, False, INI_KeepFormatCap, NoFormatAndFieldSaving:=Not DoReplace)
 
     End Sub
+
+    ''' <summary>
+    ''' Summarizes the selected text to a user-defined word count using SP_Summarize without replacement markup.
+    ''' </summary>
     Public Async Sub Summarize()
         If INILoadFail() Then Return
         Dim application As Word.Application = Globals.ThisAddIn.Application
@@ -519,8 +632,11 @@ Partial Public Class ThisAddIn
         Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SP_Summarize), False, False, False, False, False, 0, True, False, True, False, 0)
     End Sub
 
-    Private chatForm As frmAIChat
 
+    ''' <summary>
+    ''' Opens the speech transcription form for audio-to-text conversion.
+    ''' Configures Whisper.net library path from INI_SpeechModelPath before launching.
+    ''' </summary>
     Public Sub Transcriptor()
         If INILoadFail() Then Return
         If Not String.IsNullOrEmpty(INI_SpeechModelPath) Then
@@ -542,6 +658,12 @@ Partial Public Class ThisAddIn
         TranscriptionForm.Show()
     End Sub
 
+    Private chatForm As frmAIChat
+
+    ''' <summary>
+    ''' Shows or activates the AI chat window.
+    ''' Restores previous window position/size from My.Settings if available.
+    ''' </summary>
     Public Sub ShowChatForm()
         If INILoadFail() Then Return
         If chatForm Is Nothing OrElse chatForm.IsDisposed Then
@@ -567,7 +689,9 @@ Partial Public Class ThisAddIn
     End Sub
 
 
-
+    ''' <summary>
+    ''' Guides the user through sample selection, optional alternate model usage, and stores the SP_MyStyle_Word result in the MyStyle prompt file.
+    ''' </summary>
     Public Async Sub DefineMyStyle()
         If INILoadFail() Then Return
 
@@ -578,7 +702,7 @@ Partial Public Class ThisAddIn
             Return
         End If
 
-        Dim Label As String = $"You are about to have {AN} create a profile of your writing syle. There are six steps:" & vbCrLf & vbCrLf &
+        Dim Label As String = $"You are about to have {AN} create a profile of your writing style. There are six steps:" & vbCrLf & vbCrLf &
                                "1. If you have selected text, this will be used as a sample." & vbCrLf &
                                "2. You select one, all or none of the open Word documents as further samples." & vbCrLf &
                                "3. You can provide further input as further instructions to the model (e.g., Internet links to check if the model is able to do so)." & vbCrLf &
@@ -665,9 +789,11 @@ Partial Public Class ThisAddIn
     End Sub
 
 
-
-
-
+    ''' <summary>
+    ''' Easter egg feature: generates humorous wisdom based on Hasidic humor tradition.
+    ''' Uses current selection, paragraph, or user context (name, date) as input.
+    ''' Respects INI_RoastMe setting for tone (politically correct vs. provocative).
+    ''' </summary>
     Public Async Sub EasterEgg()
 
         Dim splash As New SLib.SplashScreen($"{AN6} is preparing to tickle{If(INI_RoastMe, " (inofficial version)", "")}...")
@@ -732,6 +858,9 @@ Partial Public Class ThisAddIn
     End Sub
 
 
+    ''' <summary>
+    ''' Runs the configured file/prompt-based anonymization on the current selection, displays entity mappings, and copies the chosen output to the clipboard.
+    ''' </summary>
 
     Public Sub AnonymizeSelection()
 
@@ -797,6 +926,9 @@ Partial Public Class ThisAddIn
 
     Private _win As HelpMeInky = Nothing
 
+    ''' <summary>
+    ''' Displays (or raises) the HelpMeInky helper window bound to the current add-in context.
+    ''' </summary>
     Public Sub HelpMeInky()
         If _win Is Nothing OrElse _win.IsDisposed Then
             _win = New HelpMeInky(_context, RDV)
@@ -807,6 +939,9 @@ Partial Public Class ThisAddIn
 
     Private _win2 As DiscussInky = Nothing
 
+    ''' <summary>
+    ''' Displays (or raises) the DiscussInky discussion window for the active add-in context.
+    ''' </summary>
     Public Sub DiscussInky()
         If _win2 Is Nothing OrElse _win2.IsDisposed Then
             _win2 = New DiscussInky(_context)
@@ -815,6 +950,10 @@ Partial Public Class ThisAddIn
         _win2.ShowRaised()
     End Sub
 
+    ''' <summary>
+    ''' Displays the settings editor window with configuration options and tooltips.
+    ''' Updates context menu after settings are changed.
+    ''' </summary>
     Public Sub ShowSettings()
 
         If INILoadFail() Then Return
@@ -886,7 +1025,7 @@ Partial Public Class ThisAddIn
                 {"ShortcutsWordExcel", "You can add key shortcuts by giving the name of the context menu, e.g., 'Correct=Ctrl-Shift-C', separated by ';' (only works if context menus are enabled and the Word helper is installed)"},
                 {"ChatCap", "Use this to limit how many characters of your past chat discussion the chatbot will memorize (for saving costs and time)"},
                 {"MyStylePath", "This is the path where the prompts are stored that convey your writing style (if defined, see 'Analyze')."},
-                {"DefaultPrefix", "You can define here the default prefix to use within 'Freestyle' if no other prefix is used (will be added authomatically)."}
+                {"DefaultPrefix", "You can define here the default prefix to use within 'Freestyle' if no other prefix is used (will be added automatically)."}
             }
 
         ShowSettingsWindow(Settings, SettingsTips)

@@ -1,4 +1,5 @@
 ; My prompt library for Red Ink:
+; https://redink.ai
 
 ; On each line you first provide the title/description of your prompt, then following the separator "|" provide the full prompt. Note that the selected text will be submitted following your prompt. Some examples have been taken from VGPT for illustration purposes only. 
 

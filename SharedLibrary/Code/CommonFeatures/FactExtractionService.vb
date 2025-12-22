@@ -1,5 +1,6 @@
-﻿' Part of: Red Ink Shared Library
-' Copyright by David Rosenthal
+﻿' Part of "Red Ink" (SharedLibrary)
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
 Option Explicit On
 Option Strict On
 

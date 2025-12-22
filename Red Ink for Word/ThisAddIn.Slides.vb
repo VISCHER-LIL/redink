@@ -1,6 +1,30 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Slides.vb
+' Purpose: Provides PowerPoint presentation manipulation capabilities using
+'          OpenXML SDK for slide extraction, creation, and modification.
+'
+' Architecture:
+'  - JSON Extraction: Reads .pptx files and serializes slide metadata, layouts,
+'    placeholders, and text content to JSON for AI processing.
+'  - Plan Application: Parses AI-generated JSON action plans and executes
+'    slide additions with titles, text, bullets, shapes, and SVG icons.
+'  - Layout Resolution: Resolves layouts by relId, URI, or name; falls back
+'    to cover-like or default layouts when not found.
+'  - Template Cloning: Clones layout structure to new slides, copies images,
+'    and purges sample text from placeholders.
+'  - Text Population: Supports plain text, bulleted lists, and freestanding
+'    text boxes with style properties (font, size, bold, italic, color).
+'  - Shape Creation: Adds geometric shapes with fill, outline, and optional
+'    text content using absolute or percentage-based positioning.
+'  - Speaker Notes: Creates or updates notes slide parts with provided content.
+'  - Validation: Includes PPTX package validation and OpenXML error checking.
+'  - External Dependencies: DocumentFormat.OpenXml, System.Text.Json,
+'    SharedLibrary.SharedMethods for UI messaging.
+' =============================================================================
+
 
 Option Explicit On
 Option Strict Off
@@ -23,8 +47,15 @@ Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
+
+#Region "JSON Extraction"
+
+    ''' <summary>
+    ''' Extracts presentation metadata and content from a PPTX file as JSON.
+    ''' </summary>
+    ''' <param name="pptxPath">Full path to the PowerPoint file.</param>
+    ''' <returns>JSON string containing slides, layouts, and content; empty string on error.</returns>
     Public Function GetPresentationJson(pptxPath As String) As String
-        ' 0) Path check
         If Not System.IO.File.Exists(pptxPath) Then
             ShowCustomMessageBox($"File not found: {pptxPath}")
             Return String.Empty
@@ -46,29 +77,29 @@ Partial Public Class ThisAddIn
                 End If
 
                 Dim result As New PresentationJson With {
-                .Title = presDoc.PackageProperties.Title,
-                .Slides = New List(Of SlideJson)(),
-                .Layouts = New List(Of LayoutJson)()
-            }
-
-                ' Slide size
-                If presPart.Presentation.SlideSize IsNot Nothing AndAlso
-               presPart.Presentation.SlideSize.Cx IsNot Nothing AndAlso
-               presPart.Presentation.SlideSize.Cy IsNot Nothing Then
-                    result.SlideSize = New SlideSizeJson With {
-                    .Width = presPart.Presentation.SlideSize.Cx.Value,
-                    .Height = presPart.Presentation.SlideSize.Cy.Value
+                    .Title = presDoc.PackageProperties.Title,
+                    .Slides = New List(Of SlideJson)(),
+                    .Layouts = New List(Of LayoutJson)()
                 }
+
+                ' Extract slide dimensions
+                If presPart.Presentation.SlideSize IsNot Nothing AndAlso
+                   presPart.Presentation.SlideSize.Cx IsNot Nothing AndAlso
+                   presPart.Presentation.SlideSize.Cy IsNot Nothing Then
+                    result.SlideSize = New SlideSizeJson With {
+                        .Width = presPart.Presentation.SlideSize.Cx.Value,
+                        .Height = presPart.Presentation.SlideSize.Cy.Value
+                    }
                 End If
 
-                ' Detect slides
+                ' Check for existing slides
                 Dim slideIdList = presPart.Presentation.SlideIdList
                 Dim hasSlides As Boolean =
-                (slideIdList IsNot Nothing AndAlso slideIdList.ChildElements _
-                    .OfType(Of DocumentFormat.OpenXml.Presentation.SlideId)().Any())
+                    (slideIdList IsNot Nothing AndAlso slideIdList.ChildElements _
+                        .OfType(Of DocumentFormat.OpenXml.Presentation.SlideId)().Any())
 
                 If Not hasSlides Then
-                    ' still gather layouts from masters even if there are no slides
+                    ' Gather layouts from masters even if there are no slides
                     Try
                         For Each sm As DocumentFormat.OpenXml.Packaging.SlideMasterPart In presPart.SlideMasterParts
                             If sm Is Nothing Then Continue For
@@ -83,29 +114,27 @@ Partial Public Class ThisAddIn
                                 Catch
                                 End Try
 
-                                Dim info = AnalyzeLayoutPlaceholders(layoutPart)  ' see helper below
-
                                 result.Layouts.Add(New LayoutJson With {
-                    .Name = name,
-                    .LayoutId = layoutUri,
-                    .LayoutRelId = relId
-                })
+                                    .Name = name,
+                                    .LayoutId = layoutUri,
+                                    .LayoutRelId = relId
+                                })
                             Next
                         Next
                     Catch
                     End Try
 
                     Return System.Text.Json.JsonSerializer.Serialize(
-        result,
-        New System.Text.Json.JsonSerializerOptions With {.WriteIndented = True}
-    )
+                        result,
+                        New System.Text.Json.JsonSerializerOptions With {.WriteIndented = True}
+                    )
                 End If
 
                 ' Enumerate slides safely
                 Try
                     Dim idx As Integer = 0
                     For Each sid As DocumentFormat.OpenXml.Presentation.SlideId In
-                    slideIdList.ChildElements.OfType(Of DocumentFormat.OpenXml.Presentation.SlideId)()
+                        slideIdList.ChildElements.OfType(Of DocumentFormat.OpenXml.Presentation.SlideId)()
 
                         If sid.RelationshipId Is Nothing Then Continue For
                         Dim sp As DocumentFormat.OpenXml.Packaging.SlidePart = Nothing
@@ -119,53 +148,51 @@ Partial Public Class ThisAddIn
 
                         Dim title As String = GetSlideTitle(sp)
                         Dim key As String = If(
-                        String.IsNullOrWhiteSpace(title),
-                        $"SID-{sid.Id.Value}",
-                        $"{SanitizeKey(title)}-{sid.Id.Value}"
-                    )
+                            String.IsNullOrWhiteSpace(title),
+                            $"SID-{sid.Id.Value}",
+                            $"{SanitizeKey(title)}-{sid.Id.Value}"
+                        )
 
                         Dim layoutPart As DocumentFormat.OpenXml.Packaging.SlideLayoutPart = sp.SlideLayoutPart
                         Dim layoutName As String = GetLayoutName(layoutPart)
                         Dim masterName As String = If(
-                        layoutPart IsNot Nothing,
-                        GetMasterName(layoutPart.SlideMasterPart),
-                        String.Empty
-                    )
+                            layoutPart IsNot Nothing,
+                            GetMasterName(layoutPart.SlideMasterPart),
+                            String.Empty
+                        )
 
                         Dim placeholders As New List(Of String)
                         Dim content As New List(Of String)
 
                         If sp.Slide IsNot Nothing AndAlso
-                               sp.Slide.CommonSlideData IsNot Nothing AndAlso
-                               sp.Slide.CommonSlideData.ShapeTree IsNot Nothing Then
+                           sp.Slide.CommonSlideData IsNot Nothing AndAlso
+                           sp.Slide.CommonSlideData.ShapeTree IsNot Nothing Then
 
                             CollectPlaceholdersFromShapeTree(sp.Slide.CommonSlideData.ShapeTree, placeholders)
                             CollectTextsFromShapeTree(sp.Slide.CommonSlideData.ShapeTree, content)
                         End If
 
-
-
                         result.Slides.Add(New SlideJson With {
-                        .SlideKey = key,
-                        .SlideId = sid.Id.Value,
-                        .Index = idx,
-                        .Title = title,
-                        .Layout = layoutName,
-                        .Master = masterName,
-                        .Placeholders = placeholders,
-                        .Content = content
-                    })
+                            .SlideKey = key,
+                            .SlideId = sid.Id.Value,
+                            .Index = idx,
+                            .Title = title,
+                            .Layout = layoutName,
+                            .Master = masterName,
+                            .Placeholders = placeholders,
+                            .Content = content
+                        })
                         idx += 1
                     Next
                 Catch
-                    ' If anything goes wrong, just return what we have
+                    ' Return partial results on error
                     Return System.Text.Json.JsonSerializer.Serialize(
-                    result,
-                    New System.Text.Json.JsonSerializerOptions With {.WriteIndented = True}
-                )
+                        result,
+                        New System.Text.Json.JsonSerializerOptions With {.WriteIndented = True}
+                    )
                 End Try
 
-                ' Enumerate layouts only if slides were processed
+                ' Enumerate layouts
                 Try
                     For Each sm As DocumentFormat.OpenXml.Packaging.SlideMasterPart In presPart.SlideMasterParts
                         If sm Is Nothing Then Continue For
@@ -179,19 +206,19 @@ Partial Public Class ThisAddIn
                             Catch
                             End Try
                             result.Layouts.Add(New LayoutJson With {
-                            .Name = name,
-                            .LayoutId = layoutUri,
-                            .LayoutRelId = relId
-                        })
+                                .Name = name,
+                                .LayoutId = layoutUri,
+                                .LayoutRelId = relId
+                            })
                         Next
                     Next
                 Catch
                 End Try
 
                 Return System.Text.Json.JsonSerializer.Serialize(
-                result,
-                New System.Text.Json.JsonSerializerOptions With {.WriteIndented = True}
-            )
+                    result,
+                    New System.Text.Json.JsonSerializerOptions With {.WriteIndented = True}
+                )
             End Using
 
         Catch ex As System.IO.IOException
@@ -206,11 +233,14 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-
-
+    ''' <summary>
+    ''' Collects placeholder type names from a shape tree.
+    ''' </summary>
+    ''' <param name="tree">The shape tree to scan.</param>
+    ''' <param name="placeholders">List to populate with placeholder type names.</param>
     Private Shared Sub CollectPlaceholdersFromShapeTree(
-    ByVal tree As DocumentFormat.OpenXml.Presentation.ShapeTree,
-    ByVal placeholders As System.Collections.Generic.List(Of System.String))
+        ByVal tree As DocumentFormat.OpenXml.Presentation.ShapeTree,
+        ByVal placeholders As System.Collections.Generic.List(Of System.String))
 
         If tree Is Nothing Then Return
 
@@ -218,64 +248,74 @@ Partial Public Class ThisAddIn
 
             If TypeOf child Is DocumentFormat.OpenXml.Presentation.Shape Then
                 Dim shp As DocumentFormat.OpenXml.Presentation.Shape =
-                CType(child, DocumentFormat.OpenXml.Presentation.Shape)
+                    CType(child, DocumentFormat.OpenXml.Presentation.Shape)
 
                 Dim nv As DocumentFormat.OpenXml.Presentation.NonVisualShapeProperties =
-                shp.NonVisualShapeProperties
+                    shp.NonVisualShapeProperties
 
                 If nv IsNot Nothing AndAlso
-               nv.ApplicationNonVisualDrawingProperties IsNot Nothing AndAlso
-               nv.ApplicationNonVisualDrawingProperties.PlaceholderShape IsNot Nothing AndAlso
-               nv.ApplicationNonVisualDrawingProperties.PlaceholderShape.Type IsNot Nothing Then
+                   nv.ApplicationNonVisualDrawingProperties IsNot Nothing AndAlso
+                   nv.ApplicationNonVisualDrawingProperties.PlaceholderShape IsNot Nothing AndAlso
+                   nv.ApplicationNonVisualDrawingProperties.PlaceholderShape.Type IsNot Nothing Then
 
                     placeholders.Add(
-                    nv.ApplicationNonVisualDrawingProperties.PlaceholderShape.Type.Value.ToString())
+                        nv.ApplicationNonVisualDrawingProperties.PlaceholderShape.Type.Value.ToString())
                 End If
 
             ElseIf TypeOf child Is DocumentFormat.OpenXml.Presentation.GroupShape Then
-                ' In Gruppen rekursiv in deren Kinder laufen:
+                ' Recursively process children within groups
                 Dim grp As DocumentFormat.OpenXml.Presentation.GroupShape =
-                CType(child, DocumentFormat.OpenXml.Presentation.GroupShape)
+                    CType(child, DocumentFormat.OpenXml.Presentation.GroupShape)
 
                 If grp.ChildElements.Count > 0 Then
                     CollectPlaceholdersFromGroup(grp, placeholders)
                 End If
             End If
-            ' Hinweis: GraphicFrame (Tabellen/Charts) haben keine Placeholder
+            ' Note: GraphicFrame (tables/charts) do not have placeholders
         Next
     End Sub
 
+    ''' <summary>
+    ''' Recursively collects placeholder types from a group shape.
+    ''' </summary>
+    ''' <param name="group">The group shape to scan.</param>
+    ''' <param name="placeholders">List to populate with placeholder type names.</param>
     Private Shared Sub CollectPlaceholdersFromGroup(
-    ByVal group As DocumentFormat.OpenXml.Presentation.GroupShape,
-    ByVal placeholders As System.Collections.Generic.List(Of System.String))
+        ByVal group As DocumentFormat.OpenXml.Presentation.GroupShape,
+        ByVal placeholders As System.Collections.Generic.List(Of System.String))
 
         For Each inner As DocumentFormat.OpenXml.OpenXmlElement In group.ChildElements
             If TypeOf inner Is DocumentFormat.OpenXml.Presentation.Shape Then
                 Dim shp As DocumentFormat.OpenXml.Presentation.Shape =
-                CType(inner, DocumentFormat.OpenXml.Presentation.Shape)
+                    CType(inner, DocumentFormat.OpenXml.Presentation.Shape)
 
                 Dim nv As DocumentFormat.OpenXml.Presentation.NonVisualShapeProperties =
-                shp.NonVisualShapeProperties
+                    shp.NonVisualShapeProperties
 
                 If nv IsNot Nothing AndAlso
-               nv.ApplicationNonVisualDrawingProperties IsNot Nothing AndAlso
-               nv.ApplicationNonVisualDrawingProperties.PlaceholderShape IsNot Nothing AndAlso
-               nv.ApplicationNonVisualDrawingProperties.PlaceholderShape.Type IsNot Nothing Then
+                   nv.ApplicationNonVisualDrawingProperties IsNot Nothing AndAlso
+                   nv.ApplicationNonVisualDrawingProperties.PlaceholderShape IsNot Nothing AndAlso
+                   nv.ApplicationNonVisualDrawingProperties.PlaceholderShape.Type IsNot Nothing Then
 
                     placeholders.Add(
-                    nv.ApplicationNonVisualDrawingProperties.PlaceholderShape.Type.Value.ToString())
+                        nv.ApplicationNonVisualDrawingProperties.PlaceholderShape.Type.Value.ToString())
                 End If
 
             ElseIf TypeOf inner Is DocumentFormat.OpenXml.Presentation.GroupShape Then
                 CollectPlaceholdersFromGroup(
-                CType(inner, DocumentFormat.OpenXml.Presentation.GroupShape), placeholders)
+                    CType(inner, DocumentFormat.OpenXml.Presentation.GroupShape), placeholders)
             End If
         Next
     End Sub
 
+    ''' <summary>
+    ''' Collects text content from shapes, groups, and tables in a shape tree.
+    ''' </summary>
+    ''' <param name="tree">The shape tree to scan.</param>
+    ''' <param name="content">List to populate with extracted text.</param>
     Private Shared Sub CollectTextsFromShapeTree(
-    ByVal tree As DocumentFormat.OpenXml.Presentation.ShapeTree,
-    ByVal content As System.Collections.Generic.List(Of System.String))
+        ByVal tree As DocumentFormat.OpenXml.Presentation.ShapeTree,
+        ByVal content As System.Collections.Generic.List(Of System.String))
 
         If tree Is Nothing Then Return
 
@@ -283,7 +323,7 @@ Partial Public Class ThisAddIn
 
             If TypeOf child Is DocumentFormat.OpenXml.Presentation.Shape Then
                 Dim shp As DocumentFormat.OpenXml.Presentation.Shape =
-                CType(child, DocumentFormat.OpenXml.Presentation.Shape)
+                    CType(child, DocumentFormat.OpenXml.Presentation.Shape)
 
                 If shp.TextBody IsNot Nothing Then
                     Dim txt As System.String = ExtractTextFromTextContainer(shp.TextBody)
@@ -292,56 +332,60 @@ Partial Public Class ThisAddIn
 
             ElseIf TypeOf child Is DocumentFormat.OpenXml.Presentation.GroupShape Then
                 CollectTextsFromGroup(
-                CType(child, DocumentFormat.OpenXml.Presentation.GroupShape), content)
+                    CType(child, DocumentFormat.OpenXml.Presentation.GroupShape), content)
 
             ElseIf TypeOf child Is DocumentFormat.OpenXml.Presentation.GraphicFrame Then
                 Dim gf As DocumentFormat.OpenXml.Presentation.GraphicFrame =
-                CType(child, DocumentFormat.OpenXml.Presentation.GraphicFrame)
+                    CType(child, DocumentFormat.OpenXml.Presentation.GraphicFrame)
 
                 Dim g As DocumentFormat.OpenXml.Drawing.Graphic = gf.Graphic
                 If g IsNot Nothing AndAlso g.GraphicData IsNot Nothing Then
                     Dim gd As DocumentFormat.OpenXml.Drawing.GraphicData = g.GraphicData
 
-                    ' Tabelle?
+                    ' Extract text from tables
                     Dim tbl As DocumentFormat.OpenXml.Drawing.Table =
-                    gd.GetFirstChild(Of DocumentFormat.OpenXml.Drawing.Table)()
+                        gd.GetFirstChild(Of DocumentFormat.OpenXml.Drawing.Table)()
                     If tbl IsNot Nothing Then
                         ExtractTextFromTable(tbl, content)
                     End If
-
-                    ' (Optional) Charts/SmartArt könntest du hier zusätzlich behandeln.
+                    ' Note: Charts/SmartArt could be handled here additionally
                 End If
             End If
         Next
     End Sub
 
+    ''' <summary>
+    ''' Extracts concatenated text from all paragraphs in a text container element.
+    ''' </summary>
+    ''' <param name="container">The container element (TextBody or similar).</param>
+    ''' <returns>Concatenated text content trimmed.</returns>
     Private Shared Function ExtractTextFromTextContainer(
-    ByVal container As DocumentFormat.OpenXml.OpenXmlElement) As System.String
+        ByVal container As DocumentFormat.OpenXml.OpenXmlElement) As System.String
 
         If container Is Nothing Then Return System.String.Empty
 
         Dim parts As New System.Collections.Generic.List(Of System.String)()
 
-        ' Walk all A:Paragraph descendants regardless of the exact TextBody type
+        ' Walk all Drawing.Paragraph descendants regardless of the exact TextBody type
         For Each p As DocumentFormat.OpenXml.Drawing.Paragraph In
-        container.Descendants(Of DocumentFormat.OpenXml.Drawing.Paragraph)()
+            container.Descendants(Of DocumentFormat.OpenXml.Drawing.Paragraph)()
 
             Dim runs As New System.Collections.Generic.List(Of System.String)()
 
             For Each r As DocumentFormat.OpenXml.Drawing.Run In
-            p.Elements(Of DocumentFormat.OpenXml.Drawing.Run)()
+                p.Elements(Of DocumentFormat.OpenXml.Drawing.Run)()
                 If r IsNot Nothing AndAlso r.Text IsNot Nothing Then
                     runs.Add(r.Text.Text)
                 End If
             Next
 
             For Each br As DocumentFormat.OpenXml.Drawing.Break In
-            p.Elements(Of DocumentFormat.OpenXml.Drawing.Break)()
+                p.Elements(Of DocumentFormat.OpenXml.Drawing.Break)()
                 runs.Add(vbLf)
             Next
 
             For Each fld As DocumentFormat.OpenXml.Drawing.Field In
-            p.Elements(Of DocumentFormat.OpenXml.Drawing.Field)()
+                p.Elements(Of DocumentFormat.OpenXml.Drawing.Field)()
                 If fld IsNot Nothing AndAlso fld.Text IsNot Nothing Then
                     runs.Add(fld.Text.Text)
                 End If
@@ -353,41 +397,43 @@ Partial Public Class ThisAddIn
         Return System.String.Join(vbCrLf, parts).Trim()
     End Function
 
-
+    ''' <summary>
+    ''' Recursively collects text content from a group shape.
+    ''' </summary>
+    ''' <param name="group">The group shape to scan.</param>
+    ''' <param name="content">List to populate with extracted text.</param>
     Private Shared Sub CollectTextsFromGroup(
-    ByVal group As DocumentFormat.OpenXml.Presentation.GroupShape,
-    ByVal content As System.Collections.Generic.List(Of System.String))
+        ByVal group As DocumentFormat.OpenXml.Presentation.GroupShape,
+        ByVal content As System.Collections.Generic.List(Of System.String))
 
-        ' Kein IsNot-Vergleich auf OpenXmlElementList – nur Count prüfen
+        ' Cannot use IsNot comparison on OpenXmlElementList - only check Count
         If group.ChildElements.Count = 0 Then Return
 
         For Each inner As DocumentFormat.OpenXml.OpenXmlElement In group.ChildElements
 
             If TypeOf inner Is DocumentFormat.OpenXml.Presentation.Shape Then
                 Dim shp As DocumentFormat.OpenXml.Presentation.Shape =
-                CType(inner, DocumentFormat.OpenXml.Presentation.Shape)
+                    CType(inner, DocumentFormat.OpenXml.Presentation.Shape)
 
-                ' Shape text
                 If shp.TextBody IsNot Nothing Then
                     Dim txt As System.String = ExtractTextFromTextContainer(shp.TextBody)
                     If Not System.String.IsNullOrWhiteSpace(txt) Then content.Add(txt)
                 End If
 
-
             ElseIf TypeOf inner Is DocumentFormat.OpenXml.Presentation.GroupShape Then
                 CollectTextsFromGroup(
-                CType(inner, DocumentFormat.OpenXml.Presentation.GroupShape), content)
+                    CType(inner, DocumentFormat.OpenXml.Presentation.GroupShape), content)
 
             ElseIf TypeOf inner Is DocumentFormat.OpenXml.Presentation.GraphicFrame Then
                 Dim gf As DocumentFormat.OpenXml.Presentation.GraphicFrame =
-                CType(inner, DocumentFormat.OpenXml.Presentation.GraphicFrame)
+                    CType(inner, DocumentFormat.OpenXml.Presentation.GraphicFrame)
 
                 Dim g As DocumentFormat.OpenXml.Drawing.Graphic = gf.Graphic
                 If g IsNot Nothing AndAlso g.GraphicData IsNot Nothing Then
                     Dim gd As DocumentFormat.OpenXml.Drawing.GraphicData = g.GraphicData
 
                     Dim tbl As DocumentFormat.OpenXml.Drawing.Table =
-                    gd.GetFirstChild(Of DocumentFormat.OpenXml.Drawing.Table)()
+                        gd.GetFirstChild(Of DocumentFormat.OpenXml.Drawing.Table)()
                     If tbl IsNot Nothing Then
                         ExtractTextFromTable(tbl, content)
                     End If
@@ -396,33 +442,29 @@ Partial Public Class ThisAddIn
         Next
     End Sub
 
+    ''' <summary>
+    ''' Extracts text from a Drawing.Table element, adding tab-separated rows.
+    ''' </summary>
+    ''' <param name="table">The table element to extract text from.</param>
+    ''' <param name="content">List to populate with row text.</param>
     Private Shared Sub ExtractTextFromTable(
-    ByVal table As DocumentFormat.OpenXml.Drawing.Table,
-    ByVal content As System.Collections.Generic.List(Of System.String))
+        ByVal table As DocumentFormat.OpenXml.Drawing.Table,
+        ByVal content As System.Collections.Generic.List(Of System.String))
 
         If table Is Nothing Then Return
 
         For Each row As DocumentFormat.OpenXml.Drawing.TableRow In
-        table.Elements(Of DocumentFormat.OpenXml.Drawing.TableRow)()
+            table.Elements(Of DocumentFormat.OpenXml.Drawing.TableRow)()
 
             Dim rowTexts As New System.Collections.Generic.List(Of System.String)()
 
             For Each cell As DocumentFormat.OpenXml.Drawing.TableCell In
-            row.Elements(Of DocumentFormat.OpenXml.Drawing.TableCell)()
+                row.Elements(Of DocumentFormat.OpenXml.Drawing.TableCell)()
 
-                'Dim cellText As System.String = System.String.Empty
-                'If cell IsNot Nothing AndAlso cell.TextBody IsNot Nothing Then
-                '    cellText = ExtractTextFromTextBody(
-                '    CType(cell.TextBody, DocumentFormat.OpenXml.Drawing.TextBody))
-                'End If
-                'rowTexts.Add(cellText)
-
-                ' Table cell text
                 If cell IsNot Nothing AndAlso cell.TextBody IsNot Nothing Then
                     Dim cellText As System.String = ExtractTextFromTextContainer(cell.TextBody)
                     rowTexts.Add(cellText)
                 End If
-
             Next
 
             Dim line As System.String = System.String.Join(vbTab, rowTexts)
@@ -430,45 +472,14 @@ Partial Public Class ThisAddIn
         Next
     End Sub
 
-    Private Shared Function ExtractTextFromTextBody(
-    ByVal tb As DocumentFormat.OpenXml.Drawing.TextBody) As System.String
 
-        If tb Is Nothing Then Return System.String.Empty
+#End Region
 
-        Dim parts As New System.Collections.Generic.List(Of System.String)()
-
-        For Each p As DocumentFormat.OpenXml.Drawing.Paragraph In
-        tb.Elements(Of DocumentFormat.OpenXml.Drawing.Paragraph)()
-
-            Dim runs As New System.Collections.Generic.List(Of System.String)()
-
-            For Each r As DocumentFormat.OpenXml.Drawing.Run In
-            p.Elements(Of DocumentFormat.OpenXml.Drawing.Run)()
-                If r IsNot Nothing AndAlso r.Text IsNot Nothing Then
-                    runs.Add(r.Text.Text)
-                End If
-            Next
-
-            For Each br As DocumentFormat.OpenXml.Drawing.Break In
-            p.Elements(Of DocumentFormat.OpenXml.Drawing.Break)()
-                runs.Add(vbLf)
-            Next
-
-            For Each fld As DocumentFormat.OpenXml.Drawing.Field In
-            p.Elements(Of DocumentFormat.OpenXml.Drawing.Field)()
-                If fld IsNot Nothing AndAlso fld.Text IsNot Nothing Then
-                    runs.Add(fld.Text.Text)
-                End If
-            Next
-
-            parts.Add(System.String.Join(System.String.Empty, runs))
-        Next
-
-        Return System.String.Join(vbCrLf, parts).Trim()
-    End Function
-
-
-
+    ''' <summary>
+    ''' Validates a PPTX file by checking ZIP archive integrity and entry accessibility.
+    ''' </summary>
+    ''' <param name="path">Full path to the PowerPoint file.</param>
+    ''' <returns>True if the file is a valid, readable PPTX package.</returns>
     Private Function IsValidPptxPackage(path As String) As Boolean
         Try
             Using archive As New System.IO.Compression.ZipArchive(System.IO.File.OpenRead(path), IO.Compression.ZipArchiveMode.Read)
@@ -492,8 +503,11 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
+#Region "JSON DTOs"
 
-
+    ''' <summary>
+    ''' Represents a single slide's metadata and content for JSON serialization.
+    ''' </summary>
     Public Class SlideJson
         <JsonPropertyName("slideKey")>
         Public Property SlideKey As String
@@ -520,6 +534,10 @@ Partial Public Class ThisAddIn
         Public Property Content As List(Of String)
     End Class
 
+
+    ''' <summary>
+    ''' Represents a slide layout's metadata for JSON serialization.
+    ''' </summary>
     Public Class LayoutJson
         <JsonPropertyName("name")>
         Public Property Name As String
@@ -531,6 +549,9 @@ Partial Public Class ThisAddIn
         Public Property LayoutRelId As String
     End Class
 
+    ''' <summary>
+    ''' Represents slide dimensions in EMUs for JSON serialization.
+    ''' </summary>
     Public Class SlideSizeJson
         <JsonPropertyName("width")>
         Public Property Width As Long
@@ -539,12 +560,13 @@ Partial Public Class ThisAddIn
         Public Property Height As Long
     End Class
 
-    ' [MODIFIED CLASS] The main DTO, now with a property for slide dimensions.
+    ''' <summary>
+    ''' Root DTO for presentation JSON export including slides and layouts.
+    ''' </summary>
     Public Class PresentationJson
         <JsonPropertyName("title")>
         Public Property Title As String
 
-        ' [NEW PROPERTY]
         <JsonPropertyName("slideSize")>
         Public Property SlideSize As SlideSizeJson
 
@@ -555,6 +577,9 @@ Partial Public Class ThisAddIn
         Public Property Layouts As List(Of LayoutJson)
     End Class
 
+    ''' <summary>
+    ''' Internal class to track placeholder types present in a layout.
+    ''' </summary>
     Private NotInheritable Class LayoutInfo
         Public Property HasTitle As System.Boolean
         Public Property HasCenteredTitle As System.Boolean
@@ -562,6 +587,58 @@ Partial Public Class ThisAddIn
         Public Property HasBody As System.Boolean
     End Class
 
+    ''' <summary>
+    ''' Base class for action plan operations.
+    ''' </summary>
+    Public MustInherit Class ActionBase
+        <JsonPropertyName("op")>
+        Public Property Op As String
+    End Class
+
+    ''' <summary>
+    ''' Represents anchor positioning for slide insertion.
+    ''' </summary>
+    Public Class Anchor
+        <JsonPropertyName("mode")>
+        Public Property Mode As String
+        <JsonPropertyName("by")>
+        Public Property By As AnchorBy
+    End Class
+
+    ''' <summary>
+    ''' Specifies the slide key for anchor positioning.
+    ''' </summary>
+    Public Class AnchorBy
+        <JsonPropertyName("slideKey")>
+        Public Property SlideKey As String
+    End Class
+
+    ''' <summary>
+    ''' Represents an add_slide action with anchor, layout, and elements.
+    ''' </summary>
+    Public Class AddSlideAction
+        Inherits ActionBase
+        <JsonPropertyName("anchor")> Public Property Anchor As Anchor
+        <JsonPropertyName("layoutRelId")> Public Property LayoutRelId As String
+        <JsonPropertyName("elements")> Public Property Elements As List(Of JsonElement)
+    End Class
+
+
+    ''' <summary>
+    ''' Index mapping slide keys to IDs and IDs to positions.
+    ''' </summary>
+    Public Class DeckIndex
+        Public Property SlideKeyById As Dictionary(Of String, UInteger)
+        Public Property IndexBySlideId As Dictionary(Of UInteger, Integer)
+    End Class
+
+#End Region
+
+    ''' <summary>
+    ''' Analyzes a layout part to determine which placeholder types are present.
+    ''' </summary>
+    ''' <param name="lp">The slide layout part to analyze.</param>
+    ''' <returns>LayoutInfo with flags for title, subtitle, and body placeholders.</returns>
     Private Function AnalyzeLayoutPlaceholders(lp As DocumentFormat.OpenXml.Packaging.SlideLayoutPart) As LayoutInfo
         Dim li As New LayoutInfo()
         Dim tree = lp?.SlideLayout?.CommonSlideData?.ShapeTree
@@ -591,6 +668,12 @@ Partial Public Class ThisAddIn
 
         Return li
     End Function
+
+    ''' <summary>
+    ''' Extracts the title text from a slide's title placeholder.
+    ''' </summary>
+    ''' <param name="sp">The slide part to search.</param>
+    ''' <returns>Title text or empty string if not found.</returns>
     Private Function GetSlideTitle(sp As SlidePart) As String
         If sp Is Nothing OrElse sp.Slide Is Nothing OrElse
        sp.Slide.CommonSlideData Is Nothing OrElse
@@ -617,8 +700,13 @@ Partial Public Class ThisAddIn
     End Function
 
 
+    ''' <summary>
+    ''' Gets the human-readable name of a slide layout.
+    ''' </summary>
+    ''' <param name="layoutPart">The layout part.</param>
+    ''' <returns>Layout name or URI string as fallback.</returns>
     Private Function GetLayoutName(layoutPart As SlideLayoutPart) As String
-        If layoutPart Is Nothing Then Return String.Empty   ' FIX 3
+        If layoutPart Is Nothing Then Return String.Empty
         If layoutPart.SlideLayout IsNot Nothing AndAlso
        layoutPart.SlideLayout.CommonSlideData IsNot Nothing Then
             Dim nm = layoutPart.SlideLayout.CommonSlideData.Name
@@ -627,8 +715,13 @@ Partial Public Class ThisAddIn
         Return If(layoutPart.Uri IsNot Nothing, layoutPart.Uri.ToString(), String.Empty)
     End Function
 
+    ''' <summary>
+    ''' Gets the human-readable name of a slide master.
+    ''' </summary>
+    ''' <param name="smPart">The slide master part.</param>
+    ''' <returns>Master name or URI string as fallback.</returns>
     Private Function GetMasterName(smPart As SlideMasterPart) As String
-        If smPart Is Nothing Then Return String.Empty       ' FIX 4
+        If smPart Is Nothing Then Return String.Empty
         If smPart.SlideMaster IsNot Nothing AndAlso
        smPart.SlideMaster.CommonSlideData IsNot Nothing Then
             Dim nm = smPart.SlideMaster.CommonSlideData.Name
@@ -637,41 +730,22 @@ Partial Public Class ThisAddIn
         Return If(smPart.Uri IsNot Nothing, smPart.Uri.ToString(), String.Empty)
     End Function
 
-
-
+    ''' <summary>
+    ''' Sanitizes a string for use as a slide key by replacing non-alphanumeric characters.
+    ''' </summary>
+    ''' <param name="s">The string to sanitize.</param>
+    ''' <returns>Sanitized string with only letters, digits, and hyphens.</returns>
     Private Function SanitizeKey(s As String) As String
         Return New String(
             s.Select(Function(ch) If(Char.IsLetterOrDigit(ch), ch, "-"c)).ToArray()
         )
     End Function
 
-
-    ' 1) DTOs & Polymorph-Converter (verkürzt)
-    Public MustInherit Class ActionBase
-        <JsonPropertyName("op")>
-        Public Property Op As String
-    End Class
-
-    Public Class Anchor
-        <JsonPropertyName("mode")>
-        Public Property Mode As String
-        <JsonPropertyName("by")>
-        Public Property By As AnchorBy
-    End Class
-    Public Class AnchorBy
-        <JsonPropertyName("slideKey")>
-        Public Property SlideKey As String
-    End Class
-
-    Public Class AddSlideAction
-        Inherits ActionBase
-        <JsonPropertyName("anchor")> Public Property Anchor As Anchor
-        <JsonPropertyName("layoutRelId")> Public Property LayoutRelId As String
-        <JsonPropertyName("elements")> Public Property Elements As List(Of JsonElement)
-    End Class
-
-
-
+    ''' <summary>
+    ''' Cleans a raw string to extract valid JSON by finding matching braces/brackets.
+    ''' </summary>
+    ''' <param name="raw">The raw string potentially containing JSON.</param>
+    ''' <returns>Cleaned JSON string or trimmed original.</returns>
     Public Function CleanJsonString(raw As String) As String
         If String.IsNullOrEmpty(raw) Then
             Return String.Empty
@@ -708,9 +782,12 @@ Partial Public Class ThisAddIn
     End Function
 
 
-
-
-
+    ''' <summary>
+    ''' Applies an AI-generated action plan to modify a PowerPoint presentation.
+    ''' </summary>
+    ''' <param name="pptxPath">Full path to the PowerPoint file to modify.</param>
+    ''' <param name="planJson">JSON string containing the action plan with slide operations.</param>
+    ''' <returns>True if all actions applied successfully; False on error.</returns>
     Public Function ApplyPlanToPresentation(pptxPath As String, planJson As String) As Boolean
         Try
             ' 1) Check if the file exists
@@ -752,11 +829,6 @@ Partial Public Class ThisAddIn
                 End If
 
                 ' Ensure SlideIdList exists
-                'If presPart.Presentation.SlideIdList Is Nothing Then
-                'presPart.Presentation.AppendChild(New DocumentFormat.OpenXml.Presentation.SlideIdList())
-                'presPart.Presentation.Save()
-                'End If
-
                 EnsureSlideIdList(presPart)
 
                 ' 4) Build deck index
@@ -844,7 +916,6 @@ Partial Public Class ThisAddIn
                         ' 5.4 Speaker notes
                         Dim notesEl As System.Text.Json.JsonElement
                         If actElem.TryGetProperty("notes", notesEl) AndAlso notesEl.ValueKind = JsonValueKind.String Then
-                            ' Hier die gleiche Variable: newSlidePart
                             SetSpeakerNotes(newSp, notesEl.GetString())
                         End If
 
@@ -874,7 +945,7 @@ Partial Public Class ThisAddIn
                               DocumentFormat.OpenXml.Packaging.SlidePart)
 
                     If spPart.NotesSlidePart Is Nothing Then
-                        ' Leere Notes erzeugen:
+                        ' Create empty notes
                         SetSpeakerNotes(spPart, String.Empty)
                     End If
                 Next
@@ -901,7 +972,12 @@ Partial Public Class ThisAddIn
     End Function
 
 
-
+    ''' <summary>
+    ''' Validates a PPTX file for OpenXML compliance errors.
+    ''' </summary>
+    ''' <param name="path">Full path to the PowerPoint file to validate.</param>
+    ''' <returns>Error description string if validation fails; empty string if no errors found.</returns>
+    ''' <remarks>Returns only the first error found for debugging purposes.</remarks>
     Function ValidatePptx(path As String) As String
 
         Dim ErrorString As String = ""
@@ -912,7 +988,7 @@ Partial Public Class ThisAddIn
             Dim errors = validator.Validate(doc)
 
             If Not errors.Any() Then
-                Debug.WriteLine("✔ Keine formalen OpenXML-Fehler gefunden.")
+                Debug.WriteLine("No formal OpenXML-Errors found.")
                 Return ""
             End If
 
@@ -922,7 +998,7 @@ Partial Public Class ThisAddIn
                 Debug.WriteLine($"XPath: {err.Path.XPath}")
                 Debug.WriteLine($"Info : {err.Description}")
                 ErrorString = $"Part: {err.Part.Uri}; XPath: {err.Path.XPath}; Info: {err.Description}"
-                ' nach dem ersten Fehler abbrechen – reicht zum Debuggen
+                ' Stop after first error – sufficient for debugging
                 Exit For
             Next
 
@@ -933,7 +1009,13 @@ Partial Public Class ThisAddIn
     End Function
 
 
-    ' Overload: nimmt PresentationPart statt Pfad
+    ' Overload: Takes PresentationPart instead of path
+
+    ''' <summary>
+    ''' Builds a deck index from a presentation part for slide lookups.
+    ''' </summary>
+    ''' <param name="presPart">The presentation part.</param>
+    ''' <returns>DeckIndex with slide key and ID mappings.</returns>    
     Public Function BuildDeckIndex(
     presPart As DocumentFormat.OpenXml.Packaging.PresentationPart
 ) As DeckIndex
@@ -954,7 +1036,11 @@ Partial Public Class ThisAddIn
         Return idx
     End Function
 
-
+    ''' <summary>
+    ''' Builds a deck index from a PPTX file path.
+    ''' </summary>
+    ''' <param name="pptxPath">Full path to the PowerPoint file.</param>
+    ''' <returns>DeckIndex with slide key and ID mappings.</returns>
     Public Function BuildDeckIndex(pptxPath As String) As DeckIndex
         Using presDoc As DocumentFormat.OpenXml.Packaging.PresentationDocument =
               DocumentFormat.OpenXml.Packaging.PresentationDocument.Open(pptxPath, False)
@@ -976,13 +1062,13 @@ Partial Public Class ThisAddIn
         End Using
     End Function
 
-    Public Class DeckIndex
-        Public Property SlideKeyById As Dictionary(Of String, UInteger)
-        Public Property IndexBySlideId As Dictionary(Of UInteger, Integer)
-    End Class
 
-
-
+    ''' <summary>
+    ''' Clones a template slide from the specified layout.
+    ''' </summary>
+    ''' <param name="presPart">The presentation part.</param>
+    ''' <param name="layoutRelId">Layout relationship ID, URI, or name.</param>
+    ''' <returns>A new slide part cloned from the layout.</returns>
     Private Function CloneTemplateSlide(
     presPart As DocumentFormat.OpenXml.Packaging.PresentationPart,
     layoutRelId As System.String
@@ -1028,6 +1114,12 @@ Partial Public Class ThisAddIn
         Return newSlidePart
     End Function
 
+    ''' <summary>
+    ''' Resolves a layout by relationship ID, URI, or name.
+    ''' </summary>
+    ''' <param name="presPart">The presentation part.</param>
+    ''' <param name="requested">The layout identifier to resolve.</param>
+    ''' <returns>The matching SlideLayoutPart or Nothing if not found.</returns>
     Private Function ResolveLayout(
     presPart As DocumentFormat.OpenXml.Packaging.PresentationPart,
     requested As System.String
@@ -1074,6 +1166,11 @@ Partial Public Class ThisAddIn
         Return Nothing
     End Function
 
+    ''' <summary>
+    ''' Picks a cover-like layout (Title + Subtitle, preferably without Body).
+    ''' </summary>
+    ''' <param name="presPart">The presentation part.</param>
+    ''' <returns>A suitable SlideLayoutPart or Nothing.</returns>
     Private Function PickCoverLikeLayout(
     presPart As DocumentFormat.OpenXml.Packaging.PresentationPart
 ) As DocumentFormat.OpenXml.Packaging.SlideLayoutPart
@@ -1102,7 +1199,12 @@ Partial Public Class ThisAddIn
     End Function
 
 
-    ' Picks a sensible default layout by inspecting placeholders (Title + Body).
+    ''' <summary>
+    ''' Picks a default layout with Title and Body placeholders.
+    ''' </summary>
+    ''' <param name="presPart">The presentation part.</param>
+    ''' <returns>A suitable SlideLayoutPart.</returns>
+    ''' <exception cref="System.Exception">Thrown when no layout is available.</exception>
     Private Function PickDefaultLayout(
     presPart As DocumentFormat.OpenXml.Packaging.PresentationPart
 ) As DocumentFormat.OpenXml.Packaging.SlideLayoutPart
@@ -1166,10 +1268,10 @@ Partial Public Class ThisAddIn
 
 
     ''' <summary>
-    ''' Copies every image part that <paramref name="layoutPart"/> uses
-    ''' into <paramref name="slidePart"/> and rewrites the embed IDs
-    ''' inside the cloned slide so they point to the copied images.
+    ''' Copies image parts from a layout to a slide and rewrites embed IDs.
     ''' </summary>
+    ''' <param name="layoutPart">The source layout part.</param>
+    ''' <param name="slidePart">The target slide part.</param>
     Private Sub CopyLayoutImagesToSlide(
         layoutPart As DocumentFormat.OpenXml.Packaging.SlideLayoutPart,
         slidePart As DocumentFormat.OpenXml.Packaging.SlidePart)
@@ -1204,7 +1306,10 @@ Partial Public Class ThisAddIn
     End Sub
 
 
-
+    ''' <summary>
+    ''' Clears sample text from title and body placeholders in a cloned slide.
+    ''' </summary>
+    ''' <param name="sld">The slide to purge.</param>
     Private Sub PurgeLayoutSampleText(sld As DocumentFormat.OpenXml.Presentation.Slide)
 
         ' only Title / CenteredTitle / Body placeholders get wiped
@@ -1240,7 +1345,10 @@ Partial Public Class ThisAddIn
     End Sub
 
 
-    ' Call this once after you open the presentation
+    ''' <summary>
+    ''' Ensures the presentation has a SlideIdList element.
+    ''' </summary>
+    ''' <param name="presPart">The presentation part.</param>
     Private Sub EnsureSlideIdList(presPart As DocumentFormat.OpenXml.Packaging.PresentationPart)
         Dim pres = presPart.Presentation
         If pres.SlideIdList IsNot Nothing Then Exit Sub
@@ -1279,7 +1387,13 @@ Partial Public Class ThisAddIn
     End Sub
 
 
-
+    ''' <summary>
+    ''' Inserts a new slide after the specified anchor slide or at the end.
+    ''' </summary>
+    ''' <param name="presPart">The presentation part.</param>
+    ''' <param name="anchorSlideId">The slide ID to insert after; 0 to append at end.</param>
+    ''' <param name="newSlidePart">The new slide part to insert.</param>
+    ''' <returns>The new slide ID assigned.</returns>
     Private Function InsertAfter(
     presPart As DocumentFormat.OpenXml.Packaging.PresentationPart,
     anchorSlideId As UInteger,
@@ -1289,14 +1403,14 @@ Partial Public Class ThisAddIn
         Dim slideList = presPart.Presentation.SlideIdList
         Dim relId = presPart.GetIdOfPart(newSlidePart)
 
-        ' Existierende SlideId-Knoten
+        ' Find existing SlideId elements
         Dim existing = slideList.Elements(Of DocumentFormat.OpenXml.Presentation.SlideId)()
         Dim newId As UInteger
 
         If existing.Any() Then
             newId = existing.Max(Function(s) s.Id.Value) + 1UI
         Else
-            newId = 256UI   ' Erstes Slide
+            newId = 256UI   ' First slide
         End If
 
         Dim newSlide = New DocumentFormat.OpenXml.Presentation.SlideId() With {
@@ -1304,11 +1418,11 @@ Partial Public Class ThisAddIn
       .RelationshipId = relId
     }
 
-        ' Wenn anchorSlideId = 0, dann immer ans Ende anhängen
+        ' If anchorSlideId = 0, always append at the end
         If anchorSlideId = 0UI Then
             slideList.Append(newSlide)
         Else
-            ' Ansonsten gezielt nach dem Anker einfügen
+            ' Otherwise insert after the specified anchor
             Dim anchor = existing.FirstOrDefault(Function(s) s.Id.Value = anchorSlideId)
             If anchor Is Nothing Then
                 slideList.Append(newSlide)
@@ -1320,114 +1434,17 @@ Partial Public Class ThisAddIn
         Return newId
     End Function
 
-    Private Sub SetText(
-    sp As DocumentFormat.OpenXml.Packaging.SlidePart,
-    placeholderName As String,
-    text As String,
-    el As System.Text.Json.JsonElement
-)
-        ' 1) Alle Shapes auf der Folie  ermitteln
-        Dim allShapes = sp.Slide.CommonSlideData.ShapeTree.
-                    Elements(Of DocumentFormat.OpenXml.Presentation.Shape)()
-        Dim targetShape As DocumentFormat.OpenXml.Presentation.Shape = Nothing
 
-        ' 1a) Prefer Body or Object placeholder boxes (and exclude footer/date/slide number)
-        For Each shp In allShapes
-            Dim ph = shp.NonVisualShapeProperties?.
-             ApplicationNonVisualDrawingProperties?.
-             PlaceholderShape
-            If IsBodyLikePlaceholder(ph) Then
-                targetShape = shp
-                Exit For
-            End If
-        Next
-
-        ' 1b) Fallback: JSON-placeholder im Shape-Namen
-        If targetShape Is Nothing AndAlso Not String.IsNullOrEmpty(placeholderName) Then
-            For Each shp In allShapes
-                Dim nv = shp.NonVisualShapeProperties?.
-                     NonVisualDrawingProperties
-                Dim nm = If(nv?.Name?.Value, "")
-                If nm.IndexOf(placeholderName, StringComparison.OrdinalIgnoreCase) >= 0 Then
-                    targetShape = shp
-                    Exit For
-                End If
-            Next
-        End If
-
-        ' 1c) Fallback: erstes Nicht-Title-Shape (and also not footer/date/slide number)
-        If targetShape Is Nothing Then
-            For Each shp In allShapes
-                Dim ph = shp.NonVisualShapeProperties?.
-                 ApplicationNonVisualDrawingProperties?.
-                 PlaceholderShape
-                Dim typ = If(ph?.Type IsNot Nothing, ph.Type.Value, Nothing)
-
-                Dim isTitle = (typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Title OrElse
-                       typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.CenteredTitle)
-                Dim isFooterLike = (typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Footer OrElse
-                            typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.DateAndTime OrElse
-                            typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.SlideNumber)
-
-                If Not isTitle AndAlso Not isFooterLike Then
-                    targetShape = shp
-                    Exit For
-                End If
-            Next
-        End If
-
-        If targetShape Is Nothing Then Return
-
-        ' 2) Neuer TextBody (ohne ListStyle, damit keine Bullets erscheinen)
-        Dim tb As New DocumentFormat.OpenXml.Presentation.TextBody()
-        tb.Append(New DocumentFormat.OpenXml.Drawing.BodyProperties())
-        ' kein ListStyle hinzufügen
-
-        ' 3) RunProperties aus el("style")
-        Dim rp As New DocumentFormat.OpenXml.Drawing.RunProperties()
-        Dim styleEl As System.Text.Json.JsonElement
-        If el.TryGetProperty("style", styleEl) Then
-            Dim tmp As System.Text.Json.JsonElement
-            If styleEl.TryGetProperty("fontFamily", tmp) Then
-                rp.Append(New DocumentFormat.OpenXml.Drawing.LatinFont() With {.Typeface = tmp.GetString()})
-            End If
-            If styleEl.TryGetProperty("fontSize", tmp) Then
-                rp.FontSize = CUInt(tmp.GetInt32() * 100)
-            End If
-            If styleEl.TryGetProperty("bold", tmp) AndAlso tmp.GetBoolean() Then rp.Bold = True
-            If styleEl.TryGetProperty("italic", tmp) AndAlso tmp.GetBoolean() Then rp.Italic = True
-            If styleEl.TryGetProperty("color", tmp) Then
-                Dim hex = tmp.GetString().TrimStart("#"c)
-                rp.Append(New DocumentFormat.OpenXml.Drawing.SolidFill(
-                New DocumentFormat.OpenXml.Drawing.RgbColorModelHex() With {.Val = hex}
-            ))
-            End If
-        End If
-
-        ' 4) ParagraphProperties mit NoBullet, um Aufzählungszeichen zu unterdrücken
-        Dim pPr As New DocumentFormat.OpenXml.Drawing.ParagraphProperties() With {
-        .Indent = 0,       ' hanging indent = 0
-        .LeftMargin = 0    ' left margin = 0
-                }
-
-        pPr.Append(New DocumentFormat.OpenXml.Drawing.NoBullet())
-
-
-        ' 5) Run und Paragraph erstellen
-        Dim runElem = New DocumentFormat.OpenXml.Drawing.Run(rp, New DocumentFormat.OpenXml.Drawing.Text(text))
-        Dim para As New DocumentFormat.OpenXml.Drawing.Paragraph()
-        para.Append(pPr)
-        para.Append(runElem)
-        tb.Append(para)
-
-        ' 6) TextBody dem Shape zuweisen und speichern
-        targetShape.TextBody = tb
-        sp.Slide.Save()
-    End Sub
-
-
-
-
+    ''' <summary>
+    ''' Sets the title text in a slide's title placeholder shape.
+    ''' </summary>
+    ''' <param name="sp">The slide part containing the title shape.</param>
+    ''' <param name="text">The title text to insert.</param>
+    ''' <param name="el">JSON element containing style properties.</param>
+    ''' <remarks>
+    ''' Search priority: 1) Explicit Title/CenteredTitle placeholder, 2) Placeholder with index=0, 
+    ''' 3) Shape name containing "title" (case-insensitive).
+    ''' </remarks>
     Private Sub SetTitle(
         sp As DocumentFormat.OpenXml.Packaging.SlidePart,
         text As System.String,
@@ -1487,38 +1504,47 @@ Partial Public Class ThisAddIn
 
 
 
+    ''' <summary>
+    ''' Sets bulleted text content in a body placeholder shape.
+    ''' </summary>
+    ''' <param name="sp">The slide part containing the shape.</param>
+    ''' <param name="el">JSON element containing bullets array, optional placeholder name, and style properties.</param>
+    ''' <remarks>
+    ''' Searches for target shape in order: Body/Object placeholders, placeholder by name, first non-title shape.
+    ''' Each bullet can specify text and optional nesting level (0-8).
+    ''' </remarks>
     Private Sub SetBullets(
     sp As DocumentFormat.OpenXml.Packaging.SlidePart,
     el As System.Text.Json.JsonElement
 )
-        ' 1) Optionalen Placeholder-Namen aus JSON lesen
+        ' 1) Read optional placeholder name from JSON
         Dim placeholderName As String = Nothing
         Dim tmpEl As System.Text.Json.JsonElement
         If el.TryGetProperty("placeholder", tmpEl) Then
             placeholderName = tmpEl.GetString()
         End If
 
-        ' 2) Alle Shapes auf der Folie durchsuchen
+        ' 2) Search all shapes on the slide
         Dim allShapes = sp.Slide.CommonSlideData.ShapeTree.
-                    Elements(Of DocumentFormat.OpenXml.Presentation.Shape)()
+                Elements(Of DocumentFormat.OpenXml.Presentation.Shape)()
         Dim bodyShape As DocumentFormat.OpenXml.Presentation.Shape = Nothing
 
         ' 2a) Prefer Body or Object placeholder boxes (and exclude footer/date/slide number)
         For Each shp In allShapes
             Dim ph = shp.NonVisualShapeProperties?.
-             ApplicationNonVisualDrawingProperties?.
-             PlaceholderShape
+         ApplicationNonVisualDrawingProperties?.
+         PlaceholderShape
             If IsBodyLikePlaceholder(ph) Then
                 bodyShape = shp
                 Exit For
             End If
         Next
 
-        ' 2b) Fallback: JSON-placeholder im Shape-Namen
+        ' 2b) Fallback: JSON placeholder in shape name
         If bodyShape Is Nothing AndAlso Not String.IsNullOrEmpty(placeholderName) Then
             For Each shp In allShapes
                 Dim nvProps = shp.NonVisualShapeProperties? _
-                          .NonVisualDrawingProperties
+                      .NonVisualDrawingProperties
                 Dim shpName As String = If(nvProps?.Name?.Value, "")
                 If shpName.IndexOf(placeholderName, StringComparison.OrdinalIgnoreCase) >= 0 Then
                     bodyShape = shp
@@ -1527,19 +1553,19 @@ Partial Public Class ThisAddIn
             Next
         End If
 
-        ' 2c) Fallback: erstes Nicht-Title-Shape (and also not footer/date/slide number)
+        ' 2c) Fallback: first non-title shape (and also not footer/date/slide number)
         If bodyShape Is Nothing Then
             For Each shp In allShapes
                 Dim ph = shp.NonVisualShapeProperties?.
-                 ApplicationNonVisualDrawingProperties?.
-                 PlaceholderShape
+             ApplicationNonVisualDrawingProperties?.
+             PlaceholderShape
                 Dim typ = If(ph?.Type IsNot Nothing, ph.Type.Value, Nothing)
 
                 Dim isTitle = (typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Title OrElse
-                       typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.CenteredTitle)
+                   typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.CenteredTitle)
                 Dim isFooterLike = (typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.Footer OrElse
-                            typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.DateAndTime OrElse
-                            typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.SlideNumber)
+                        typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.DateAndTime OrElse
+                        typ = DocumentFormat.OpenXml.Presentation.PlaceholderValues.SlideNumber)
 
                 If Not isTitle AndAlso Not isFooterLike Then
                     bodyShape = shp
@@ -1548,19 +1574,19 @@ Partial Public Class ThisAddIn
             Next
         End If
 
-        ' Abbruch, wenn kein Body-Shape gefunden wurde
+        ' Abort if no body shape was found
         If bodyShape Is Nothing Then
             Return
         End If
 
-        ' 3) Neues TextBody mit ListStyle erzeugen
+        ' 3) Create new TextBody with ListStyle
         Dim tb As New DocumentFormat.OpenXml.Presentation.TextBody()
         tb.Append(New DocumentFormat.OpenXml.Drawing.BodyProperties())
         tb.Append(New DocumentFormat.OpenXml.Drawing.ListStyle())
 
-        ' 4) Bullets aus JSON lesen und als verschachtelte Paragraphen anfügen
+        ' 4) Read bullets from JSON and append as nested paragraphs
         For Each bElem As System.Text.Json.JsonElement In el.GetProperty("bullets").EnumerateArray()
-            ' 4a) Text und Level ermitteln
+            ' 4a) Extract text and level
             Dim text As String
             Dim level As Integer = 0
             If bElem.ValueKind = System.Text.Json.JsonValueKind.Object Then
@@ -1576,7 +1602,7 @@ Partial Public Class ThisAddIn
                 text = bElem.GetString()
             End If
 
-            ' 4b) RunProperties aus el.style erzeugen
+            ' 4b) Create RunProperties from el.style
             Dim rp As New DocumentFormat.OpenXml.Drawing.RunProperties()
             Dim styleEl As System.Text.Json.JsonElement
             If el.TryGetProperty("style", styleEl) Then
@@ -1589,16 +1615,14 @@ Partial Public Class ThisAddIn
                 End If
                 If styleEl.TryGetProperty("bold", tmp) AndAlso tmp.GetBoolean() Then rp.Bold = True
                 If styleEl.TryGetProperty("italic", tmp) AndAlso tmp.GetBoolean() Then rp.Italic = True
-
-
             End If
 
-            ' 4c) ParagraphProperties mit Level setzen
+            ' 4c) Set ParagraphProperties with level
             Dim actualLevel = System.Math.Max(0, System.Math.Min(8, level))
             Dim pPr As New DocumentFormat.OpenXml.Drawing.ParagraphProperties() With {
-                    .Level = CByte(actualLevel)
-                }
-            ' 4d) Run und Paragraph bauen
+                .Level = CByte(actualLevel)
+            }
+            ' 4d) Build Run and Paragraph
             Dim runElem = New DocumentFormat.OpenXml.Drawing.Run(rp, New DocumentFormat.OpenXml.Drawing.Text(text))
             Dim para As New DocumentFormat.OpenXml.Drawing.Paragraph()
             para.Append(pPr)
@@ -1607,21 +1631,25 @@ Partial Public Class ThisAddIn
             tb.Append(para)
         Next
 
-        ' 5) TextBody dem Shape zuweisen und speichern
+        ' 5) Assign TextBody to shape and save
         bodyShape.TextBody = tb
         sp.Slide.Save()
     End Sub
 
 
     ''' <summary>
-    ''' Baut einen einzelnen Drawing.Paragraph mit Text und RunProperties.
+    ''' Builds a single Drawing.Paragraph with optional paragraph properties.
     ''' </summary>
+    ''' <param name="text">The text content.</param>
+    ''' <param name="el">JSON element containing style properties.</param>
+    ''' <param name="pPr">Optional paragraph properties to apply.</param>
+    ''' <returns>A fully configured Paragraph element.</returns>
     Private Function BuildParagraph(
       text As String,
       el As JsonElement
     ) As DocumentFormat.OpenXml.Drawing.Paragraph
 
-        ' 1) RunProperties und Style aus JSON
+        ' 1) RunProperties and Style from JSON
         Dim rp As New DocumentFormat.OpenXml.Drawing.RunProperties()
         Dim styleEl As JsonElement
         If el.TryGetProperty("style", styleEl) Then
@@ -1640,7 +1668,7 @@ Partial Public Class ThisAddIn
             End If
         End If
 
-        ' 2) Run + Paragraph erzeugen
+        ' 2) Create Run + Paragraph 
         Dim runElem = New DocumentFormat.OpenXml.Drawing.Run(rp, New DocumentFormat.OpenXml.Drawing.Text(text))
         Dim para = New DocumentFormat.OpenXml.Drawing.Paragraph()
         para.Append(runElem)
@@ -1671,37 +1699,18 @@ Partial Public Class ThisAddIn
         Return para
     End Function
 
-    Private Function BuildRun(
-      text As String,
-      el As JsonElement
-    ) As DocumentFormat.OpenXml.Drawing.Run
 
-        Dim rp As New DocumentFormat.OpenXml.Drawing.RunProperties()
-
-        ' KORREKT: Füge LatinFont, SolidFill als Kind-Elemente hinzu
-        Dim styleEl As JsonElement
-        If el.TryGetProperty("style", styleEl) Then
-            Dim tmp As JsonElement
-            If styleEl.TryGetProperty("fontFamily", tmp) Then
-                rp.Append(New DocumentFormat.OpenXml.Drawing.LatinFont() With {.Typeface = tmp.GetString()})
-            End If
-            If styleEl.TryGetProperty("fontSize", tmp) Then
-                rp.FontSize = CUInt(tmp.GetInt32() * 100)
-            End If
-            If styleEl.TryGetProperty("bold", tmp) AndAlso tmp.GetBoolean() Then rp.Bold = True
-            If styleEl.TryGetProperty("italic", tmp) AndAlso tmp.GetBoolean() Then rp.Italic = True
-
-        End If
-
-        Return New DocumentFormat.OpenXml.Drawing.Run(rp, New DocumentFormat.OpenXml.Drawing.Text(text))
-    End Function
-
-
+    ''' <summary>
+    ''' Generates a unique slide key combining sanitized title and slide ID.
+    ''' </summary>
+    ''' <param name="sp">The slide part to extract title from.</param>
+    ''' <param name="slideId">The slide's unique ID.</param>
+    ''' <returns>Slide key in format "{SanitizedTitle}-{slideId}" or "SID-{slideId}" if no title.</returns>
     Private Function GetSlideKey(
         sp As DocumentFormat.OpenXml.Packaging.SlidePart,
         slideId As UInteger
       ) As String
-        Dim title = GetSlideTitle(sp) ' <- Dein vorhandener Helper!
+        Dim title = GetSlideTitle(sp)
         If String.IsNullOrWhiteSpace(title) Then
             Return $"SID-{slideId}"
         Else
@@ -1709,6 +1718,15 @@ Partial Public Class ThisAddIn
         End If
     End Function
 
+    ''' <summary>
+    ''' Creates or updates speaker notes for a slide with the specified text content.
+    ''' </summary>
+    ''' <param name="sp">The slide part to add or update notes for.</param>
+    ''' <param name="notesText">The notes text content.</param>
+    ''' <remarks>
+    ''' Creates a new NotesSlidePart if none exists. Removes existing shapes and inserts
+    ''' a new body placeholder at index 2 (after header elements).
+    ''' </remarks>
     Private Sub SetSpeakerNotes(
     sp As DocumentFormat.OpenXml.Packaging.SlidePart,
     notesText As String)
@@ -1731,7 +1749,7 @@ Partial Public Class ThisAddIn
         Dim tree As DocumentFormat.OpenXml.Presentation.ShapeTree =
         notesPart.NotesSlide.CommonSlideData.ShapeTree
 
-        ' ----- nur Shapes/Pics entfernen -----
+        ' ----- only remove Shapes/Pics -----
         For Each n In tree.ChildElements.OfType(Of DocumentFormat.OpenXml.OpenXmlElement)().ToList()
             If TypeOf n Is DocumentFormat.OpenXml.Presentation.Shape _
            OrElse TypeOf n Is DocumentFormat.OpenXml.Presentation.Picture _
@@ -1740,7 +1758,7 @@ Partial Public Class ThisAddIn
             End If
         Next
 
-        ' ----- neues Body-Shape -----
+        ' ----- new Body-Shape -----
         Dim nvSpPr As New DocumentFormat.OpenXml.Presentation.NonVisualShapeProperties(
         New DocumentFormat.OpenXml.Presentation.NonVisualDrawingProperties() With {.Id = 2UI, .Name = "NotesBody"},
         New DocumentFormat.OpenXml.Presentation.NonVisualShapeDrawingProperties(
@@ -1763,7 +1781,7 @@ Partial Public Class ThisAddIn
         tb.Append(para)
         noteShape.Append(tb)
 
-        ' nach Header einsetzen
+        ' insert after header
         If tree.ChildElements.Count >= 2 Then
             tree.InsertAt(noteShape, 2)
         Else
@@ -1775,11 +1793,12 @@ Partial Public Class ThisAddIn
 
 
 
-
     ''' <summary>
     ''' Creates an OpenXML Fill element from a JSON definition.
-    ''' CORRECTED: Returns OpenXmlElement to allow for NoFill type.
     ''' </summary>
+    ''' <param name="fillJson">JSON element containing fill type and color properties.</param>
+    ''' <returns>SolidFill element with specified color, or NoFill as fallback.</returns>
+
     Private Function CreateFill(fillJson As JsonElement) As DocumentFormat.OpenXml.OpenXmlElement
         Dim fillType As String = ""
         If fillJson.TryGetProperty("type", Nothing) Then fillType = fillJson.GetProperty("type").GetString()
@@ -1795,9 +1814,11 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' [CORRECTED] Creates an OpenXML Outline element from a JSON definition.
-    ''' Fixes the file corruption bug by safely parsing numbers for any computer locale.
+    ''' Creates an OpenXML Outline element from a JSON definition.
     ''' </summary>
+    ''' <param name="outlineJson">JSON element containing width, color, and dashType properties.</param>
+    ''' <returns>Configured Outline element with width in EMUs, color, and dash style.</returns>
+    ''' <remarks>Width is parsed culture-invariantly; 1 point = 12700 EMUs.</remarks>
     Private Function CreateOutline(outlineJson As JsonElement) As DocumentFormat.OpenXml.Drawing.Outline
         Dim outline As New DocumentFormat.OpenXml.Drawing.Outline()
 
@@ -1826,7 +1847,7 @@ Partial Public Class ThisAddIn
 
 
     ''' <summary>
-    ''' [NEW] Converts relative percentage-based coordinates from JSON into absolute EMU coordinates.
+    ''' Converts relative percentage-based coordinates from JSON into absolute EMU coordinates.
     ''' </summary>
     ''' <param name="presPart">The presentation part, to get the master slide dimensions.</param>
     ''' <param name="transformJson">The JSON "transform" object.</param>
@@ -1856,6 +1877,11 @@ Partial Public Class ThisAddIn
     End Function
 
 
+    ''' <summary>
+    ''' Converts a JSON shape name string to the corresponding OpenXML ShapeTypeValues enum.
+    ''' </summary>
+    ''' <param name="jsonName">Case-insensitive shape name (e.g., "rectangle", "circle").</param>
+    ''' <returns>Matching ShapeTypeValues enum; defaults to Rectangle if unknown.</returns>
     Private Function JsonShapeNameToEnumValue(jsonName As String) As DocumentFormat.OpenXml.Drawing.ShapeTypeValues
         Select Case jsonName.ToLower()
             Case "rectangle" : Return DocumentFormat.OpenXml.Drawing.ShapeTypeValues.Rectangle
@@ -1878,6 +1904,11 @@ Partial Public Class ThisAddIn
     End Function
 
 
+    ''' <summary>
+    ''' Converts a JSON dash style name to the corresponding OpenXML PresetLineDashValues enum.
+    ''' </summary>
+    ''' <param name="jsonName">Case-insensitive dash name (e.g., "solid", "dashed", "dotted").</param>
+    ''' <returns>Matching PresetLineDashValues enum; defaults to Solid if unknown.</returns>
     Private Function JsonDashNameToEnumValue(jsonName As String) As DocumentFormat.OpenXml.Drawing.PresetLineDashValues
         Select Case jsonName.ToLower()
             Case "solid"
@@ -1898,6 +1929,14 @@ Partial Public Class ThisAddIn
     End Function
 
 
+    ''' <summary>
+    ''' Builds a Drawing.Paragraph with text, nesting level, and optional bullet formatting.
+    ''' </summary>
+    ''' <param name="text">The text content.</param>
+    ''' <param name="level">Nesting level for bullet indentation.</param>
+    ''' <param name="el">JSON element containing style properties (font, size, bold, color, align).</param>
+    ''' <param name="isBulleted">True to use default bullets; False to apply NoBullet.</param>
+    ''' <returns>Configured Paragraph element with style and bullet properties.</returns>
     Private Function BuildStyledParagraph(text As String, level As Integer, el As System.Text.Json.JsonElement, isBulleted As Boolean) As DocumentFormat.OpenXml.Drawing.Paragraph
         Dim pPr = New DocumentFormat.OpenXml.Drawing.ParagraphProperties() With {.Level = level}
         Dim rp = New DocumentFormat.OpenXml.Drawing.RunProperties()
@@ -1924,7 +1963,16 @@ Partial Public Class ThisAddIn
         Return New DocumentFormat.OpenXml.Drawing.Paragraph(pPr, New DocumentFormat.OpenXml.Drawing.Run(rp, New DocumentFormat.OpenXml.Drawing.Text(text)))
     End Function
 
-
+    ''' <summary>
+    ''' Creates a freestanding text box shape with text or bulleted content at specified coordinates.
+    ''' </summary>
+    ''' <param name="presPart">The presentation part for slide dimensions.</param>
+    ''' <param name="sp">The slide part to add the text box to.</param>
+    ''' <param name="el">JSON element containing transform, text/bullets, and style properties.</param>
+    ''' <remarks>
+    ''' Supports both "text" and "bullet_text" types. Transform can be in EMUs or percentages.
+    ''' Bullets use 0.5cm hanging indent with character bullet (•).
+    ''' </remarks>
     Private Sub CreateFreestandingTextBox(
     presPart As DocumentFormat.OpenXml.Packaging.PresentationPart,
     sp As DocumentFormat.OpenXml.Packaging.SlidePart,
@@ -2040,7 +2088,16 @@ Partial Public Class ThisAddIn
         sp.Slide.Save()
     End Sub
 
-
+    ''' <summary>
+    ''' Adds a geometric shape to a slide with optional fill, outline, and text content.
+    ''' </summary>
+    ''' <param name="presPart">The presentation part for slide dimensions.</param>
+    ''' <param name="sp">The slide part to add the shape to.</param>
+    ''' <param name="el">JSON element containing shapeType, transform, fill, outline, and optional text properties.</param>
+    ''' <remarks>
+    ''' Transform coordinates can be in EMUs (>1) or percentages (≤1).
+    ''' Supports various shape types via JsonShapeNameToEnumValue mapping.
+    ''' </remarks>
     Private Sub AddShape(
     presPart As DocumentFormat.OpenXml.Packaging.PresentationPart,
     sp As DocumentFormat.OpenXml.Packaging.SlidePart,
@@ -2048,7 +2105,7 @@ Partial Public Class ThisAddIn
 
         Dim tree As DocumentFormat.OpenXml.Presentation.ShapeTree = sp.Slide.CommonSlideData.ShapeTree
 
-        ' 1) ID ermitteln
+        ' 1) Determine next available shape ID
         Dim maxId As UInteger = 0UI
         For Each nvPr As DocumentFormat.OpenXml.Presentation.NonVisualDrawingProperties _
         In tree.Descendants(Of DocumentFormat.OpenXml.Presentation.NonVisualDrawingProperties)()
@@ -2056,10 +2113,10 @@ Partial Public Class ThisAddIn
         Next
         Dim newId As UInteger = maxId + 1UI
 
-        ' 2) Transform
+        ' 2) Extract transform from JSON
         Dim transformJson = el.GetProperty("transform")
 
-        ' Raw-Wert prüfen: ≤1 = Prozent, >1 = bereits EMUs
+        ' Check raw value: ≤1 = percentage, >1 = already EMUs
         Dim rawX As Double
         If Not Double.TryParse(transformJson.GetProperty("x").GetRawText(),
                        Globalization.NumberStyles.Any,
@@ -2071,12 +2128,12 @@ Partial Public Class ThisAddIn
         Dim absoluteTransform As DocumentFormat.OpenXml.Drawing.Transform2D
 
         If rawX <= 1.0 Then
-            ' Prozentwerte → in EMU umrechnen
+            ' Percentage values → convert to EMU
             absoluteTransform = ConvertRelativeToAbsoluteTransform(presPart, transformJson)
         Else
-            ' Direkte EMU-Werte übernehmen
+            ' Use direct EMU values
             Dim ofs As New DocumentFormat.OpenXml.Drawing.Offset() With {
-        .X = CLng(transformJson.GetProperty("x").GetInt64()),
+            .X = CLng(transformJson.GetProperty("x").GetInt64()),
         .Y = CLng(transformJson.GetProperty("y").GetInt64())
     }
             Dim ext As New DocumentFormat.OpenXml.Drawing.Extents() With {
@@ -2094,7 +2151,7 @@ Partial Public Class ThisAddIn
         If el.TryGetProperty("fill", Nothing) Then spPr.Append(CreateFill(el.GetProperty("fill")))
         If el.TryGetProperty("outline", Nothing) Then spPr.Append(CreateOutline(el.GetProperty("outline")))
 
-        ' 4) nvSpPr (TextBox nur setzen, wenn Text folgt)
+        ' 4) nvSpPr (only set TextBox if text content follows)
         Dim nvSpDr = New DocumentFormat.OpenXml.Presentation.NonVisualShapeDrawingProperties()
         If el.TryGetProperty("text", Nothing) Then
             nvSpDr.TextBox = True
@@ -2105,10 +2162,10 @@ Partial Public Class ThisAddIn
     nvSpDr,
     New DocumentFormat.OpenXml.Presentation.ApplicationNonVisualDrawingProperties()
 )
-        ' 5) Neues Shape
+        ' 5) Create new Shape
         Dim shp As New DocumentFormat.OpenXml.Presentation.Shape(nvSpPr, spPr)
 
-        ' 6) Optional Text
+        ' 6) Optional text content
         If el.TryGetProperty("text", Nothing) Then
             Dim tb = New DocumentFormat.OpenXml.Presentation.TextBody(
             New DocumentFormat.OpenXml.Drawing.BodyProperties(),
@@ -2118,7 +2175,7 @@ Partial Public Class ThisAddIn
             shp.Append(tb)
         End If
 
-        ' 7) Einfügen & Speichern
+        ' 7) Insert and save
         tree.Append(shp)
         sp.Slide.Save()
     End Sub
@@ -2208,7 +2265,14 @@ Partial Public Class ThisAddIn
     End Sub
 
 
-
+    ''' <summary>
+    ''' Removes empty body placeholder shapes from a slide.
+    ''' </summary>
+    ''' <param name="sp">The slide part to process.</param>
+    ''' <remarks>
+    ''' A body placeholder is considered empty if it has no TextBody or contains only whitespace.
+    ''' Only removes the first empty body placeholder found.
+    ''' </remarks>
     Private Sub RemoveEmptyBodyPlaceholder(sp As DocumentFormat.OpenXml.Packaging.SlidePart)
         Dim shpToRemove As DocumentFormat.OpenXml.Presentation.Shape = Nothing
 
@@ -2238,6 +2302,15 @@ Partial Public Class ThisAddIn
         End If
     End Sub
 
+    ''' <summary>
+    ''' Determines whether a placeholder represents a body-like content area.
+    ''' </summary>
+    ''' <param name="ph">The placeholder shape to check.</param>
+    ''' <returns>True if the placeholder is Body or Object type; False otherwise.</returns>
+    ''' <remarks>
+    ''' Excludes footer, date/time, slide number, title, and subtitle placeholders.
+    ''' Implicit placeholders (no type) are treated as body-like only if index >= 2.
+    ''' </remarks>
     Private Function IsBodyLikePlaceholder(ph As DocumentFormat.OpenXml.Presentation.PlaceholderShape) As Boolean
         If ph Is Nothing Then Return False
         If ph.Type Is Nothing Then
@@ -2266,6 +2339,13 @@ Partial Public Class ThisAddIn
         End Select
     End Function
 
+    ''' <summary>
+    ''' Sets plain text in a shape identified by placeholder element.
+    ''' </summary>
+    ''' <param name="sp">The slide part containing the shape.</param>
+    ''' <param name="placeholderEl">JSON element identifying the placeholder.</param>
+    ''' <param name="text">The text to insert.</param>
+    ''' <param name="el">JSON element containing style properties.</param>
     Private Sub SetTextWithPlaceholder(
     sp As SlidePart,
     placeholderEl As JsonElement,
@@ -2290,6 +2370,11 @@ Partial Public Class ThisAddIn
         sp.Slide.Save()
     End Sub
 
+    ''' <summary>
+    ''' Sets bulleted text in a shape identified by placeholder element.
+    ''' </summary>
+    ''' <param name="sp">The slide part containing the shape.</param>
+    ''' <param name="el">JSON element containing bullets array and style properties.</param>
     Private Sub SetBulletsWithPlaceholder(
     sp As SlidePart,
     el As JsonElement)
@@ -2368,6 +2453,16 @@ Partial Public Class ThisAddIn
         End If
     End Sub
 
+    ''' <summary>
+    ''' Locates a shape by placeholder specification from JSON.
+    ''' </summary>
+    ''' <param name="sp">The slide part to search.</param>
+    ''' <param name="placeholderEl">JSON element specifying placeholder by type or name.</param>
+    ''' <returns>The matching Shape or Nothing if not found.</returns>
+    ''' <remarks>
+    ''' Supports JSON object format like {"type": "Body"} or string format for shape name matching.
+    ''' Falls back to first body-like placeholder if no match found.
+    ''' </remarks>
     Private Function FindShapeByPlaceholderElement(
         sp As SlidePart,
         placeholderEl As JsonElement) As DocumentFormat.OpenXml.Presentation.Shape

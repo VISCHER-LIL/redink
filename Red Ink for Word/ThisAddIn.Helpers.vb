@@ -1,6 +1,29 @@
-﻿' Part of: Red Ink for Word
-' Copyright by David Rosenthal, david.rosenthal@vischer.com
-' May only be used under with an appropriate license (see vischer.com/redink)
+﻿' Part of "Red Ink for Word"
+' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+
+' =============================================================================
+' File: ThisAddIn.Helpers.vb
+' Purpose: Provides utility helper methods for the Red Ink for Word add-in,
+'          including undo scope management, escape sequence handling, document
+'          gathering, text interpolation, progress tracking, API key encoding,
+'          and VBA module validation.
+'
+' Architecture:
+'  - WordUndoScope: Manages Word custom undo records for VSTO operations (Word 2013+).
+'  - Escape Handling: HideEscape/UnHideEscape convert special characters to/from Unicode sequences.
+'  - Document Gathering: GatherSelectedDocuments collects open Word documents with UI selection.
+'  - Text Search: FindLongTextInChunks delegates to WordSearchHelper for anchored text searches.
+'  - Word Counting: GetSelectedTextLength uses regex to count real words (letters with internal punctuation).
+'  - Runtime Interpolation: InterpolateAtRuntime replaces placeholders with instance field/property values.
+'  - ProgressScope: IDisposable wrapper for modeless progress windows with cancellation support.
+'  - Language Detection: GetWordDefaultInterfaceLanguage retrieves Word UI language via CultureInfo.
+'  - API Key Encoding: CodeAPIKey/DeCodeAPIKey encrypt/decrypt API keys with optional prefix handling.
+'  - VBA Validation: VBAModuleWorking checks if required VBA helper module meets minimum version.
+'  - Win32 Interop: GetAsyncKeyState for keyboard state detection (VK_ESCAPE).
+'
+' Dependencies: SharedLibrary.SharedMethods, WordSearchHelper, ProgressBarModule, 
+'               DPIProgressForm/ProgressForm.
+' =============================================================================
 
 Option Explicit On
 Option Strict On
@@ -20,6 +43,10 @@ Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
+    ''' <summary>
+    ''' Checks if INI configuration loading has failed and attempts initialization if needed.
+    ''' Returns True if INI loading ultimately failed, False if successful.
+    ''' </summary>
     Public Function INILoadFail() As Boolean
         If Not INIloaded Then
             If Not StartupInitialized Then
@@ -40,6 +67,11 @@ Partial Public Class ThisAddIn
     End Function
 
 
+    ''' <summary>
+    ''' Manages a custom Word undo record scope for VSTO operations.
+    ''' Automatically starts a custom undo record on creation and ends it on disposal.
+    ''' Only supported in Word 2013 (version 15.0) and later.
+    ''' </summary>
     Friend NotInheritable Class WordUndoScope
         Implements System.IDisposable
 
@@ -47,41 +79,50 @@ Partial Public Class ThisAddIn
         Private ReadOnly _undo As Microsoft.Office.Interop.Word.UndoRecord
         Private ReadOnly _iStarted As System.Boolean
 
+        ''' <summary>
+        ''' Initializes a new undo scope. Starts a custom undo record if Word version supports it
+        ''' and no other custom record is currently active.
+        ''' </summary>
+        ''' <param name="app">The Word Application instance.</param>
+        ''' <param name="name">Optional custom name for the undo record. Defaults to "VSTO-Action".</param>
         Public Sub New(app As Microsoft.Office.Interop.Word.Application, Optional name As System.String = Nothing)
             _app = app
             _undo = _app.UndoRecord
 
-            ' Word < 2013 (Version < 15.0) hat kein UndoRecord.
+            ' Word < 2013 (Version < 15.0) does not have UndoRecord.
             Dim ver As System.Version = New System.Version(_app.Version)
             If ver.Major < 15 Then
                 Return
             End If
 
-            ' Nur starten, wenn gerade kein anderer Custom-Record läuft
+            ' Only start if no other custom record is currently running.
             If Not _undo.IsRecordingCustomRecord Then
                 If name IsNot Nothing AndAlso name.Length > 0 Then
                     _undo.StartCustomRecord(name)
                 Else
-                    _undo.StartCustomRecord("VSTO-Aktion")
+                    _undo.StartCustomRecord("VSTO-Action")
                 End If
                 _iStarted = True
             End If
         End Sub
 
+        ''' <summary>
+        ''' Ends the custom undo record if it was started by this scope.
+        ''' </summary>
         Public Sub Dispose() Implements System.IDisposable.Dispose
             Try
                 If _iStarted AndAlso _undo.IsRecordingCustomRecord Then
                     _undo.EndCustomRecord()
                 End If
             Catch ex As System.Exception
-                ' Nichts werfen – wir sind in Dispose
+                ' Do not throw exceptions in Dispose.
             End Try
         End Sub
     End Class
 
     ''' <summary>
-    ''' Ersetzt jede Sequenz \\X durch \\uXXXX (doppelter Backslash!).
-    ''' Aus \\; wird \\u003B, aus \\< wird \\u003C, usw.
+    ''' Replaces each sequence \\X with \\uXXXX (double backslash).
+    ''' Example: \\; becomes \\u003B, \\&lt; becomes \\u003C, etc.
     ''' </summary>
     Public Function HideEscape(ByVal input As String) As String
         Return System.Text.RegularExpressions.Regex.Replace(input, "\\\\(.)",
@@ -93,8 +134,8 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Ersetzt jede Sequenz \\uXXXX (doppelter Backslash!) zurück in das jeweilige Zeichen.
-    ''' Aus \\u003B wird ;, aus \\u003C wird &lt;, usw.
+    ''' Replaces each sequence \\uXXXX (double backslash) back to the corresponding character.
+    ''' Example: \\u003B becomes ;, \\u003C becomes &lt;, etc.
     ''' </summary>
     Public Function UnHideEscape(ByVal input As String) As String
         Return System.Text.RegularExpressions.Regex.Replace(input, "\\\\u([0-9A-Fa-f]{4})",
@@ -104,6 +145,15 @@ Partial Public Class ThisAddIn
             End Function)
     End Function
 
+    ''' <summary>
+    ''' Gathers selected Word documents from currently open documents.
+    ''' Optionally prompts the user to select one, all, or none.
+    ''' Returns formatted document content with XML-style tags, or special values "NONE", empty string, or "ERROR ...".
+    ''' </summary>
+    ''' <param name="IncludeName">Include document name in output header.</param>
+    ''' <param name="IncludeNone">Offer "Do not add any document" option in selection.</param>
+    ''' <param name="ExceptCurrent">Exclude the currently active document from the list.</param>
+    ''' <param name="SilentAndGetAll">Skip user prompt and return all documents (after optional exclusion).</param>
     Public Function GatherSelectedDocuments(Optional IncludeName As Boolean = True,
                                             Optional IncludeNone As System.Boolean = False,
                                             Optional ExceptCurrent As Boolean = False,
@@ -156,7 +206,7 @@ Partial Public Class ThisAddIn
                 selItems.Add(New SelectionItem($"{d.Name} ({d.FullName})", i + 1))
             Next
 
-            ' Add “All open documents” and optional “None”
+            ' Add "All open documents" and optional "None"
             Dim indexAll As System.Int32 = selItems.Count + 1
             selItems.Add(New SelectionItem("Add all open documents", indexAll))
 
@@ -199,7 +249,10 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-    ' Helper to build the concatenated document content string
+    ''' <summary>
+    ''' Builds the concatenated document content string with XML-style tags.
+    ''' Each document is wrapped in &lt;DOCUMENTn&gt; tags with optional name header.
+    ''' </summary>
     Private Function BuildDocumentsResult(docs As System.Collections.Generic.List(Of Microsoft.Office.Interop.Word.Document),
                                           includeName As System.Boolean) As System.String
         Dim insertedDocuments As System.String = System.String.Empty
@@ -221,7 +274,14 @@ Partial Public Class ThisAddIn
         Return insertedDocuments
     End Function
 
-
+    ''' <summary>
+    ''' Finds long text in the current selection using anchored fast search.
+    ''' Delegates to WordSearchHelper.FindLongTextAnchoredFast with optional skip-deleted-text support.
+    ''' </summary>
+    ''' <param name="findText">The text to find.</param>
+    ''' <param name="selection">The Word selection to search within (modified if found).</param>
+    ''' <param name="Skipdeleted">If True, skips text marked as deleted revisions.</param>
+    ''' <returns>True if text was found, False otherwise.</returns>
     Public Function FindLongTextInChunks(ByVal findText As String, ByRef selection As Word.Selection, Optional Skipdeleted As Boolean = True) As Boolean
 
         Debug.WriteLine("Entering into FindLongTextAnchoredFast")
@@ -251,10 +311,10 @@ Partial Public Class ThisAddIn
             ' Pattern:
             ' \b                Word boundary
             ' [\p{L}]+          One or more Unicode letters
-            ' (?:['’\-‑–][\p{L}]+)*  Optional internal apostrophe/hyphen/dash + letters (e.g. don't, mother-in-law, rock’n’roll)
+            ' (?:[''\-‑–][\p{L}]+)*  Optional internal apostrophe/hyphen/dash + letters (e.g. don't, mother-in-law, rock'n'roll)
             ' \b                Word boundary
             ' Excludes tokens containing digits or starting with punctuation.
-            Dim pattern As String = "\b[\p{L}]+(?:['’\-‑–][\p{L}]+)*\b"
+            Dim pattern As String = "\b[\p{L}]+(?:[''\-‑–][\p{L}]+)*\b"
 
             Return Regex.Matches(selectedText, pattern).Count
         Catch ex As System.Exception
@@ -262,13 +322,20 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-
+    ''' <summary>
+    ''' Replaces placeholders in the template string with values from instance fields or properties.
+    ''' Placeholders use {FieldName} or {PropertyName} syntax. Sensitive placeholders like {Codebasis}
+    ''' and {INI_*API*} are cleared for security reasons.
+    ''' </summary>
+    ''' <param name="template">The template string containing placeholders.</param>
+    ''' <returns>The interpolated string with placeholders replaced by actual values.</returns>
     Public Function InterpolateAtRuntime(ByVal template As String) As String
         If template Is Nothing Then
             MessageBox.Show("Error InterpolateAtRuntime: Template is Nothing.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             Return ""
         End If
 
+        ' Clear sensitive placeholders
         template = Regex.Replace(template, "{Codebasis}", "", RegexOptions.IgnoreCase)
         template = Regex.Replace(template, "{INI_DecodedAPI}", "", RegexOptions.IgnoreCase)
         template = Regex.Replace(template, "{INI_DecodedAPI_2}", "", RegexOptions.IgnoreCase)
@@ -286,7 +353,6 @@ Partial Public Class ThisAddIn
             Dim placeholder As String = m.Value          ' e.g. "{Name}"
             Dim varName As String = m.Groups(1).Value    ' e.g. "Name"
 
-            ' Debug.WriteLine($"placeholder = {placeholder}  Varname = {varName}")
             ' Search for Field
             Dim fieldInfo = Me.GetType().GetField(varName)
             If fieldInfo IsNot Nothing Then
@@ -311,8 +377,11 @@ Partial Public Class ThisAddIn
     End Function
 
 
-    ' Lightweight scope to show a progress window and enable cancellation for long-running operations.
-    ' Works with the existing ProgressBarModule and DPIProgressForm/ProgressForm.
+    ''' <summary>
+    ''' Lightweight IDisposable scope to show a modeless progress window with cancellation support
+    ''' for long-running operations. Integrates with ProgressBarModule and DPIProgressForm/ProgressForm.
+    ''' The progress form runs on a dedicated STA UI thread with its own message loop.
+    ''' </summary>
     Public NotInheritable Class ProgressScope
         Implements IDisposable
 
@@ -322,7 +391,14 @@ Partial Public Class ThisAddIn
         Private ReadOnly _useDpiForm As Boolean
         Private _closed As Integer = 0
 
-        ' Start the scope and show a modeless progress window reading from ProgressBarModule.* every 250ms.
+        ''' <summary>
+        ''' Initializes the progress scope and displays a modeless progress window.
+        ''' The form updates its display by polling ProgressBarModule.* every 250ms.
+        ''' </summary>
+        ''' <param name="headerText">The header text displayed on the progress form.</param>
+        ''' <param name="initialLabel">The initial status label text.</param>
+        ''' <param name="max">Maximum progress value (default 100).</param>
+        ''' <param name="useDpiForm">If True, uses DPIProgressForm; otherwise uses ProgressForm.</param>
         Public Sub New(headerText As String,
                    initialLabel As String,
                    Optional max As Integer = 100,
@@ -347,7 +423,7 @@ Partial Public Class ThisAddIn
                     ' Run form (timer inside form pulls ProgressBarModule.* and closes itself when CancelOperation=True)
                     System.Windows.Forms.Application.Run(_form)
                 Catch
-                    ' Swallow — we always attempt to clean up in Dispose.
+                    ' Swallow exceptions — cleanup is always attempted in Dispose.
                 End Try
             End Sub
         )
@@ -356,7 +432,12 @@ Partial Public Class ThisAddIn
             _uiThread.Start()
         End Sub
 
-        ' Report progress in a threadsafe way via your global ProgressBarModule.
+        ''' <summary>
+        ''' Reports progress in a thread-safe manner via the global ProgressBarModule.
+        ''' </summary>
+        ''' <param name="current">Current progress value.</param>
+        ''' <param name="max">Optional new maximum value (if >= 1).</param>
+        ''' <param name="label">Optional new status label text.</param>
         Public Shared Sub Report(current As Integer,
                              Optional max As Integer = -1,
                              Optional label As String = Nothing)
@@ -365,38 +446,49 @@ Partial Public Class ThisAddIn
             ProgressBarModule.GlobalProgressValue = System.Math.Max(0, System.Math.Min(current, ProgressBarModule.GlobalProgressMax))
         End Sub
 
-        ' Request cancellation (also triggered by the Cancel button in the UI)
+        ''' <summary>
+        ''' Requests cancellation of the operation.
+        ''' Also triggered by the Cancel button in the progress UI.
+        ''' </summary>
         Public Sub RequestCancel()
             _cts.Cancel()
             ProgressBarModule.CancelOperation = True
         End Sub
 
-        ' Check this frequently at safe points (between steps/chunks) to bail out early.
+        ''' <summary>
+        ''' Gets a value indicating whether cancellation has been requested.
+        ''' Check this frequently at safe points (between steps/chunks) to bail out early.
+        ''' </summary>
         Public ReadOnly Property CancelRequested As Boolean
             Get
                 Return ProgressBarModule.CancelOperation OrElse _cts.IsCancellationRequested
             End Get
         End Property
 
-        ' Bubble a CancellationToken if you prefer tokens.
+        ''' <summary>
+        ''' Gets the CancellationToken associated with this scope.
+        ''' </summary>
         Public ReadOnly Property Token As System.Threading.CancellationToken
             Get
                 Return _cts.Token
             End Get
         End Property
 
-        ' In class ProgressScope
+        ''' <summary>
+        ''' Disposes the progress scope, signaling cancellation and closing the progress form.
+        ''' Waits up to 1 second for the UI thread to exit cleanly.
+        ''' </summary>
         Public Sub Dispose() Implements IDisposable.Dispose
             If System.Threading.Interlocked.Exchange(_closed, 1) <> 0 Then Return
             Try
-                ' Signal cancel so the form’s timer path also closes itself
+                ' Signal cancel so the form's timer path also closes itself
                 ProgressBarModule.CancelOperation = True
 
                 Dim f = _form
                 If f IsNot Nothing Then
                     Try
                         If f.IsHandleCreated AndAlso Not f.IsDisposed Then
-                            ' Request close on the form’s thread
+                            ' Request close on the form's thread
                             f.BeginInvoke(New System.Action(Sub()
                                                                 Try
                                                                     If Not f.IsDisposed Then f.Close()
@@ -422,6 +514,10 @@ Partial Public Class ThisAddIn
         End Sub
     End Class
 
+    ''' <summary>
+    ''' Retrieves the display name of the Word user interface language.
+    ''' Falls back to "English" if an error occurs.
+    ''' </summary>
     Public Function GetWordDefaultInterfaceLanguage() As String
         Try
             ' Get the language ID of the Word user interface
@@ -437,6 +533,13 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
+    ''' <summary>
+    ''' Encodes (encrypts) an API key using a user-provided secret key.
+    ''' Optionally handles a prefix (e.g., "sk-") that is preserved during encoding.
+    ''' Prompts the user for the prefix and secret key via input dialogs.
+    ''' </summary>
+    ''' <param name="apiKey">The API key to encode.</param>
+    ''' <returns>The encoded API key with prefix (if applicable), or "Error" on failure.</returns>
     Private Function CodeAPIKey(ByVal apiKey As String) As String
         Dim modifiedKey As String
         Dim resultKey As String
@@ -480,6 +583,14 @@ Partial Public Class ThisAddIn
 
         Return resultKey
     End Function
+
+    ''' <summary>
+    ''' Decodes (decrypts) an API key using a user-provided secret key.
+    ''' Optionally handles a prefix (e.g., "sk-") that is preserved during decoding.
+    ''' Prompts the user for the prefix and secret key via input dialogs.
+    ''' </summary>
+    ''' <param name="apiKey">The encoded API key to decode.</param>
+    ''' <returns>The decoded API key with prefix (if applicable), or "Error" on failure.</returns>
     Private Function DeCodeAPIKey(ByVal apiKey As String) As String
         Dim modifiedKey As String
         Dim resultKey As String
@@ -522,7 +633,11 @@ Partial Public Class ThisAddIn
         Return resultKey
     End Function
 
-
+    ''' <summary>
+    ''' Validates that the VBA helper module is working and meets the minimum required version.
+    ''' Calls the VBA function "CheckAppHelper" and compares its version number.
+    ''' </summary>
+    ''' <returns>True if the VBA module version meets MinHelperVersion, False otherwise.</returns>
     Public Function VBAModuleWorking() As Boolean
 
         Dim xlApp As Microsoft.Office.Interop.Word.Application = Me.Application
@@ -537,16 +652,27 @@ Partial Public Class ThisAddIn
                 Return False
             End If
         Catch ex As Exception
+            ' Return False if VBA call fails
+            Return False
         End Try
 
     End Function
 
+    ''' <summary>
+    ''' Win32 API import: Retrieves the asynchronous state of a specified virtual key.
+    ''' Used for detecting key presses (e.g., Escape key) outside normal event flow.
+    ''' </summary>
+    ''' <param name="vKey">The virtual-key code to check.</param>
+    ''' <returns>Non-zero if the key is pressed, zero otherwise.</returns>
     <System.Runtime.InteropServices.DllImport("user32.dll",
     SetLastError:=True, CharSet:=System.Runtime.InteropServices.CharSet.Auto)>
     Public Shared Function GetAsyncKeyState(ByVal vKey As System.Int32) As System.Int16
     End Function
 
-    ' Convenience constant 
+    ''' <summary>
+    ''' Virtual-key code for the Escape key (0x1B).
+    ''' Used with GetAsyncKeyState for cancellation detection.
+    ''' </summary>
     Private Const VK_ESCAPE As System.Int32 = &H1B
 
 
