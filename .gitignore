@@ -1,6 +1,8 @@
+clickonce/
 packages/
 bin/
 obj/
 *.user
 *.suo
 *.vs/
+/Directory.Build.props
