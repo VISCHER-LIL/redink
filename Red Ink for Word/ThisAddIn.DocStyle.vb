@@ -461,6 +461,17 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
+
+    Private Shared Function NormalizeStyleKey(s As String) As String
+        If s Is Nothing Then Return ""
+
+        ' Normalize common invisible differences from LLM / copy-paste.
+        s = s.Replace(ChrW(&HA0), " ") ' NBSP -> space
+        s = Regex.Replace(s, "\s+", " ").Trim()
+
+        Return s
+    End Function
+
     ''' <summary>
     ''' Extracts user style information from a single paragraph for template creation.
     ''' Parses the paragraph text to extract userStyleName and whenToApply.
@@ -1053,29 +1064,39 @@ Partial Public Class ThisAddIn
 
 
 
-
-    ''' <summary>
-    ''' Applies styles using fast mode (single LLM call for mapping plan).
-    ''' </summary>
+    ' =========================
+    ' DROP-IN REPLACEMENT: ApplyStylesFastMode
+    '
+    ' Fix:
+    ' - Normalizes userStyleName keys (LLM + template) so invisible chars (NBSP/ZWSP/whitespace) can’t break lookup.
+    ' - Uses dictionaries for O(1) lookups instead of scanning userStyles array per paragraph.
+    ' - Logs when a userStyleName can’t be resolved to a template userStyleDef (so indent overrides don’t silently disappear).
+    ' =========================
     Private Async Function ApplyStylesFastMode(doc As Word.Document, targetRange As Word.Range,
-                                                templateJson As String, templateObj As JObject,
-                                                settings As DocStyleSettings,
-                                                useSecondAPI As Boolean) As Task(Of String)
+                                            templateJson As String, templateObj As JObject,
+                                            settings As DocStyleSettings,
+                                            useSecondAPI As Boolean) As Task(Of String)
         Dim report As New StringBuilder()
         report.AppendLine("=== Style Template Application Report (Fast Mode) ===")
         report.AppendLine($"Date: {DateTime.Now:yyyy-MM-dd HH:mm:ss}")
         report.AppendLine()
 
         Try
-            ' Build user style name to wdStyle name mapping
+            ' Build user style name -> wdStyle name mapping and user style name -> userStyleDef.
             Dim userStyleToWdStyle As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+            Dim userStyleNameToDef As New Dictionary(Of String, JObject)(StringComparer.OrdinalIgnoreCase)
+
             If templateObj("userStyles") IsNot Nothing Then
                 For Each userStyle As JObject In CType(templateObj("userStyles"), JArray)
-                    Dim userStyleName As String = If(userStyle("userStyleName") IsNot Nothing, userStyle("userStyleName").ToString(), "")
+                    Dim rawUserStyleName As String = If(userStyle("userStyleName") IsNot Nothing, userStyle("userStyleName").ToString(), "")
+                    Dim userStyleKey As String = NormalizeStyleKey(rawUserStyleName)
+
+                    If String.IsNullOrWhiteSpace(userStyleKey) Then Continue For
+
                     Dim wdStyleName As String = If(userStyle("wdStyleName") IsNot Nothing, userStyle("wdStyleName").ToString(), "Normal")
-                    If Not String.IsNullOrWhiteSpace(userStyleName) Then
-                        userStyleToWdStyle(userStyleName) = wdStyleName
-                    End If
+
+                    userStyleToWdStyle(userStyleKey) = wdStyleName
+                    userStyleNameToDef(userStyleKey) = userStyle
                 Next
             End If
 
@@ -1108,19 +1129,15 @@ Partial Public Class ThisAddIn
                         hasList = True
 
                         ' Determine if this is actually a bullet list by checking the list string
-                        ' Bullets typically have characters like •, -, ○, ▪, etc. and no trailing period/parenthesis
                         Dim listString As String = lf.ListString
                         Dim isBullet As Boolean = False
 
-                        ' Check if it's a simple bullet type
                         If lf.ListType = WdListType.wdListBullet Then
                             isBullet = True
                         ElseIf Not String.IsNullOrEmpty(listString) Then
-                            ' Check for common bullet characters (not alphanumeric patterns like "1.", "a)", "I.")
                             Dim trimmed As String = listString.Trim()
                             If trimmed.Length > 0 Then
                                 Dim firstChar As Char = trimmed.Chars(0)
-                                ' If it's not a digit or letter, it's likely a bullet symbol
                                 If Not Char.IsLetterOrDigit(firstChar) Then
                                     isBullet = True
                                 End If
@@ -1199,6 +1216,276 @@ Partial Public Class ThisAddIn
             ' Track paragraphs that need numbering restart (for post-processing)
             Dim numberingRestartParas As New List(Of Word.Paragraph)()
 
+            ' TEMPLATE baseline by paragraph index (0-based index into paragraphList)
+            Dim templateBaselineByIndex As New Dictionary(Of Integer, JObject)()
+
+            Try
+                For Each mapping As JObject In mappingArray
+                    If ProgressBarModule.CancelOperation Then
+                        report.AppendLine("Operation cancelled by user.")
+                        Exit For
+                    End If
+
+                    Dim paraIdx As Integer = CInt(mapping("paragraphIndex")) - 1
+
+                    Dim userStyleNameRaw As String = If(mapping("userStyleName") IsNot Nothing, CStr(mapping("userStyleName")), "")
+                    Dim userStyleName As String = NormalizeStyleKey(userStyleNameRaw)
+
+                    Dim confidence As Integer = If(mapping("confidence") IsNot Nothing, CInt(mapping("confidence")), 100)
+
+                    GlobalProgressValue += 1
+                    GlobalProgressLabel = $"Processing paragraph {paraIdx + 1} of {paragraphList.Count}"
+
+                    If paraIdx < 0 OrElse paraIdx >= paragraphList.Count Then Continue For
+
+                    Dim para As Word.Paragraph = paragraphList(paraIdx)
+                    Dim paraPreview As String = GetParaPreview(para, ReportParaPreviewLen)
+
+                    ' Resolve wdStyle name from user style name
+                    Dim wdStyleName As String = "Normal"
+                    If userStyleToWdStyle.ContainsKey(userStyleName) Then
+                        wdStyleName = userStyleToWdStyle(userStyleName)
+                    ElseIf Not String.IsNullOrWhiteSpace(userStyleName) Then
+                        ' Try using the user style name directly as wdStyle name
+                        wdStyleName = userStyleName
+                    End If
+
+                    ' Check confidence threshold
+                    If settings.UseConfidenceThreshold AndAlso confidence < settings.ConfidenceThreshold Then
+                        skippedCount += 1
+                        report.AppendLine($"Skipped paragraph {paraIdx + 1}: confidence {confidence}% below threshold | suggested='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
+                        Continue For
+                    End If
+
+                    ' Preview mode
+                    If settings.PreviewMode Then
+                        para.Range.Select()
+                        Dim preview As Integer = ShowCustomYesNoBox(
+                    $"Apply user style '{userStyleNameRaw}' (normalized: '{userStyleName}') (Word style: '{wdStyleName}') to this paragraph?{vbCrLf}{vbCrLf}Confidence: {confidence}%{vbCrLf}Text: {para.Range.Text.Substring(0, Math.Min(100, para.Range.Text.Length))}...",
+                    "Yes", "Skip", $"{AN} - Preview")
+
+                        If preview = 0 Then
+                            Dim continueChoice As Integer = ShowCustomYesNoBox(
+                        "You closed the preview dialog without making a selection." & vbCrLf & vbCrLf &
+                        "Do you want to continue applying styles without individual preview, or abort the operation?",
+                        "Continue without preview", "Abort", $"{AN} - Continue?")
+                            If continueChoice = 1 Then
+                                settings.PreviewMode = False
+                            Else
+                                report.AppendLine("Operation aborted by user.")
+                                Exit For
+                            End If
+                        ElseIf preview <> 1 Then
+                            skippedCount += 1
+                            report.AppendLine($"Skipped paragraph {paraIdx + 1}: user skipped in preview | suggested='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
+                            Continue For
+                        End If
+                    End If
+
+                    ' Apply style + TEMPLATE overrides; then capture template baseline.
+                    Try
+                        para.Style = doc.Styles(wdStyleName)
+
+                        ' Find template user style definition (normalized key)
+                        Dim userStyleDef As JObject = Nothing
+                        userStyleNameToDef.TryGetValue(userStyleName, userStyleDef)
+
+                        If userStyleDef IsNot Nothing Then
+                            ApplyUserStyleFormattingFromTemplate(para, userStyleDef)
+                        Else
+                            Debug.WriteLine($"[DocStyle] FastMode: No userStyleDef for para {paraIdx + 1}: raw='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' preview='{paraPreview}'")
+                        End If
+
+                        ' Capture TEMPLATE baseline AFTER wdStyle + manual template overrides.
+                        templateBaselineByIndex(paraIdx) = CaptureParaProps(para)
+
+                        appliedCount += 1
+
+                        ' Track for numbering restart post-processing (only if feature is enabled)
+                        If settings.ListNumberingReset > 0 Then
+                            Dim shouldRestart As Boolean = False
+                            If settings.ListNumberingReset = 2 Then
+                                ' LLM-assisted: check the mapping response
+                                shouldRestart = If(mapping("restartNumbering") IsNot Nothing, CBool(mapping("restartNumbering")), False)
+                            End If
+                            ' For rule-based (mode 1), we compute in post-processing.
+
+                            If shouldRestart Then
+                                numberingRestartParas.Add(para)
+                            End If
+                        End If
+
+                    Catch ex As Exception
+                        report.AppendLine($"Error applying style '{wdStyleName}' to paragraph {paraIdx + 1}: {ex.Message} | suggested='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
+                    End Try
+                Next
+            Finally
+                ProgressBarModule.CancelOperation = True
+            End Try
+
+            ' Post-processing: Apply numbering restarts if feature is enabled
+            Dim restartCount As Integer = 0
+            If settings.ListNumberingReset > 0 Then
+                restartCount = ApplyNumberingRestarts(doc, paragraphList, paragraphHasList, settings, numberingRestartParas, templateBaselineByIndex)
+            End If
+
+            report.AppendLine()
+            report.AppendLine($"Total paragraphs: {paragraphList.Count}")
+            report.AppendLine($"Styles applied: {appliedCount}")
+            report.AppendLine($"Skipped: {skippedCount}")
+            If settings.ListNumberingReset > 0 Then
+                report.AppendLine($"Numbering restarts applied: {restartCount}")
+            End If
+
+        Catch ex As Exception
+            report.AppendLine($"Error in fast mode: {ex.Message}")
+        End Try
+
+        Return report.ToString()
+    End Function
+
+
+    Private Async Function oldApplyStylesFastMode(doc As Word.Document, targetRange As Word.Range,
+                                                templateJson As String, templateObj As JObject,
+                                                settings As DocStyleSettings,
+                                                useSecondAPI As Boolean) As Task(Of String)
+        Dim report As New StringBuilder()
+        report.AppendLine("=== Style Template Application Report (Fast Mode) ===")
+        report.AppendLine($"Date: {DateTime.Now:yyyy-MM-dd HH:mm:ss}")
+        report.AppendLine()
+
+        Try
+            ' Build user style name to wdStyle name mapping
+            Dim userStyleToWdStyle As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+            If templateObj("userStyles") IsNot Nothing Then
+                For Each userStyle As JObject In CType(templateObj("userStyles"), JArray)
+                    Dim userStyleName As String = If(userStyle("userStyleName") IsNot Nothing, userStyle("userStyleName").ToString(), "")
+                    Dim wdStyleName As String = If(userStyle("wdStyleName") IsNot Nothing, userStyle("wdStyleName").ToString(), "Normal")
+                    If Not String.IsNullOrWhiteSpace(userStyleName) Then
+                        userStyleToWdStyle(userStyleName) = wdStyleName
+                    End If
+                Next
+            End If
+
+            ' Build numbered paragraph list with formatting hints
+            Dim paragraphTexts As New StringBuilder()
+            Dim paragraphList As New List(Of Word.Paragraph)()
+            Dim paragraphHasList As New List(Of Boolean)()
+            Dim idx As Integer = 1
+
+            For Each para As Word.Paragraph In targetRange.Paragraphs
+                Dim text As String = para.Range.Text.TrimEnd(vbCr, vbLf, ChrW(13), ChrW(10))
+                If String.IsNullOrWhiteSpace(text) Then Continue For
+
+                ' Skip table cells if not processing tables
+                If Not settings.ProcessTables Then
+                    Try
+                        If para.Range.Cells.Count > 0 Then Continue For
+                    Catch
+                    End Try
+                End If
+
+                ' Build formatting hints
+                Dim hints As New StringBuilder()
+
+                ' List formatting hint - detect actual bullet vs numbering
+                Dim hasList As Boolean = False
+                Try
+                    Dim lf As Word.ListFormat = para.Range.ListFormat
+                    If lf.ListType <> WdListType.wdListNoNumbering Then
+                        hasList = True
+
+                        ' Determine if this is actually a bullet list by checking the list string
+                        Dim listString As String = lf.ListString
+                        Dim isBullet As Boolean = False
+
+                        If lf.ListType = WdListType.wdListBullet Then
+                            isBullet = True
+                        ElseIf Not String.IsNullOrEmpty(listString) Then
+                            Dim trimmed As String = listString.Trim()
+                            If trimmed.Length > 0 Then
+                                Dim firstChar As Char = trimmed.Chars(0)
+                                If Not Char.IsLetterOrDigit(firstChar) Then
+                                    isBullet = True
+                                End If
+                            End If
+                        End If
+
+                        Dim listTypeHint As String = If(isBullet, "Bullet", lf.ListType.ToString().Replace("wdList", ""))
+                        hints.Append($"[LIST:{listTypeHint}/L{lf.ListLevelNumber}] ")
+                    End If
+                Catch
+                End Try
+
+                ' Indentation hint
+                Try
+                    If para.LeftIndent > 0 OrElse para.FirstLineIndent <> 0 Then
+                        hints.Append($"[INDENT:{Math.Round(para.LeftIndent, 0)}/{Math.Round(para.FirstLineIndent, 0)}] ")
+                    End If
+                Catch
+                End Try
+
+                paragraphTexts.AppendLine($"[{idx}] {hints}{text}")
+                paragraphList.Add(para)
+                paragraphHasList.Add(hasList)
+                idx += 1
+            Next
+
+            If paragraphList.Count = 0 Then
+                report.AppendLine("No paragraphs to process.")
+                Return report.ToString()
+            End If
+
+            ' Build prompt - add numbering hint only if LLM-assisted mode is enabled
+            Dim systemPrompt As String = SP_ApplyDocStyleFast
+            If settings.ListNumberingReset = 2 Then
+                systemPrompt &= SP_ApplyDocStyleFast_NumberingHint
+            End If
+
+            Dim userPrompt As New StringBuilder()
+            userPrompt.AppendLine("<STYLETEMPLATE>")
+            userPrompt.AppendLine(templateJson)
+            userPrompt.AppendLine("</STYLETEMPLATE>")
+            userPrompt.AppendLine()
+            userPrompt.AppendLine("<DOCUMENT>")
+            userPrompt.AppendLine(paragraphTexts.ToString())
+            userPrompt.AppendLine("</DOCUMENT>")
+
+            If Not String.IsNullOrWhiteSpace(settings.DocumentContext) Then
+                userPrompt.AppendLine()
+                userPrompt.AppendLine("<CONTEXT>")
+                userPrompt.AppendLine(settings.DocumentContext)
+                userPrompt.AppendLine("</CONTEXT>")
+            End If
+
+            ' Call LLM
+            Dim response As String = Await LLM(systemPrompt, userPrompt.ToString(), "", "", 0, useSecondAPI)
+
+            ' Parse response
+            Dim mappingArray As JArray
+            Try
+                response = ExtractJsonFromResponse(response)
+                mappingArray = JArray.Parse(response)
+            Catch ex As Exception
+                report.AppendLine($"Error parsing LLM response: {ex.Message}")
+                Return report.ToString()
+            End Try
+
+            ' Apply styles
+            Dim appliedCount As Integer = 0
+            Dim skippedCount As Integer = 0
+
+            ShowProgressBarInSeparateThread($"{AN} - Applying Styles", "Applying styles...")
+            ProgressBarModule.CancelOperation = False
+            GlobalProgressMax = mappingArray.Count
+            GlobalProgressValue = 0
+
+            ' Track paragraphs that need numbering restart (for post-processing)
+            Dim numberingRestartParas As New List(Of Word.Paragraph)()
+
+            ' TEMPLATE baseline by paragraph index (0-based index into paragraphList)
+            Dim templateBaselineByIndex As New Dictionary(Of Integer, JObject)()
+
             Try
                 For Each mapping As JObject In mappingArray
                     If ProgressBarModule.CancelOperation Then
@@ -1209,7 +1496,6 @@ Partial Public Class ThisAddIn
                     Dim paraIdx As Integer = CInt(mapping("paragraphIndex")) - 1
                     Dim userStyleName As String = If(mapping("userStyleName") IsNot Nothing, CStr(mapping("userStyleName")), "")
                     Dim confidence As Integer = If(mapping("confidence") IsNot Nothing, CInt(mapping("confidence")), 100)
-                    Dim preserveList As Boolean = If(mapping("preserveList") IsNot Nothing, CBool(mapping("preserveList")), False)
 
                     GlobalProgressValue += 1
                     GlobalProgressLabel = $"Processing paragraph {paraIdx + 1} of {paragraphList.Count}"
@@ -1239,55 +1525,37 @@ Partial Public Class ThisAddIn
                     If settings.PreviewMode Then
                         para.Range.Select()
                         Dim preview As Integer = ShowCustomYesNoBox(
-                            $"Apply user style '{userStyleName}' (Word style: '{wdStyleName}') to this paragraph?{vbCrLf}{vbCrLf}Confidence: {confidence}%{vbCrLf}Preserve list: {preserveList}{vbCrLf}Text: {para.Range.Text.Substring(0, Math.Min(100, para.Range.Text.Length))}...",
-                            "Yes", "Skip", $"{AN} - Preview")
+                        $"Apply user style '{userStyleName}' (Word style: '{wdStyleName}') to this paragraph?{vbCrLf}{vbCrLf}Confidence: {confidence}%{vbCrLf}Text: {para.Range.Text.Substring(0, Math.Min(100, para.Range.Text.Length))}...",
+                        "Yes", "Skip", $"{AN} - Preview")
 
                         If preview = 0 Then
-                            ' User closed dialog without choosing - ask what to do
                             Dim continueChoice As Integer = ShowCustomYesNoBox(
-                                "You closed the preview dialog without making a selection." & vbCrLf & vbCrLf &
-                                "Do you want to continue applying styles without individual preview, or abort the operation?",
-                                "Continue without preview", "Abort", $"{AN} - Continue?")
+                            "You closed the preview dialog without making a selection." & vbCrLf & vbCrLf &
+                            "Do you want to continue applying styles without individual preview, or abort the operation?",
+                            "Continue without preview", "Abort", $"{AN} - Continue?")
                             If continueChoice = 1 Then
-                                ' Continue without preview - disable preview mode for remaining paragraphs
                                 settings.PreviewMode = False
-                                ' Fall through to apply style to current paragraph
                             Else
-                                ' Abort the operation (user clicked Abort or closed dialog)
                                 report.AppendLine("Operation aborted by user.")
                                 Exit For
                             End If
                         ElseIf preview <> 1 Then
-                            ' User clicked Skip
                             skippedCount += 1
                             report.AppendLine($"Skipped paragraph {paraIdx + 1}: user skipped in preview | suggested='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
                             Continue For
                         End If
                     End If
 
-                    ' Capture list formatting before applying style
-                    Dim originalListType As WdListType = WdListType.wdListNoNumbering
-                    Dim originalListString As String = ""
-                    Dim originalListLevel As Integer = 1
-                    If preserveList OrElse paragraphHasList(paraIdx) Then
-                        Try
-                            originalListType = para.Range.ListFormat.ListType
-                            originalListString = para.Range.ListFormat.ListString
-                            originalListLevel = para.Range.ListFormat.ListLevelNumber
-                        Catch
-                        End Try
-                    End If
-
-                    ' Apply style
+                    ' Apply style + TEMPLATE overrides; then capture template baseline.
                     Try
                         para.Style = doc.Styles(wdStyleName)
 
-                        ' Apply user style formatting overrides from template
+                        ' Find template user style definition
                         Dim userStyleDef As JObject = Nothing
                         If templateObj("userStyles") IsNot Nothing Then
                             For Each us As JObject In CType(templateObj("userStyles"), JArray)
                                 If us("userStyleName") IsNot Nothing AndAlso
-                                   String.Equals(us("userStyleName").ToString(), userStyleName, StringComparison.OrdinalIgnoreCase) Then
+                               String.Equals(us("userStyleName").ToString(), userStyleName, StringComparison.OrdinalIgnoreCase) Then
                                     userStyleDef = us
                                     Exit For
                                 End If
@@ -1298,34 +1566,10 @@ Partial Public Class ThisAddIn
                             ApplyUserStyleFormattingFromTemplate(para, userStyleDef)
                         End If
 
+                        ' Capture TEMPLATE baseline AFTER wdStyle + manual template overrides.
+                        templateBaselineByIndex(paraIdx) = CaptureParaProps(para)
+
                         appliedCount += 1
-
-                        ' Restore list formatting if needed (only if preserveList AND template has list)
-                        Dim templateHasList As Boolean = False
-                        If userStyleDef IsNot Nothing AndAlso userStyleDef("listFormatting") IsNot Nothing Then
-                            templateHasList = If(userStyleDef("listFormatting")("hasList") IsNot Nothing,
-                                                 CBool(userStyleDef("listFormatting")("hasList")), False)
-                        End If
-
-                        ' Restore list formatting if needed
-                        If (preserveList OrElse paragraphHasList(paraIdx)) AndAlso originalListType <> WdListType.wdListNoNumbering Then
-                            Try
-                                If originalListType = WdListType.wdListBullet Then
-                                    para.Range.ListFormat.ApplyBulletDefault()
-                                ElseIf originalListType = WdListType.wdListSimpleNumbering OrElse
-                                       originalListType = WdListType.wdListListNumOnly Then
-                                    para.Range.ListFormat.ApplyNumberDefault()
-                                End If
-                                ' Try to restore level
-                                If originalListLevel > 1 Then
-                                    For lvl As Integer = 2 To originalListLevel
-                                        para.Range.ListFormat.ListIndent()
-                                    Next
-                                End If
-                            Catch ex As Exception
-                                Debug.WriteLine($"Could not restore list formatting: {ex.Message}")
-                            End Try
-                        End If
 
                         ' Track for numbering restart post-processing (only if feature is enabled)
                         If settings.ListNumberingReset > 0 Then
@@ -1334,7 +1578,7 @@ Partial Public Class ThisAddIn
                                 ' LLM-assisted: check the mapping response
                                 shouldRestart = If(mapping("restartNumbering") IsNot Nothing, CBool(mapping("restartNumbering")), False)
                             End If
-                            ' For rule-based (mode 1), we'll compute it in post-processing
+                            ' For rule-based (mode 1), we compute in post-processing.
 
                             If shouldRestart Then
                                 numberingRestartParas.Add(para)
@@ -1352,7 +1596,7 @@ Partial Public Class ThisAddIn
             ' Post-processing: Apply numbering restarts if feature is enabled
             Dim restartCount As Integer = 0
             If settings.ListNumberingReset > 0 Then
-                restartCount = ApplyNumberingRestarts(doc, paragraphList, paragraphHasList, settings, numberingRestartParas)
+                restartCount = ApplyNumberingRestarts(doc, paragraphList, paragraphHasList, settings, numberingRestartParas, templateBaselineByIndex)
             End If
 
             report.AppendLine()
@@ -1369,8 +1613,6 @@ Partial Public Class ThisAddIn
 
         Return report.ToString()
     End Function
-
-
 
 
     ' CHANGED: More robust numbered detection.
@@ -1490,14 +1732,17 @@ Partial Public Class ThisAddIn
     ' Restarts numbering for a single paragraph by re-applying its current ListTemplate
     ' with ContinuePreviousList:=False. Preserves paragraph properties (except style) to avoid list ops
     ' destroying the style/formatting.
-    Private Sub RestartNumberingForParagraph(p As Word.Paragraph, Optional logicalIndex1Based As Integer = -1)
+    Private Sub RestartNumberingForParagraph(p As Word.Paragraph,
+                                        Optional logicalIndex1Based As Integer = -1,
+                                        Optional restoreProps As JObject = Nothing)
         Try
             Dim preview As String = GetParaPreview(p, 25)
 
             Dim beforeStyle As String = ""
             Try : beforeStyle = p.Style.NameLocal : Catch : End Try
 
-            Dim beforeProps As JObject = CaptureParaProps(p)
+            ' CHANGED: if caller provided a baseline (e.g., template baseline), use it.
+            Dim propsToRestore As JObject = If(restoreProps, CaptureParaProps(p))
 
             Dim lf As Word.ListFormat = Nothing
             Try : lf = p.Range.ListFormat : Catch : lf = Nothing : End Try
@@ -1519,9 +1764,6 @@ Partial Public Class ThisAddIn
 
             Debug.WriteLine($"[DocStyle] RestartNumbering START idx={logicalIndex1Based} preview='{preview}' style='{beforeStyle}' sig='{GetListSignature(p)}'")
 
-            ' Critical: for outline lists, ApplyTo:=WholeList tends to break the chain more consistently.
-            ' If this is too aggressive, switch to wdListApplyToThisPointForward, but WholeList usually fixes
-            ' the “flows through different indent levels” behavior.
             Dim applyTo As WdListApplyTo = WdListApplyTo.wdListApplyToWholeList
             Try
                 p.Range.ListFormat.ApplyListTemplateWithLevel(
@@ -1532,7 +1774,6 @@ Partial Public Class ThisAddIn
                 ApplyLevel:=lvl
             )
             Catch
-                ' Fallback (less disruptive) if WholeList fails in some docs
                 p.Range.ListFormat.ApplyListTemplateWithLevel(
                 ListTemplate:=tpl,
                 ContinuePreviousList:=False,
@@ -1542,11 +1783,10 @@ Partial Public Class ThisAddIn
             )
             End Try
 
-            ' Preserve paragraph props (except style) as requested
-            RestoreParaProps(p, beforeProps)
+            ' Restore the intended baseline (template baseline if provided)
+            RestoreParaProps(p, propsToRestore)
 
             Debug.WriteLine($"[DocStyle] RestartNumbering END   idx={logicalIndex1Based} preview='{preview}' styleBefore='{beforeStyle}' styleAfter='{TryGetStyleName(p)}' sigAfter='{GetListSignature(p)}'")
-
         Catch ex As Exception
             Debug.WriteLine($"[DocStyle] RestartNumberingForParagraph error idx={logicalIndex1Based}: {ex.Message}")
         End Try
@@ -1610,11 +1850,14 @@ Partial Public Class ThisAddIn
             Return 1
         End Try
     End Function
+
+
     Private Function ApplyNumberingRestarts(doc As Word.Document,
                                        paragraphList As List(Of Word.Paragraph),
                                        paragraphHasList As List(Of Boolean),
                                        settings As DocStyleSettings,
-                                       llmRestartParas As List(Of Word.Paragraph)) As Integer
+                                       llmRestartParas As List(Of Word.Paragraph),
+                                       templateBaselineByIndex As Dictionary(Of Integer, JObject)) As Integer
         Dim restartCount As Integer = 0
 
         Try
@@ -1635,8 +1878,6 @@ Partial Public Class ThisAddIn
 
                     Dim isNumbered As Boolean = IsNumberedListParagraph(p)
                     Dim isBullet As Boolean = If(RuleBreakOnBullets, IsBulletListParagraph(p), False)
-
-                    ' CHANGED
                     Dim isHeadingLike As Boolean = IsHeadingLikeParagraph(p, settings.RuleHeadingOutlineLevelMax)
 
                     If (Not isNumbered) OrElse isBullet OrElse isHeadingLike Then
@@ -1649,7 +1890,6 @@ Partial Public Class ThisAddIn
                         Continue For
                     End If
 
-                    ' ... unchanged body ...
                     If Not inBodyNumberedRun Then
                         inBodyNumberedRun = True
                         restartedMainThisRun = False
@@ -1720,9 +1960,40 @@ Partial Public Class ThisAddIn
 
             For Each idx In restartIndices.OrderBy(Function(x) x)
                 Dim p As Word.Paragraph = paragraphList(idx)
+
+                Dim baseline As JObject = Nothing
+                If templateBaselineByIndex IsNot Nothing Then
+                    templateBaselineByIndex.TryGetValue(idx, baseline)
+                End If
+
                 Debug.WriteLine($"[DocStyle] ApplyNumberingRestarts restarting paragraph {idx + 1} preview='{GetParaPreview(p, 25)}' sig='{GetListSignature(p)}'")
-                RestartNumberingForParagraph(p, idx + 1)
+
+                ' Restart using template baseline restore
+                RestartNumberingForParagraph(p, idx + 1, baseline)
                 restartCount += 1
+
+                ' REPAIR: Word can perturb sibling paragraphs in the same list/template after a restart.
+                ' Apply baseline to paragraphs that share the same ListTemplate instance as the restarted paragraph.
+                Try
+                    Dim restartedTplId As Integer = GetListTemplateId(p)
+                    If restartedTplId <> 0 AndAlso templateBaselineByIndex IsNot Nothing Then
+                        For j As Integer = 0 To paragraphList.Count - 1
+                            If j = idx Then Continue For
+
+                            Dim pj As Word.Paragraph = paragraphList(j)
+
+                            ' Same list template instance? Then reapply the template baseline props we captured earlier.
+                            If GetListTemplateId(pj) = restartedTplId Then
+                                Dim bj As JObject = Nothing
+                                If templateBaselineByIndex.TryGetValue(j, bj) AndAlso bj IsNot Nothing Then
+                                    RestoreParaProps(pj, bj)
+                                End If
+                            End If
+                        Next
+                    End If
+                Catch ex As Exception
+                    Debug.WriteLine($"[DocStyle] Repair after restart failed: {ex.Message}")
+                End Try
             Next
 
         Catch ex As Exception
@@ -1731,8 +2002,6 @@ Partial Public Class ThisAddIn
 
         Return restartCount
     End Function
-
-
 
     Private Function IsBulletListParagraph(p As Word.Paragraph) As Boolean
         Try
@@ -2945,9 +3214,11 @@ Partial Public Class ThisAddIn
         If userStyleDef Is Nothing Then Return
 
         Try
-            ' Apply paragraph formatting overrides
-            If userStyleDef("paragraphFormatting") IsNot Nothing Then
-                Dim pf = userStyleDef("paragraphFormatting")
+            ' Keep a reference so we can reapply after list operations (RemoveNumbers can clobber indents/tabs).
+            Dim pf As JToken = userStyleDef("paragraphFormatting")
+
+            ' 1) Apply paragraph formatting overrides (initial pass)
+            If pf IsNot Nothing Then
                 If pf("alignment") IsNot Nothing Then para.Alignment = ParseAlignment(CStr(pf("alignment")))
                 If pf("leftIndent") IsNot Nothing Then para.LeftIndent = CSng(pf("leftIndent"))
                 If pf("rightIndent") IsNot Nothing Then para.RightIndent = CSng(pf("rightIndent"))
@@ -2960,7 +3231,7 @@ Partial Public Class ThisAddIn
                 If pf("keepWithNext") IsNot Nothing Then para.KeepWithNext = CInt(pf("keepWithNext"))
             End If
 
-            ' Apply font formatting overrides
+            ' 2) Apply font formatting overrides
             If userStyleDef("fontFormatting") IsNot Nothing Then
                 Dim ff = userStyleDef("fontFormatting")
                 Dim rng As Word.Range = para.Range
@@ -2973,17 +3244,22 @@ Partial Public Class ThisAddIn
                 If ff("underline") IsNot Nothing Then rng.Font.Underline = ParseUnderline(CStr(ff("underline")))
             End If
 
-            ' Handle list formatting - KEY FIX: explicitly remove list if template shows no list
+            ' 3) Handle list formatting (RemoveNumbers may destroy indents/tabs)
+            Dim didRemoveNumbers As Boolean = False
             If userStyleDef("listFormatting") IsNot Nothing Then
                 Dim lf = userStyleDef("listFormatting")
                 Dim templateHasList As Boolean = If(lf("hasList") IsNot Nothing, CBool(lf("hasList")), False)
-                Dim currentHasList As Boolean = (para.Range.ListFormat.ListType <> WdListType.wdListNoNumbering)
+
+                Dim currentHasList As Boolean = False
+                Try
+                    currentHasList = (para.Range.ListFormat.ListType <> WdListType.wdListNoNumbering)
+                Catch
+                End Try
 
                 If Not templateHasList AndAlso currentHasList Then
-                    ' Template says NO list, but paragraph has one - REMOVE IT
                     para.Range.ListFormat.RemoveNumbers()
+                    didRemoveNumbers = True
                 ElseIf templateHasList AndAlso Not currentHasList Then
-                    ' Template says list should exist, paragraph doesn't have one - ADD IT
                     Dim listType As String = If(lf("listType") IsNot Nothing, CStr(lf("listType")), "")
                     If listType.Contains("Bullet") Then
                         para.Range.ListFormat.ApplyBulletDefault()
@@ -2995,7 +3271,14 @@ Partial Public Class ThisAddIn
                 End If
             End If
 
-            ' Apply tab stops if specified
+            ' 4) Re-apply paragraph indents AFTER RemoveNumbers (this is the bug fix for MAIN TITLE)
+            If didRemoveNumbers AndAlso pf IsNot Nothing Then
+                If pf("leftIndent") IsNot Nothing Then para.LeftIndent = CSng(pf("leftIndent"))
+                If pf("rightIndent") IsNot Nothing Then para.RightIndent = CSng(pf("rightIndent"))
+                If pf("firstLineIndent") IsNot Nothing Then para.FirstLineIndent = CSng(pf("firstLineIndent"))
+            End If
+
+            ' 5) Apply tab stops if specified (RemoveNumbers can also affect tabs)
             If userStyleDef("tabStops") IsNot Nothing Then
                 Try
                     para.TabStops.ClearAll()
