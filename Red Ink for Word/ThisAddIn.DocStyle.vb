@@ -1,43 +1,28 @@
 ﻿' Part of "Red Ink for Word"
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
-
+'
 ' =============================================================================
 ' File: ThisAddIn.DocStyle.vb
-' Purpose: LLM-assisted document styling system with two-step workflow.
-'
-' STEP 1 - CREATE STYLE TEMPLATE (ExtractParagraphStylesToJson):
-'   Creates a reusable style template from a Word document where each paragraph
-'   serves as a style definition. The source document should contain paragraphs
-'   formatted as "STYLE NAME: description of when to apply this style..."
-'   
-'   The template captures:
-'   - User-defined style names and application rules ("whenToApply")
-'   - Underlying Word style definitions (wdStyles) with full formatting
-'   - Paragraph formatting overrides (indentation, spacing, alignment)
-'   - Font formatting, list/numbering settings, tab stops, borders, shading
-'   
-'   Output: JSON file stored in central (shared) or local (personal) path.
-'
-' STEP 2 - APPLY STYLE TEMPLATE (ApplyStyleTemplate):
-'   Applies a style template to a target document using LLM analysis.
-'   
-'   The LLM analyzes each paragraph's content and structure to determine
-'   the most appropriate user style from the template based on:
-'   - Semantic meaning and purpose of the paragraph
-'   - Structural clues (lists, indentation, outline level)
-'   - Document context provided by the user
-'   
-'   Two modes available:
-'   - Fast Mode: Single LLM call creates mapping plan for all paragraphs
-'   - Detailed Mode: Per-paragraph LLM calls with full formatting control
-'   
-'   Features: Track changes, preview mode, confidence thresholds,
-'   list preservation, table cell processing, Word style creation/update.
+' Purpose: Implements DocStyle template extraction (paragraph/style formatting -> JSON) and template
+'          application (LLM mapping -> Word style/format changes) for the active Word document.
 '
 ' Architecture:
-'   - DocStyleSettings: Persistent user preferences via Registry
-'   - DocStyleTemplate: Template file metadata and path management
-'   - Central/Local paths: Supports shared team templates and personal ones
+'  - Settings Persistence: `DocStyleSettings` loads/saves DocStyle options via `My.Settings`.
+'  - Template Creation: `ExtractParagraphStylesToJson` walks selected paragraphs (or document content),
+'    captures paragraph/font/list/tab/border/shading info, and writes a JSON template to disk.
+'  - Word Style Definitions: `ExtractFullStyleDefinition` serializes Word `Style` definitions including
+'    paragraph/font/tab/list template data; `ApplyWdStyleDefinitionsToDocument` can create/update styles.
+'  - Template Application: `ApplyStyleTemplate` loads a JSON template file, optionally applies style
+'    definitions, builds an LLM prompt for the selected paragraphs, and applies the returned mapping.
+'  - LLM Response Handling: `ApplyStylesFromTemplate` parses a JSON array mapping paragraph indices to
+'    user style names, confidence and optional delete-prefix instructions.
+'  - List Numbering: `ApplyNumberingRestarts` supports rule-based and LLM-assisted numbering restarts,
+'    preserving paragraph properties via `CaptureParaProps`/`RestoreParaProps`.
+'
+' External Dependencies:
+'  - Microsoft.Office.Interop.Word for document/style/list operations.
+'  - Newtonsoft.Json / JObject / JArray for JSON templates and LLM response parsing.
+'  - SharedLibrary.SharedMethods for UI, file editing, clipboard, interpolation and LLM invocation.
 ' =============================================================================
 
 Option Explicit On
@@ -58,108 +43,66 @@ Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
-    Dim INI_DocStylePath As String = "C:\Users\david\Desktop\"
-    Dim INI_DocStylePathLocal As String = "%Appdata%\Microsoft\Word\"
+
 
     ''' <summary>
-    ''' Cache for shared list templates during style application.
-    ''' Key is the template fingerprint, value is the created ListTemplate.
+    ''' Cache for shared list templates during style definition application.
+    ''' Key is a template fingerprint cache key, value is the created <see cref="Word.ListTemplate"/> instance.
     ''' </summary>
     Private _sharedListTemplates As New Dictionary(Of String, Word.ListTemplate)()
 
-    ' Treat bullets as break? (set True if you want bullet->numbered to restart)
+    ''' <summary>
+    ''' When True, bullet list paragraphs break rule-based numbering runs.
+    ''' </summary>
     Private Const RuleBreakOnBullets As Boolean = False
+
+    ''' <summary>
+    ''' Indentation step (points) used when inferring list levels from paragraph indentation.
+    ''' </summary>
     Private Const IndentStepPoints As Single = 10.0F
 
+    ''' <summary>
+    ''' Maximum preview length (characters) used in report/debug output for paragraph text.
+    ''' </summary>
     Private Const ReportParaPreviewLen As Integer = 50
 
-    ' Default if setting is missing/uninitialized.
+    ''' <summary>
+    ''' Default maximum outline level treated as "heading-like" when rule-based numbering reset is enabled.
+    ''' </summary>
     Private Const DefaultRuleHeadingOutlineLevelMax As Integer = 4
 
-#Region "DocStyle Constants and Prompts"
+    ''' <summary>
+    ''' Prompt snippet describing the JSON response format expected from the LLM during style application.
+    ''' </summary>
+    Public ApplyStylesResponseFormat As String = ""
 
-    ' System prompt for applying styles (detailed mode - paragraph by paragraph)
-    Private Const SP_ApplyDocStyle As String = "You are an expert document formatting assistant. Your task is to analyze a paragraph and determine the appropriate user style to apply based on a style template." & vbCrLf &
-        "You will receive:" & vbCrLf &
-        "1. A <STYLETEMPLATE> containing user style definitions with 'whenToApply' descriptions explaining when each style should be used" & vbCrLf &
-        "2. A <CURRENTPARA> containing the paragraph text to format" & vbCrLf &
-        "3. A <CURRENTPROPS> containing the paragraph's current formatting - USE THIS to understand the paragraph's role:" & vbCrLf &
-        "   - If 'listFormatting.hasList' is true, the paragraph has bullets/numbering that should typically be preserved" & vbCrLf &
-        "   - Check 'listFormatting.listType' and 'listFormatting.listString' to understand the list structure" & vbCrLf &
-        "   - Consider 'paragraphFormatting.outlineLevel' to identify heading levels" & vbCrLf &
-        "   - Look at indentation patterns to understand document hierarchy" & vbCrLf &
-        "4. A <DOCUMENT> containing the full document context" & vbCrLf &
-        "5. Optionally, <CONTEXT> with additional hints about the document type" & vbCrLf & vbCrLf &
-        "IMPORTANT: Match the user style based on BOTH:" & vbCrLf &
-        "- The semantic meaning and purpose of <CURRENTPARA> within the document" & vbCrLf &
-        "- The structural clues in <CURRENTPROPS> (lists, indentation, outline level)" & vbCrLf & vbCrLf &
-        "For list items: If the source paragraph has bullets/numbering (listFormatting.hasList=true), set 'preserveListFormatting' to true to keep the original list format as an override after applying the style." & vbCrLf & vbCrLf &
-        "RESPOND ONLY with a valid JSON object in this exact format:" & vbCrLf &
-        "{" & vbCrLf &
-        "  ""userStyleName"": ""<name of the user style to apply>"", " & vbCrLf &
-        "  ""confidence"": <0-100 confidence score>," & vbCrLf &
-        "  ""reasoning"": ""<brief explanation>"", " & vbCrLf &
-        "  ""preserveListFormatting"": <true if source has list formatting that should be kept, false otherwise>," & vbCrLf &
-        "  ""formatting"": {" & vbCrLf &
-        "    ""alignment"": ""<wdAlignParagraphLeft|wdAlignParagraphCenter|wdAlignParagraphRight|wdAlignParagraphJustify or null>"", " & vbCrLf &
-        "    ""leftIndent"": <points or null>," & vbCrLf &
-        "    ""rightIndent"": <points or null>," & vbCrLf &
-        "    ""firstLineIndent"": <points or null>," & vbCrLf &
-        "    ""spaceBefore"": <points or null>," & vbCrLf &
-        "    ""spaceAfter"": <points or null>," & vbCrLf &
-        "    ""lineSpacing"": <points or null>," & vbCrLf &
-        "    ""lineSpacingRule"": ""<wdLineSpaceSingle|wdLineSpace1pt5|wdLineSpaceDouble|etc or null>"", " & vbCrLf &
-        "    ""fontName"": ""<font name or null>"", " & vbCrLf &
-        "    ""fontSize"": <size or null>," & vbCrLf &
-        "    ""bold"": <true|false|null>," & vbCrLf &
-        "    ""italic"": <true|false|null>," & vbCrLf &
-        "    ""underline"": ""<wdUnderlineNone|wdUnderlineSingle|etc or null>""" & vbCrLf &
-        "  }" & vbCrLf &
-        "}" & vbCrLf & vbCrLf &
-        "Use null for properties that should remain unchanged. Only include formatting properties that should be explicitly set."
+    ''' <summary>
+    ''' Minimal response format used when only style application is required.
+    ''' </summary>
+    Private Const ApplyStylesResponseFormat_Minimal As String =
+                "[" & vbCrLf &
+                "  {""paragraphIndex"": 1, ""userStyleName"": ""<user style name>"", ""confidence"": <0-100>, ""preserveList"": <true|false>, ""restartNumbering"": <true|false>}," & vbCrLf &
+                "  ..." & vbCrLf &
+                "]"
 
-    ' System prompt for fast mode (styles only, one call for mapping plan)
-    Private Const SP_ApplyDocStyleFast As String = "You are an expert document formatting assistant. Your task is to create a mapping plan that associates each paragraph in a document with the most appropriate user style from a template." & vbCrLf &
-    "You will receive:" & vbCrLf &
-    "1. A <STYLETEMPLATE> containing user style definitions with 'whenToApply' descriptions" & vbCrLf &
-    "2. A <DOCUMENT> containing the full document with numbered paragraphs and formatting hints" & vbCrLf &
-    "3. Optionally, <CONTEXT> with additional hints about the document type" & vbCrLf & vbCrLf &
-    "Each paragraph in <DOCUMENT> is formatted as:" & vbCrLf &
-    "[index] [LIST:type/level] [INDENT:left/first] text..." & vbCrLf & vbCrLf &
-    "CRITICAL MATCHING RULES:" & vbCrLf &
-    "- [LIST:Bullet/...] paragraphs MUST be matched to user styles with 'Bullet' in their whenToApply description" & vbCrLf &
-    "- [LIST:SimpleNumbering/...] or [LIST:OutlineNumbering/...] paragraphs MUST be matched to user styles with 'Numbering' or 'Numbered' in their whenToApply description" & vbCrLf &
-    "- Do NOT assign a numbered list style to a bullet paragraph or vice versa" & vbCrLf &
-    "- INDENT values indicate hierarchy - larger indents often mean sub-items" & vbCrLf & vbCrLf &
-    "RESPOND ONLY with a valid JSON array where each element represents a paragraph:" & vbCrLf &
-    "[" & vbCrLf &
-    "  {""paragraphIndex"": 1, ""userStyleName"": ""<user style name>"", ""confidence"": <0-100>, ""preserveList"": <true|false>, ""restartNumbering"": <true|false>}," & vbCrLf &
-    "  {""paragraphIndex"": 2, ""userStyleName"": ""<user style name>"", ""confidence"": <0-100>, ""preserveList"": <true|false>, ""restartNumbering"": <true|false>}," & vbCrLf &
-    "  ..." & vbCrLf &
-    "]" & vbCrLf & vbCrLf &
-    "Use the exact user style names from the template. Set preserveList to true if the paragraph has list formatting that should be kept. Set restartNumbering to true if this numbered list item should restart numbering at 1 (e.g., first item of a new list section after non-list paragraphs or a heading). If no style is appropriate, use ""Normal"" or the closest match."
+    ''' <summary>
+    ''' Extended response format used when optional text amendment instructions (deletePrefix) are enabled.
+    ''' </summary>
+    Private Const ApplyStylesResponseFormat_Extended As String =
+                "[" & vbCrLf &
+                "  {""paragraphIndex"": 1, ""userStyleName"": ""<user style name>"", ""confidence"": <0-100>, ""preserveList"": <true|false>, ""restartNumbering"": <true|false>," & vbCrLf &
+                "   ""deletePrefix"": { ""kind"": ""HeadingNumber|ListNumber|Bullet|None"", ""text"": ""<exact leading text to remove (incl. trailing space) or empty>"", ""charCount"": <0 if none> }" & vbCrLf &
+                "  }," & vbCrLf &
+                "  ..." & vbCrLf &
+                "]"
 
-    ' Extended prompt suffix for LLM-assisted numbering reset
-    Private Const SP_ApplyDocStyleFast_NumberingHint As String = vbCrLf & vbCrLf &
-    "NUMBERING RESTART RULES:" & vbCrLf &
-    "- Set restartNumbering=true for the FIRST numbered list item after:" & vbCrLf &
-    "  * A heading or title paragraph" & vbCrLf &
-    "  * One or more non-list body paragraphs" & vbCrLf &
-    "  * A different type of list (e.g., bullet list followed by numbered list)" & vbCrLf &
-    "  * A clear semantic section break (new topic, new article, new clause)" & vbCrLf &
-    "- Set restartNumbering=false for numbered items that continue an existing sequence" & vbCrLf &
-    "- Bullet lists do not need restartNumbering"
 
-    ' Persistent settings key prefix
-    Private Const DocStyleSettingsPrefix As String = "DocStyle_"
-
-#End Region
 
 #Region "DocStyle Settings Class"
 
     ''' <summary>
     ''' Holds persistent settings for DocStyle operations.
-    ''' Persisted via My.Settings only (no registry usage).
+    ''' Persisted via <c>My.Settings</c> only (no registry usage).
     ''' </summary>
     Private Class DocStyleSettings
         Public Property TrackChanges As Boolean = False
@@ -168,93 +111,41 @@ Partial Public Class ThisAddIn
         Public Property ConfidenceThreshold As Integer = 70
         Public Property UseConfidenceThreshold As Boolean = False
         Public Property ProcessTables As Boolean = True
-        Public Property ParagraphsPerCall As Integer = 1
         Public Property FastModeStylesOnly As Boolean = True
         Public Property ShowReport As Boolean = True
         Public Property DocumentContext As String = ""
         Public Property UseSecondaryModel As Boolean = False
         Public Property ListNumberingReset As Integer = 0 ' 0=Off, 1=Rule-based, 2=LLM-assisted
-
-        ' Configurable "heading breaks numbering run" threshold for rule-based restart.
         Public Property RuleHeadingOutlineLevelMax As Integer = DefaultRuleHeadingOutlineLevelMax
+        Public Property LastStyleTemplateDisplay As String = ""
+        Public Property RestoreInlineFormatting As Boolean = False
 
-        Private Shared Function TryReadSetting(Of T)(settingName As String, ByRef value As T) As Boolean
-            Try
-                If My.Settings Is Nothing Then Return False
-
-                Dim o As Object = My.Settings(settingName)
-                If o Is Nothing Then Return False
-
-                ' Handle common loose typing cases from Settings designer (String/Object).
-                If GetType(T) Is GetType(Boolean) Then
-                    value = CType(CObj(System.Convert.ToBoolean(o)), T)
-                    Return True
-                End If
-
-                If GetType(T) Is GetType(Integer) Then
-                    value = CType(CObj(System.Convert.ToInt32(o)), T)
-                    Return True
-                End If
-
-                If GetType(T) Is GetType(String) Then
-                    value = CType(CObj(System.Convert.ToString(o)), T)
-                    Return True
-                End If
-
-                If TypeOf o Is T Then
-                    value = CType(o, T)
-                    Return True
-                End If
-
-                ' Last resort
-                value = CType(System.Convert.ChangeType(o, GetType(T)), T)
-                Return True
-            Catch
-                Return False
-            End Try
-        End Function
-
-        Private Shared Sub TryWriteSetting(settingName As String, value As Object)
-            Try
-                If My.Settings Is Nothing Then Exit Sub
-                My.Settings(settingName) = value
-            Catch
-                ' Ignore if setting doesn't exist yet or is readonly/misconfigured.
-            End Try
-        End Sub
-
+        ''' <summary>
+        ''' Loads DocStyle settings from <c>My.Settings</c> and clamps numeric values to valid ranges.
+        ''' </summary>
         Public Sub Load()
+            ' Strict strongly-typed settings only (compile error if missing)
+            TrackChanges = My.Settings.DocStyle_TrackChanges
+            ApplyStyleDefinitions = My.Settings.DocStyle_ApplyStyleDefinitions
+            PreviewMode = My.Settings.DocStyle_PreviewMode
+            UseConfidenceThreshold = My.Settings.DocStyle_UseConfidenceThreshold
+            ProcessTables = My.Settings.DocStyle_ProcessTables
+            FastModeStylesOnly = My.Settings.DocStyle_FastModeStylesOnly
+            ShowReport = My.Settings.DocStyle_ShowReport
+            UseSecondaryModel = My.Settings.DocStyle_UseSecondaryModel
 
-            Dim b As Boolean
-            Dim i As Integer
-            Dim s As String
+            ConfidenceThreshold = My.Settings.DocStyle_ConfidenceThreshold
+            ListNumberingReset = My.Settings.DocStyle_ListNumberingReset
+            DocumentContext = If(My.Settings.DocStyle_DocumentContext, "")
+            RuleHeadingOutlineLevelMax = My.Settings.DocStyle_RuleHeadingOutlineLevelMax
 
-            If TryReadSetting("DocStyle_TrackChanges", b) Then TrackChanges = b
-            If TryReadSetting("DocStyle_ApplyStyleDefinitions", b) Then ApplyStyleDefinitions = b
-            If TryReadSetting("DocStyle_PreviewMode", b) Then PreviewMode = b
-            If TryReadSetting("DocStyle_UseConfidenceThreshold", b) Then UseConfidenceThreshold = b
-            If TryReadSetting("DocStyle_ProcessTables", b) Then ProcessTables = b
-            If TryReadSetting("DocStyle_FastModeStylesOnly", b) Then FastModeStylesOnly = b
-            If TryReadSetting("DocStyle_ShowReport", b) Then ShowReport = b
-            If TryReadSetting("DocStyle_UseSecondaryModel", b) Then UseSecondaryModel = b
+            LastStyleTemplateDisplay = If(My.Settings.DocStyle_LastStyleTemplateDisplay, "")
+            RestoreInlineFormatting = My.Settings.DocStyle_RestoreInlineFormatting
 
-            If TryReadSetting("DocStyle_ConfidenceThreshold", i) Then ConfidenceThreshold = i
-            If TryReadSetting("DocStyle_ParagraphsPerCall", i) Then ParagraphsPerCall = i
-            If TryReadSetting("DocStyle_ListNumberingReset", i) Then ListNumberingReset = i
-
-            If TryReadSetting("DocStyle_DocumentContext", s) Then DocumentContext = If(s, "")
-
-            If TryReadSetting("DocStyle_RuleHeadingOutlineLevelMax", i) Then
-                If i >= 0 AndAlso i <= 9 Then
-                    RuleHeadingOutlineLevelMax = i
-                End If
-            End If
-
-            ' Clamp defense (also protects defaults if settings are corrupted).
+            ' Clamps
             If ConfidenceThreshold < 0 Then ConfidenceThreshold = 0
             If ConfidenceThreshold > 100 Then ConfidenceThreshold = 100
 
-            If ParagraphsPerCall < 1 Then ParagraphsPerCall = 1
             If ListNumberingReset < 0 Then ListNumberingReset = 0
             If ListNumberingReset > 2 Then ListNumberingReset = 2
 
@@ -262,38 +153,40 @@ Partial Public Class ThisAddIn
             If RuleHeadingOutlineLevelMax > 9 Then RuleHeadingOutlineLevelMax = 9
         End Sub
 
+        ''' <summary>
+        ''' Saves DocStyle settings to <c>My.Settings</c>.
+        ''' </summary>
         Public Sub Save()
-            TryWriteSetting("DocStyle_TrackChanges", TrackChanges)
-            TryWriteSetting("DocStyle_ApplyStyleDefinitions", ApplyStyleDefinitions)
-            TryWriteSetting("DocStyle_PreviewMode", PreviewMode)
-            TryWriteSetting("DocStyle_ConfidenceThreshold", ConfidenceThreshold)
-            TryWriteSetting("DocStyle_UseConfidenceThreshold", UseConfidenceThreshold)
-            TryWriteSetting("DocStyle_ProcessTables", ProcessTables)
-            TryWriteSetting("DocStyle_ParagraphsPerCall", ParagraphsPerCall)
-            TryWriteSetting("DocStyle_FastModeStylesOnly", FastModeStylesOnly)
-            TryWriteSetting("DocStyle_ShowReport", ShowReport)
-            TryWriteSetting("DocStyle_DocumentContext", If(DocumentContext, ""))
-            TryWriteSetting("DocStyle_UseSecondaryModel", UseSecondaryModel)
-            TryWriteSetting("DocStyle_ListNumberingReset", ListNumberingReset)
-            TryWriteSetting("DocStyle_RuleHeadingOutlineLevelMax", RuleHeadingOutlineLevelMax)
+            ' Strict strongly-typed settings only (compile error if missing)
+            My.Settings.DocStyle_TrackChanges = TrackChanges
+            My.Settings.DocStyle_ApplyStyleDefinitions = ApplyStyleDefinitions
+            My.Settings.DocStyle_PreviewMode = PreviewMode
+            My.Settings.DocStyle_ConfidenceThreshold = ConfidenceThreshold
+            My.Settings.DocStyle_UseConfidenceThreshold = UseConfidenceThreshold
+            My.Settings.DocStyle_ProcessTables = ProcessTables
+            My.Settings.DocStyle_FastModeStylesOnly = FastModeStylesOnly
+            My.Settings.DocStyle_ShowReport = ShowReport
+            My.Settings.DocStyle_DocumentContext = If(DocumentContext, "")
+            My.Settings.DocStyle_UseSecondaryModel = UseSecondaryModel
+            My.Settings.DocStyle_ListNumberingReset = ListNumberingReset
+            My.Settings.DocStyle_RuleHeadingOutlineLevelMax = RuleHeadingOutlineLevelMax
 
-            Try
-                If My.Settings IsNot Nothing Then
-                    My.Settings.Save()
-                End If
-            Catch
-            End Try
+            My.Settings.DocStyle_LastStyleTemplateDisplay = If(LastStyleTemplateDisplay, "")
+            My.Settings.DocStyle_RestoreInlineFormatting = RestoreInlineFormatting
+
+            My.Settings.Save()
         End Sub
     End Class
 
+
 #End Region
 
-#Region "Step 1: Extract Paragraph Styles to JSON (Style Template Creation)"
+
+#Region "Step 1: Extract Paragraph Styles to JSON (Style Template Creation) and wdStyles"
 
     ''' <summary>
     ''' Extracts paragraph formatting from the selection (or entire document) and generates
-    ''' a comprehensive JSON structure describing each paragraph's text, style, and formatting.
-    ''' The JSON is designed to be consumed by an LLM to apply formatting to other documents.
+    ''' a JSON structure describing each paragraph's text, style, and formatting.
     ''' </summary>
     Public Sub ExtractParagraphStylesToJson()
         Try
@@ -462,21 +355,17 @@ Partial Public Class ThisAddIn
     End Sub
 
 
-    Private Shared Function NormalizeStyleKey(s As String) As String
-        If s Is Nothing Then Return ""
 
-        ' Normalize common invisible differences from LLM / copy-paste.
-        s = s.Replace(ChrW(&HA0), " ") ' NBSP -> space
-        s = Regex.Replace(s, "\s+", " ").Trim()
-
-        Return s
-    End Function
 
     ''' <summary>
     ''' Extracts user style information from a single paragraph for template creation.
-    ''' Parses the paragraph text to extract userStyleName and whenToApply.
-    ''' Returns a tuple with the JObject and a boolean indicating if the style name was successfully parsed.
+    ''' Parses paragraph text to extract <c>userStyleName</c> and <c>whenToApply</c> and returns the extracted JSON.
     ''' </summary>
+    ''' <param name="para">Word paragraph to read.</param>
+    ''' <param name="index">1-based index assigned to the extracted user style.</param>
+    ''' <returns>
+    ''' A tuple containing the extracted JSON object and a flag indicating whether the style name was parsed from text.
+    ''' </returns>
     Private Function ExtractUserStyleFromParagraphEx(para As Word.Paragraph, index As Integer) As (userStyleJson As JObject, parsedStyleName As Boolean)
         Dim paraRange As Word.Range = para.Range.Duplicate
 
@@ -565,8 +454,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Extracts tab stops in a compact format for efficiency.
+    ''' Extracts tab stops from a paragraph into a compact JSON array.
     ''' </summary>
+    ''' <param name="para">Paragraph containing tab stops.</param>
+    ''' <returns>Array of tab stop definitions (position, alignment, optional leader).</returns>
     Private Function ExtractTabStopsCompact(para As Word.Paragraph) As JArray
         Dim tabs As New JArray()
         Try
@@ -584,12 +475,13 @@ Partial Public Class ThisAddIn
         Return tabs
     End Function
 
-#End Region
-
     ''' <summary>
-    ''' Extracts complete wdStyle definition including base style hierarchy, tab stops,
-    ''' list template with all levels, bullet characters, and linked level information.
+    ''' Extracts a Word style definition (paragraph formatting, font formatting, tab stops, and list template data)
+    ''' into a JSON object for inclusion in a DocStyle template.
     ''' </summary>
+    ''' <param name="doc">Active document containing the style.</param>
+    ''' <param name="styleName">Style name to extract.</param>
+    ''' <returns>Extracted style definition JSON, or Nothing if the style cannot be resolved.</returns>
     Private Function ExtractFullStyleDefinition(doc As Word.Document, styleName As String) As JObject
         Try
             Dim style As Word.Style = doc.Styles(styleName)
@@ -660,7 +552,7 @@ Partial Public Class ThisAddIn
             Catch
             End Try
 
-            ' Font formatting from style - COMPLETE extraction
+            ' Font formatting from style (full extraction)
             Try
                 Dim font As Word.Font = style.Font
                 Dim fontFormat As New JObject()
@@ -688,7 +580,7 @@ Partial Public Class ThisAddIn
             Catch
             End Try
 
-            ' List formatting from style (linked list template) - COMPLETE extraction
+            ' List formatting from style (linked list template)
             Try
                 Dim listTemplate As Word.ListTemplate = style.ListTemplate
                 If listTemplate IsNot Nothing Then
@@ -696,15 +588,14 @@ Partial Public Class ThisAddIn
                     listFormat("hasListTemplate") = True
                     listFormat("outlineNumbered") = listTemplate.OutlineNumbered
 
-                    ' CRITICAL: Store which level this style is linked to
+                    ' Stores the list level this style is linked to.
                     Try
                         listFormat("linkedLevel") = style.ListLevelNumber
                     Catch
                         listFormat("linkedLevel") = 1
                     End Try
 
-                    ' Generate a fingerprint to identify shared templates
-                    ' Styles sharing the same outline list template will have identical fingerprints
+                    ' Generates a fingerprint used to identify shared templates within the template JSON.
                     Try
                         Dim fingerprint As New StringBuilder()
                         For lvl As Integer = 1 To Math.Min(9, listTemplate.ListLevels.Count)
@@ -718,7 +609,7 @@ Partial Public Class ThisAddIn
                     Catch
                     End Try
 
-                    ' Extract ALL levels with complete information
+                    ' Extracts all list levels with level-specific information.
                     Dim levels As New JArray()
                     For levelNum As Integer = 1 To listTemplate.ListLevels.Count
                         Try
@@ -732,10 +623,9 @@ Partial Public Class ThisAddIn
                             levelInfo("alignment") = level.Alignment.ToString()
                             levelInfo("startAt") = level.StartAt
 
-                            ' Handle bullet styles - capture the actual character and font
+                            ' Captures bullet properties (character code and font name) when a bullet style is used.
                             If level.NumberStyle = WdListNumberStyle.wdListNumberStyleBullet Then
                                 Try
-                                    ' Get bullet font - check multiple ways
                                     Dim bulletFontName As String = ""
                                     Try
                                         If level.Font IsNot Nothing AndAlso Not String.IsNullOrEmpty(level.Font.Name) Then
@@ -747,18 +637,14 @@ Partial Public Class ThisAddIn
                                     If Not String.IsNullOrEmpty(bulletFontName) Then
                                         levelInfo("bulletFont") = bulletFontName
                                     Else
-                                        ' Common bullet fonts as fallback detection
                                         levelInfo("bulletFont") = "Symbol"
                                     End If
 
-                                    ' Get bullet character as Unicode code point
                                     If Not String.IsNullOrEmpty(level.NumberFormat) AndAlso level.NumberFormat.Length > 0 Then
                                         Dim bulletChar As Char = level.NumberFormat.Chars(0)
                                         levelInfo("bulletCharCode") = AscW(bulletChar)
-                                        ' Store original for debugging but don't rely on it
                                         levelInfo("numberFormat") = ""
                                     Else
-                                        ' Default bullet character code (standard bullet •)
                                         levelInfo("bulletCharCode") = &H2022
                                         levelInfo("numberFormat") = ""
                                     End If
@@ -769,7 +655,6 @@ Partial Public Class ThisAddIn
                                     levelInfo("numberFormat") = ""
                                 End Try
                             Else
-                                ' Non-bullet: store numberFormat as-is
                                 levelInfo("numberFormat") = level.NumberFormat
                             End If
 
@@ -786,7 +671,7 @@ Partial Public Class ThisAddIn
                     styleDef("listFormat") = listFormat
                 End If
             Catch
-                ' Style has no list template
+                ' Style has no list template.
             End Try
 
             Return styleDef
@@ -797,11 +682,14 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
+#End Region
 
 #Region "Step 2: Apply Style Template"
 
     ''' <summary>
-    ''' Main entry point for applying a style template to the document or selection.
+    ''' Applies a DocStyle template to the current selection or (if no selection) the active document.
+    ''' This method collects user parameters, loads the selected template JSON, optionally applies Word style
+    ''' definitions, and then applies LLM-provided style mappings to target paragraphs.
     ''' </summary>
     Public Async Sub ApplyStyleTemplate()
         If INILoadFail() Then Return
@@ -813,14 +701,10 @@ Partial Public Class ThisAddIn
         Try
             ' Expand paths
             Dim docStylePath As String = ExpandEnvironmentVariables(INI_DocStylePath)
-            If Not String.IsNullOrEmpty(docStylePath) AndAlso Not docStylePath.EndsWith("\") Then
-                docStylePath &= "\"
-            End If
+            If Not String.IsNullOrEmpty(docStylePath) AndAlso Not docStylePath.EndsWith("\") Then docStylePath &= "\"
 
             Dim docStylePathLocal As String = ExpandEnvironmentVariables(INI_DocStylePathLocal)
-            If Not String.IsNullOrEmpty(docStylePathLocal) AndAlso Not docStylePathLocal.EndsWith("\") Then
-                docStylePathLocal &= "\"
-            End If
+            If Not String.IsNullOrEmpty(docStylePathLocal) AndAlso Not docStylePathLocal.EndsWith("\") Then docStylePathLocal &= "\"
 
             Dim hasGlobal As Boolean = Not String.IsNullOrWhiteSpace(docStylePath) AndAlso Directory.Exists(docStylePath)
             Dim hasLocal As Boolean = Not String.IsNullOrWhiteSpace(docStylePathLocal) AndAlso Directory.Exists(docStylePathLocal)
@@ -830,7 +714,6 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
-            ' Get Word application and document
             Dim app As Word.Application = Globals.ThisAddIn.Application
             If app Is Nothing OrElse app.Documents Is Nothing OrElse app.Documents.Count = 0 Then
                 ShowCustomMessageBox("No open document.")
@@ -846,7 +729,6 @@ Partial Public Class ThisAddIn
             Dim currentSelection As Word.Selection = app.Selection
             Dim targetRange As Word.Range
 
-            ' Check selection
             If currentSelection.Type = WdSelectionType.wdSelectionIP Then
                 Dim answer As Integer = ShowCustomYesNoBox("You have not selected any text. Do you want to apply the style template to the entire document?",
                     "Yes, entire document", "No, cancel", $"{AN} - Apply Style Template")
@@ -856,20 +738,17 @@ Partial Public Class ThisAddIn
                 targetRange = currentSelection.Range.Duplicate
             End If
 
-            ' Load available style templates
             Dim templates As List(Of DocStyleTemplate) = LoadStyleTemplates(docStylePath, docStylePathLocal)
             If templates Is Nothing OrElse templates.Count = 0 Then
                 ShowCustomMessageBox($"No valid style templates found. Create templates using 'Extract Style Template' and save them as '{AN2}-ds-*.json' files.")
                 Return
             End If
 
-            ' Build display options using template display names
             Dim displayToTemplate As New Dictionary(Of String, DocStyleTemplate)(StringComparer.OrdinalIgnoreCase)
             Dim displayOptions As New List(Of String)()
             For Each t In templates
                 Dim display As String = t.DisplayName
                 If t.IsLocal Then display &= " (local)"
-                ' Handle duplicate display names by appending index
                 Dim originalDisplay As String = display
                 Dim counter As Integer = 1
                 While displayToTemplate.ContainsKey(display)
@@ -881,36 +760,31 @@ Partial Public Class ThisAddIn
             Next
 
             ' Parameter form
-            Dim p0 As New SLib.InputParameter("Style Template", If(displayOptions.Count > 0, displayOptions(0), ""))
+            Dim defaultTemplateDisplay As String = If(displayOptions.Count > 0, displayOptions(0), "")
+            If Not String.IsNullOrWhiteSpace(settings.LastStyleTemplateDisplay) AndAlso displayOptions.Contains(settings.LastStyleTemplateDisplay) Then
+                defaultTemplateDisplay = settings.LastStyleTemplateDisplay
+            End If
+
+            Dim p0 As New SLib.InputParameter("Style Template", defaultTemplateDisplay)
             p0.Options = displayOptions
 
-            Dim p1 As New SLib.InputParameter("Apply in Track Changes", settings.TrackChanges)
             Dim p2 As New SLib.InputParameter("Create/update Word styles from template", settings.ApplyStyleDefinitions)
             Dim p3 As New SLib.InputParameter("Preview each change", settings.PreviewMode)
             Dim p4 As New SLib.InputParameter("Use confidence threshold", settings.UseConfidenceThreshold)
             Dim p5 As New SLib.InputParameter("Confidence threshold (0-100%)", settings.ConfidenceThreshold)
             Dim p6 As New SLib.InputParameter("Process table cells", settings.ProcessTables)
-            Dim p7 As New SLib.InputParameter("Apply only style, no text updating (faster, safer)", settings.FastModeStylesOnly)
-            Dim p8 As New SLib.InputParameter("Paragraphs per LLM call (n/a in 'faster' mode)", settings.ParagraphsPerCall)
 
-            ' List numbering reset option
+            Dim p7 As New SLib.InputParameter("Apply only style, no text updating (faster, safer)", settings.FastModeStylesOnly)
+
             Dim listResetOptions As New List(Of String) From {"Off", "Rule-based (after non-list paragraphs)", "LLM-assisted (semantic analysis)"}
             Dim p8b As New SLib.InputParameter("List numbering reset", listResetOptions(settings.ListNumberingReset))
             p8b.Options = listResetOptions
 
-            ' NEW: heading outline level max (only relevant for rule-based restart)
             Dim headingOutlineLevelOptions As New List(Of String) From {
                 "0 (never treat outline levels as headings)",
-                "1",
-                "2",
-                "3",
-                "4",
-                "5",
-                "6",
-                "7",
-                "8",
-                "9"
+                "1", "2", "3", "4", "5", "6", "7", "8", "9"
             }
+
             Dim initialHeadingMax As Integer = settings.RuleHeadingOutlineLevelMax
             If initialHeadingMax < 0 Then initialHeadingMax = 0
             If initialHeadingMax > 9 Then initialHeadingMax = 9
@@ -918,7 +792,6 @@ Partial Public Class ThisAddIn
             Dim p8c As New SLib.InputParameter("Maximum heading levels (rule-based reset)", headingOutlineLevelOptions(initialHeadingMax))
             p8c.Options = headingOutlineLevelOptions
 
-            Dim p9 As New SLib.InputParameter("Show report at end", settings.ShowReport)
             Dim p10 As New SLib.InputParameter("Document context (optional)", settings.DocumentContext)
 
             Dim p11 As SLib.InputParameter
@@ -930,8 +803,14 @@ Partial Public Class ThisAddIn
                 p11 = New SLib.InputParameter("Use the secondary model", CType(Nothing, Boolean?))
             End If
 
-            ' CHANGED: inserted p8c after list reset parameter (p8b)
-            Dim params() As SLib.InputParameter = {p0, p1, p2, p3, p4, p5, p6, p7, p8, p8b, p8c, p9, p10, p11}
+            Dim p1 As New SLib.InputParameter("Apply in Track Changes", settings.TrackChanges)
+
+            ' Seeds the UI option from the persisted setting value.
+            Dim p1b As New SLib.InputParameter("Restore in-para formatting (requires Track Changes)", settings.RestoreInlineFormatting)
+
+            Dim p9 As New SLib.InputParameter("Show report at end", settings.ShowReport)
+
+            Dim params() As SLib.InputParameter = {p0, p2, p3, p4, p5, p6, p7, p8b, p8c, p10, p11, p1, p1b, p9}
 
             If Not ShowCustomVariableInputForm("Configure Style Template Application:", $"{AN} - Apply Style Template", params) Then
                 Return
@@ -939,19 +818,19 @@ Partial Public Class ThisAddIn
 
             ' Read back values
             Dim chosenDisplay As String = System.Convert.ToString(params(0).Value)
-            settings.TrackChanges = System.Convert.ToBoolean(params(1).Value)
-            settings.ApplyStyleDefinitions = System.Convert.ToBoolean(params(2).Value)
-            settings.PreviewMode = System.Convert.ToBoolean(params(3).Value)
-            settings.UseConfidenceThreshold = System.Convert.ToBoolean(params(4).Value)
-            settings.ConfidenceThreshold = System.Convert.ToInt32(params(5).Value)
-            settings.ProcessTables = System.Convert.ToBoolean(params(6).Value)
-            settings.FastModeStylesOnly = System.Convert.ToBoolean(params(7).Value)
-            settings.ParagraphsPerCall = Math.Max(1, System.Convert.ToInt32(params(8).Value))
-            settings.ListNumberingReset = listResetOptions.IndexOf(System.Convert.ToString(params(9).Value))
+
+            settings.LastStyleTemplateDisplay = chosenDisplay
+            settings.ApplyStyleDefinitions = System.Convert.ToBoolean(params(1).Value)
+            settings.PreviewMode = System.Convert.ToBoolean(params(2).Value)
+            settings.UseConfidenceThreshold = System.Convert.ToBoolean(params(3).Value)
+            settings.ConfidenceThreshold = System.Convert.ToInt32(params(4).Value)
+            settings.ProcessTables = System.Convert.ToBoolean(params(5).Value)
+            settings.FastModeStylesOnly = System.Convert.ToBoolean(params(6).Value)
+
+            settings.ListNumberingReset = listResetOptions.IndexOf(System.Convert.ToString(params(7).Value))
             If settings.ListNumberingReset < 0 Then settings.ListNumberingReset = 0
 
-            ' NEW: parse RuleHeadingOutlineLevelMax from p8c
-            Dim headingMaxRaw As String = System.Convert.ToString(params(10).Value)
+            Dim headingMaxRaw As String = System.Convert.ToString(params(8).Value)
             Dim m As Match = Regex.Match(headingMaxRaw, "^\s*(\d+)")
             If m.Success Then
                 settings.RuleHeadingOutlineLevelMax = Math.Max(0, Math.Min(9, Integer.Parse(m.Groups(1).Value)))
@@ -959,26 +838,26 @@ Partial Public Class ThisAddIn
                 settings.RuleHeadingOutlineLevelMax = DefaultRuleHeadingOutlineLevelMax
             End If
 
-            settings.ShowReport = System.Convert.ToBoolean(params(11).Value)
-            settings.DocumentContext = System.Convert.ToString(params(12).Value)
+            settings.DocumentContext = System.Convert.ToString(params(9).Value)
 
-            Dim secondModel = params(13).Value
+            Dim secondModel = params(10).Value
             If TypeOf secondModel Is Boolean Then
                 do2ndModel = CBool(secondModel)
                 settings.UseSecondaryModel = do2ndModel
             End If
 
-            ' Save settings
+            settings.TrackChanges = System.Convert.ToBoolean(params(11).Value)
+            settings.RestoreInlineFormatting = System.Convert.ToBoolean(params(12).Value)
+            settings.ShowReport = System.Convert.ToBoolean(params(13).Value)
+
             settings.Save()
 
-            ' Resolve selected template
             Dim chosenTemplate As DocStyleTemplate = Nothing
             If Not displayToTemplate.TryGetValue(chosenDisplay, chosenTemplate) Then
                 ShowCustomMessageBox("Selected style template could not be resolved.")
                 Return
             End If
 
-            ' Load template content
             Dim templateJson As String
             Try
                 templateJson = File.ReadAllText(chosenTemplate.FilePath, Encoding.UTF8)
@@ -995,7 +874,6 @@ Partial Public Class ThisAddIn
                 Return
             End Try
 
-            ' Handle secondary model
             If do2ndModel Then
                 If Not String.IsNullOrWhiteSpace(INI_AlternateModelPath) Then
                     If Not ShowModelSelection(_context, INI_AlternateModelPath) Then
@@ -1006,7 +884,6 @@ Partial Public Class ThisAddIn
                 End If
             End If
 
-            ' Extract and apply wdStyle definitions if requested
             Dim wdStyleDefinitions As JObject = Nothing
             If templateObj("wdStyleDefinitions") IsNot Nothing Then
                 wdStyleDefinitions = CType(templateObj("wdStyleDefinitions"), JObject)
@@ -1016,10 +893,9 @@ Partial Public Class ThisAddIn
                 templateObj.Remove("wdStyleDefinitions")
             End If
 
-            ' Create minimal template for LLM (only names and whenToApply)
             Dim templateForLLM As String = CreateMinimalTemplateForLLM(templateObj)
 
-            ' Handle track changes
+            ' Track changes independent.
             Dim originalTrackChanges As Boolean = doc.TrackRevisions
             If settings.TrackChanges Then
                 doc.TrackRevisions = True
@@ -1027,15 +903,8 @@ Partial Public Class ThisAddIn
 
             Try
                 Using New WordUndoScope(app, $"{AN} - Apply Style Template")
-                    ' Run the appropriate application mode
-                    Dim report As String
-                    If settings.FastModeStylesOnly Then
-                        report = Await ApplyStylesFastMode(doc, targetRange, templateForLLM, templateObj, settings, do2ndModel)
-                    Else
-                        report = Await ApplyStylesDetailedMode(doc, targetRange, templateForLLM, templateObj, settings, do2ndModel)
-                    End If
+                    Dim report As String = Await ApplyStylesFromTemplate(doc, targetRange, templateForLLM, templateObj, settings, do2ndModel)
 
-                    ' Show report if requested
                     If settings.ShowReport AndAlso Not String.IsNullOrWhiteSpace(report) Then
                         Dim reportResult As String = ShowCustomWindow(
                             "Style Template Application Complete",
@@ -1047,8 +916,12 @@ Partial Public Class ThisAddIn
                         SLib.PutInClipboard(report)
                     End If
                 End Using
+
+                If settings.TrackChanges AndAlso settings.RestoreInlineFormatting Then
+                    UndoInlineFormattingRevisions(doc)
+                End If
+
             Finally
-                ' Restore track changes
                 doc.TrackRevisions = originalTrackChanges
             End Try
 
@@ -1062,27 +935,34 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-
-
-    ' =========================
-    ' DROP-IN REPLACEMENT: ApplyStylesFastMode
-    '
-    ' Fix:
-    ' - Normalizes userStyleName keys (LLM + template) so invisible chars (NBSP/ZWSP/whitespace) can’t break lookup.
-    ' - Uses dictionaries for O(1) lookups instead of scanning userStyles array per paragraph.
-    ' - Logs when a userStyleName can’t be resolved to a template userStyleDef (so indent overrides don’t silently disappear).
-    ' =========================
-    Private Async Function ApplyStylesFastMode(doc As Word.Document, targetRange As Word.Range,
-                                            templateJson As String, templateObj As JObject,
-                                            settings As DocStyleSettings,
-                                            useSecondAPI As Boolean) As Task(Of String)
+    ''' <summary>
+    ''' Applies styles and optional text amendments to paragraphs in <paramref name="targetRange"/> based on an LLM
+    ''' mapping response. Produces a text report of applied and skipped operations.
+    ''' </summary>
+    ''' <param name="doc">Active document being modified.</param>
+    ''' <param name="targetRange">Range whose paragraphs are processed.</param>
+    ''' <param name="templateJson">Minimal template JSON passed to the LLM.</param>
+    ''' <param name="templateObj">Full template object used for lookups of formatting overrides.</param>
+    ''' <param name="settings">DocStyle runtime settings.</param>
+    ''' <param name="useSecondAPI">When True, calls the secondary model/API for the LLM request.</param>
+    ''' <returns>Plain text report.</returns>
+    Private Async Function ApplyStylesFromTemplate(doc As Word.Document, targetRange As Word.Range,
+                                        templateJson As String, templateObj As JObject,
+                                        settings As DocStyleSettings,
+                                        useSecondAPI As Boolean) As Task(Of String)
         Dim report As New StringBuilder()
         report.AppendLine("=== Style Template Application Report (Fast Mode) ===")
         report.AppendLine($"Date: {DateTime.Now:yyyy-MM-dd HH:mm:ss}")
         report.AppendLine()
 
         Try
-            ' Build user style name -> wdStyle name mapping and user style name -> userStyleDef.
+            ' Text amendment (deletePrefix) is controlled by FastModeStylesOnly.
+            ' TrackChanges is independent; caller toggles doc.TrackRevisions.
+            Dim doTextAmendment As Boolean = (Not settings.FastModeStylesOnly)
+
+            ApplyStylesResponseFormat = If(doTextAmendment, ApplyStylesResponseFormat_Extended, ApplyStylesResponseFormat_Minimal)
+
+            ' Build user style lookup tables
             Dim userStyleToWdStyle As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
             Dim userStyleNameToDef As New Dictionary(Of String, JObject)(StringComparer.OrdinalIgnoreCase)
 
@@ -1094,7 +974,6 @@ Partial Public Class ThisAddIn
                     If String.IsNullOrWhiteSpace(userStyleKey) Then Continue For
 
                     Dim wdStyleName As String = If(userStyle("wdStyleName") IsNot Nothing, userStyle("wdStyleName").ToString(), "Normal")
-
                     userStyleToWdStyle(userStyleKey) = wdStyleName
                     userStyleNameToDef(userStyleKey) = userStyle
                 Next
@@ -1110,7 +989,6 @@ Partial Public Class ThisAddIn
                 Dim text As String = para.Range.Text.TrimEnd(vbCr, vbLf, ChrW(13), ChrW(10))
                 If String.IsNullOrWhiteSpace(text) Then Continue For
 
-                ' Skip table cells if not processing tables
                 If Not settings.ProcessTables Then
                     Try
                         If para.Range.Cells.Count > 0 Then Continue For
@@ -1118,17 +996,14 @@ Partial Public Class ThisAddIn
                     End Try
                 End If
 
-                ' Build formatting hints
                 Dim hints As New StringBuilder()
 
-                ' List formatting hint - detect actual bullet vs numbering
                 Dim hasList As Boolean = False
                 Try
                     Dim lf As Word.ListFormat = para.Range.ListFormat
                     If lf.ListType <> WdListType.wdListNoNumbering Then
                         hasList = True
 
-                        ' Determine if this is actually a bullet list by checking the list string
                         Dim listString As String = lf.ListString
                         Dim isBullet As Boolean = False
 
@@ -1150,7 +1025,6 @@ Partial Public Class ThisAddIn
                 Catch
                 End Try
 
-                ' Indentation hint
                 Try
                     If para.LeftIndent > 0 OrElse para.FirstLineIndent <> 0 Then
                         hints.Append($"[INDENT:{Math.Round(para.LeftIndent, 0)}/{Math.Round(para.FirstLineIndent, 0)}] ")
@@ -1169,11 +1043,9 @@ Partial Public Class ThisAddIn
                 Return report.ToString()
             End If
 
-            ' Build prompt - add numbering hint only if LLM-assisted mode is enabled
-            Dim systemPrompt As String = SP_ApplyDocStyleFast
-            If settings.ListNumberingReset = 2 Then
-                systemPrompt &= SP_ApplyDocStyleFast_NumberingHint
-            End If
+            Dim systemPrompt As String = SP_ApplyDocStyle
+            If settings.ListNumberingReset = 2 Then systemPrompt &= SP_ApplyDocStyle_NumberingHint
+            systemPrompt = InterpolateAtRuntime(systemPrompt)
 
             Dim userPrompt As New StringBuilder()
             userPrompt.AppendLine("<STYLETEMPLATE>")
@@ -1191,10 +1063,8 @@ Partial Public Class ThisAddIn
                 userPrompt.AppendLine("</CONTEXT>")
             End If
 
-            ' Call LLM
             Dim response As String = Await LLM(systemPrompt, userPrompt.ToString(), "", "", 0, useSecondAPI)
 
-            ' Parse response
             Dim mappingArray As JArray
             Try
                 response = ExtractJsonFromResponse(response)
@@ -1204,7 +1074,6 @@ Partial Public Class ThisAddIn
                 Return report.ToString()
             End Try
 
-            ' Apply styles
             Dim appliedCount As Integer = 0
             Dim skippedCount As Integer = 0
 
@@ -1213,10 +1082,7 @@ Partial Public Class ThisAddIn
             GlobalProgressMax = mappingArray.Count
             GlobalProgressValue = 0
 
-            ' Track paragraphs that need numbering restart (for post-processing)
             Dim numberingRestartParas As New List(Of Word.Paragraph)()
-
-            ' TEMPLATE baseline by paragraph index (0-based index into paragraphList)
             Dim templateBaselineByIndex As New Dictionary(Of Integer, JObject)()
 
             Try
@@ -1230,7 +1096,6 @@ Partial Public Class ThisAddIn
 
                     Dim userStyleNameRaw As String = If(mapping("userStyleName") IsNot Nothing, CStr(mapping("userStyleName")), "")
                     Dim userStyleName As String = NormalizeStyleKey(userStyleNameRaw)
-
                     Dim confidence As Integer = If(mapping("confidence") IsNot Nothing, CInt(mapping("confidence")), 100)
 
                     GlobalProgressValue += 1
@@ -1241,291 +1106,23 @@ Partial Public Class ThisAddIn
                     Dim para As Word.Paragraph = paragraphList(paraIdx)
                     Dim paraPreview As String = GetParaPreview(para, ReportParaPreviewLen)
 
-                    ' Resolve wdStyle name from user style name
                     Dim wdStyleName As String = "Normal"
                     If userStyleToWdStyle.ContainsKey(userStyleName) Then
                         wdStyleName = userStyleToWdStyle(userStyleName)
                     ElseIf Not String.IsNullOrWhiteSpace(userStyleName) Then
-                        ' Try using the user style name directly as wdStyle name
                         wdStyleName = userStyleName
                     End If
 
-                    ' Check confidence threshold
                     If settings.UseConfidenceThreshold AndAlso confidence < settings.ConfidenceThreshold Then
                         skippedCount += 1
                         report.AppendLine($"Skipped paragraph {paraIdx + 1}: confidence {confidence}% below threshold | suggested='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
                         Continue For
                     End If
 
-                    ' Preview mode
                     If settings.PreviewMode Then
                         para.Range.Select()
                         Dim preview As Integer = ShowCustomYesNoBox(
-                    $"Apply user style '{userStyleNameRaw}' (normalized: '{userStyleName}') (Word style: '{wdStyleName}') to this paragraph?{vbCrLf}{vbCrLf}Confidence: {confidence}%{vbCrLf}Text: {para.Range.Text.Substring(0, Math.Min(100, para.Range.Text.Length))}...",
-                    "Yes", "Skip", $"{AN} - Preview")
-
-                        If preview = 0 Then
-                            Dim continueChoice As Integer = ShowCustomYesNoBox(
-                        "You closed the preview dialog without making a selection." & vbCrLf & vbCrLf &
-                        "Do you want to continue applying styles without individual preview, or abort the operation?",
-                        "Continue without preview", "Abort", $"{AN} - Continue?")
-                            If continueChoice = 1 Then
-                                settings.PreviewMode = False
-                            Else
-                                report.AppendLine("Operation aborted by user.")
-                                Exit For
-                            End If
-                        ElseIf preview <> 1 Then
-                            skippedCount += 1
-                            report.AppendLine($"Skipped paragraph {paraIdx + 1}: user skipped in preview | suggested='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
-                            Continue For
-                        End If
-                    End If
-
-                    ' Apply style + TEMPLATE overrides; then capture template baseline.
-                    Try
-                        para.Style = doc.Styles(wdStyleName)
-
-                        ' Find template user style definition (normalized key)
-                        Dim userStyleDef As JObject = Nothing
-                        userStyleNameToDef.TryGetValue(userStyleName, userStyleDef)
-
-                        If userStyleDef IsNot Nothing Then
-                            ApplyUserStyleFormattingFromTemplate(para, userStyleDef)
-                        Else
-                            Debug.WriteLine($"[DocStyle] FastMode: No userStyleDef for para {paraIdx + 1}: raw='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' preview='{paraPreview}'")
-                        End If
-
-                        ' Capture TEMPLATE baseline AFTER wdStyle + manual template overrides.
-                        templateBaselineByIndex(paraIdx) = CaptureParaProps(para)
-
-                        appliedCount += 1
-
-                        ' Track for numbering restart post-processing (only if feature is enabled)
-                        If settings.ListNumberingReset > 0 Then
-                            Dim shouldRestart As Boolean = False
-                            If settings.ListNumberingReset = 2 Then
-                                ' LLM-assisted: check the mapping response
-                                shouldRestart = If(mapping("restartNumbering") IsNot Nothing, CBool(mapping("restartNumbering")), False)
-                            End If
-                            ' For rule-based (mode 1), we compute in post-processing.
-
-                            If shouldRestart Then
-                                numberingRestartParas.Add(para)
-                            End If
-                        End If
-
-                    Catch ex As Exception
-                        report.AppendLine($"Error applying style '{wdStyleName}' to paragraph {paraIdx + 1}: {ex.Message} | suggested='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
-                    End Try
-                Next
-            Finally
-                ProgressBarModule.CancelOperation = True
-            End Try
-
-            ' Post-processing: Apply numbering restarts if feature is enabled
-            Dim restartCount As Integer = 0
-            If settings.ListNumberingReset > 0 Then
-                restartCount = ApplyNumberingRestarts(doc, paragraphList, paragraphHasList, settings, numberingRestartParas, templateBaselineByIndex)
-            End If
-
-            report.AppendLine()
-            report.AppendLine($"Total paragraphs: {paragraphList.Count}")
-            report.AppendLine($"Styles applied: {appliedCount}")
-            report.AppendLine($"Skipped: {skippedCount}")
-            If settings.ListNumberingReset > 0 Then
-                report.AppendLine($"Numbering restarts applied: {restartCount}")
-            End If
-
-        Catch ex As Exception
-            report.AppendLine($"Error in fast mode: {ex.Message}")
-        End Try
-
-        Return report.ToString()
-    End Function
-
-
-    Private Async Function oldApplyStylesFastMode(doc As Word.Document, targetRange As Word.Range,
-                                                templateJson As String, templateObj As JObject,
-                                                settings As DocStyleSettings,
-                                                useSecondAPI As Boolean) As Task(Of String)
-        Dim report As New StringBuilder()
-        report.AppendLine("=== Style Template Application Report (Fast Mode) ===")
-        report.AppendLine($"Date: {DateTime.Now:yyyy-MM-dd HH:mm:ss}")
-        report.AppendLine()
-
-        Try
-            ' Build user style name to wdStyle name mapping
-            Dim userStyleToWdStyle As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
-            If templateObj("userStyles") IsNot Nothing Then
-                For Each userStyle As JObject In CType(templateObj("userStyles"), JArray)
-                    Dim userStyleName As String = If(userStyle("userStyleName") IsNot Nothing, userStyle("userStyleName").ToString(), "")
-                    Dim wdStyleName As String = If(userStyle("wdStyleName") IsNot Nothing, userStyle("wdStyleName").ToString(), "Normal")
-                    If Not String.IsNullOrWhiteSpace(userStyleName) Then
-                        userStyleToWdStyle(userStyleName) = wdStyleName
-                    End If
-                Next
-            End If
-
-            ' Build numbered paragraph list with formatting hints
-            Dim paragraphTexts As New StringBuilder()
-            Dim paragraphList As New List(Of Word.Paragraph)()
-            Dim paragraphHasList As New List(Of Boolean)()
-            Dim idx As Integer = 1
-
-            For Each para As Word.Paragraph In targetRange.Paragraphs
-                Dim text As String = para.Range.Text.TrimEnd(vbCr, vbLf, ChrW(13), ChrW(10))
-                If String.IsNullOrWhiteSpace(text) Then Continue For
-
-                ' Skip table cells if not processing tables
-                If Not settings.ProcessTables Then
-                    Try
-                        If para.Range.Cells.Count > 0 Then Continue For
-                    Catch
-                    End Try
-                End If
-
-                ' Build formatting hints
-                Dim hints As New StringBuilder()
-
-                ' List formatting hint - detect actual bullet vs numbering
-                Dim hasList As Boolean = False
-                Try
-                    Dim lf As Word.ListFormat = para.Range.ListFormat
-                    If lf.ListType <> WdListType.wdListNoNumbering Then
-                        hasList = True
-
-                        ' Determine if this is actually a bullet list by checking the list string
-                        Dim listString As String = lf.ListString
-                        Dim isBullet As Boolean = False
-
-                        If lf.ListType = WdListType.wdListBullet Then
-                            isBullet = True
-                        ElseIf Not String.IsNullOrEmpty(listString) Then
-                            Dim trimmed As String = listString.Trim()
-                            If trimmed.Length > 0 Then
-                                Dim firstChar As Char = trimmed.Chars(0)
-                                If Not Char.IsLetterOrDigit(firstChar) Then
-                                    isBullet = True
-                                End If
-                            End If
-                        End If
-
-                        Dim listTypeHint As String = If(isBullet, "Bullet", lf.ListType.ToString().Replace("wdList", ""))
-                        hints.Append($"[LIST:{listTypeHint}/L{lf.ListLevelNumber}] ")
-                    End If
-                Catch
-                End Try
-
-                ' Indentation hint
-                Try
-                    If para.LeftIndent > 0 OrElse para.FirstLineIndent <> 0 Then
-                        hints.Append($"[INDENT:{Math.Round(para.LeftIndent, 0)}/{Math.Round(para.FirstLineIndent, 0)}] ")
-                    End If
-                Catch
-                End Try
-
-                paragraphTexts.AppendLine($"[{idx}] {hints}{text}")
-                paragraphList.Add(para)
-                paragraphHasList.Add(hasList)
-                idx += 1
-            Next
-
-            If paragraphList.Count = 0 Then
-                report.AppendLine("No paragraphs to process.")
-                Return report.ToString()
-            End If
-
-            ' Build prompt - add numbering hint only if LLM-assisted mode is enabled
-            Dim systemPrompt As String = SP_ApplyDocStyleFast
-            If settings.ListNumberingReset = 2 Then
-                systemPrompt &= SP_ApplyDocStyleFast_NumberingHint
-            End If
-
-            Dim userPrompt As New StringBuilder()
-            userPrompt.AppendLine("<STYLETEMPLATE>")
-            userPrompt.AppendLine(templateJson)
-            userPrompt.AppendLine("</STYLETEMPLATE>")
-            userPrompt.AppendLine()
-            userPrompt.AppendLine("<DOCUMENT>")
-            userPrompt.AppendLine(paragraphTexts.ToString())
-            userPrompt.AppendLine("</DOCUMENT>")
-
-            If Not String.IsNullOrWhiteSpace(settings.DocumentContext) Then
-                userPrompt.AppendLine()
-                userPrompt.AppendLine("<CONTEXT>")
-                userPrompt.AppendLine(settings.DocumentContext)
-                userPrompt.AppendLine("</CONTEXT>")
-            End If
-
-            ' Call LLM
-            Dim response As String = Await LLM(systemPrompt, userPrompt.ToString(), "", "", 0, useSecondAPI)
-
-            ' Parse response
-            Dim mappingArray As JArray
-            Try
-                response = ExtractJsonFromResponse(response)
-                mappingArray = JArray.Parse(response)
-            Catch ex As Exception
-                report.AppendLine($"Error parsing LLM response: {ex.Message}")
-                Return report.ToString()
-            End Try
-
-            ' Apply styles
-            Dim appliedCount As Integer = 0
-            Dim skippedCount As Integer = 0
-
-            ShowProgressBarInSeparateThread($"{AN} - Applying Styles", "Applying styles...")
-            ProgressBarModule.CancelOperation = False
-            GlobalProgressMax = mappingArray.Count
-            GlobalProgressValue = 0
-
-            ' Track paragraphs that need numbering restart (for post-processing)
-            Dim numberingRestartParas As New List(Of Word.Paragraph)()
-
-            ' TEMPLATE baseline by paragraph index (0-based index into paragraphList)
-            Dim templateBaselineByIndex As New Dictionary(Of Integer, JObject)()
-
-            Try
-                For Each mapping As JObject In mappingArray
-                    If ProgressBarModule.CancelOperation Then
-                        report.AppendLine("Operation cancelled by user.")
-                        Exit For
-                    End If
-
-                    Dim paraIdx As Integer = CInt(mapping("paragraphIndex")) - 1
-                    Dim userStyleName As String = If(mapping("userStyleName") IsNot Nothing, CStr(mapping("userStyleName")), "")
-                    Dim confidence As Integer = If(mapping("confidence") IsNot Nothing, CInt(mapping("confidence")), 100)
-
-                    GlobalProgressValue += 1
-                    GlobalProgressLabel = $"Processing paragraph {paraIdx + 1} of {paragraphList.Count}"
-
-                    If paraIdx < 0 OrElse paraIdx >= paragraphList.Count Then Continue For
-
-                    Dim para As Word.Paragraph = paragraphList(paraIdx)
-                    Dim paraPreview As String = GetParaPreview(para, ReportParaPreviewLen)
-
-                    ' Resolve wdStyle name from user style name (do this early so we can report it even when skipped)
-                    Dim wdStyleName As String = "Normal"
-                    If userStyleToWdStyle.ContainsKey(userStyleName) Then
-                        wdStyleName = userStyleToWdStyle(userStyleName)
-                    ElseIf Not String.IsNullOrWhiteSpace(userStyleName) Then
-                        ' Try using the user style name directly as wdStyle name
-                        wdStyleName = userStyleName
-                    End If
-
-                    ' Check confidence threshold
-                    If settings.UseConfidenceThreshold AndAlso confidence < settings.ConfidenceThreshold Then
-                        skippedCount += 1
-                        report.AppendLine($"Skipped paragraph {paraIdx + 1}: confidence {confidence}% below threshold | suggested='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
-                        Continue For
-                    End If
-
-                    ' Preview mode
-                    If settings.PreviewMode Then
-                        para.Range.Select()
-                        Dim preview As Integer = ShowCustomYesNoBox(
-                        $"Apply user style '{userStyleName}' (Word style: '{wdStyleName}') to this paragraph?{vbCrLf}{vbCrLf}Confidence: {confidence}%{vbCrLf}Text: {para.Range.Text.Substring(0, Math.Min(100, para.Range.Text.Length))}...",
+                        $"Apply user style '{userStyleNameRaw}' (normalized: '{userStyleName}') (Word style: '{wdStyleName}') to this paragraph?{vbCrLf}{vbCrLf}Confidence: {confidence}%{vbCrLf}Text: {para.Range.Text.Substring(0, Math.Min(100, para.Range.Text.Length))}...",
                         "Yes", "Skip", $"{AN} - Preview")
 
                         If preview = 0 Then
@@ -1541,59 +1138,46 @@ Partial Public Class ThisAddIn
                             End If
                         ElseIf preview <> 1 Then
                             skippedCount += 1
-                            report.AppendLine($"Skipped paragraph {paraIdx + 1}: user skipped in preview | suggested='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
+                            report.AppendLine($"Skipped paragraph {paraIdx + 1}: user skipped in preview | suggested='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
                             Continue For
                         End If
                     End If
 
-                    ' Apply style + TEMPLATE overrides; then capture template baseline.
                     Try
+                        ' Optional text amendment: deletes a manual prefix marker (before applying the style).
+                        If doTextAmendment AndAlso mapping("deletePrefix") IsNot Nothing AndAlso TypeOf mapping("deletePrefix") Is JObject Then
+                            TryDeleteManualPrefixMarker(para, CType(mapping("deletePrefix"), JObject), report, paraIdx + 1)
+                        End If
+
                         para.Style = doc.Styles(wdStyleName)
 
-                        ' Find template user style definition
                         Dim userStyleDef As JObject = Nothing
-                        If templateObj("userStyles") IsNot Nothing Then
-                            For Each us As JObject In CType(templateObj("userStyles"), JArray)
-                                If us("userStyleName") IsNot Nothing AndAlso
-                               String.Equals(us("userStyleName").ToString(), userStyleName, StringComparison.OrdinalIgnoreCase) Then
-                                    userStyleDef = us
-                                    Exit For
-                                End If
-                            Next
-                        End If
-
+                        userStyleNameToDef.TryGetValue(userStyleName, userStyleDef)
                         If userStyleDef IsNot Nothing Then
                             ApplyUserStyleFormattingFromTemplate(para, userStyleDef)
+                        Else
+                            Debug.WriteLine($"[DocStyle] FastMode: No userStyleDef for para {paraIdx + 1}: raw='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' preview='{paraPreview}'")
                         End If
 
-                        ' Capture TEMPLATE baseline AFTER wdStyle + manual template overrides.
                         templateBaselineByIndex(paraIdx) = CaptureParaProps(para)
-
                         appliedCount += 1
 
-                        ' Track for numbering restart post-processing (only if feature is enabled)
                         If settings.ListNumberingReset > 0 Then
                             Dim shouldRestart As Boolean = False
                             If settings.ListNumberingReset = 2 Then
-                                ' LLM-assisted: check the mapping response
                                 shouldRestart = If(mapping("restartNumbering") IsNot Nothing, CBool(mapping("restartNumbering")), False)
                             End If
-                            ' For rule-based (mode 1), we compute in post-processing.
-
-                            If shouldRestart Then
-                                numberingRestartParas.Add(para)
-                            End If
+                            If shouldRestart Then numberingRestartParas.Add(para)
                         End If
 
                     Catch ex As Exception
-                        report.AppendLine($"Error applying style '{wdStyleName}' to paragraph {paraIdx + 1}: {ex.Message} | suggested='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
+                        report.AppendLine($"Error applying style '{wdStyleName}' to paragraph {paraIdx + 1}: {ex.Message} | suggested='{userStyleNameRaw}' norm='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
                     End Try
                 Next
             Finally
                 ProgressBarModule.CancelOperation = True
             End Try
 
-            ' Post-processing: Apply numbering restarts if feature is enabled
             Dim restartCount As Integer = 0
             If settings.ListNumberingReset > 0 Then
                 restartCount = ApplyNumberingRestarts(doc, paragraphList, paragraphHasList, settings, numberingRestartParas, templateBaselineByIndex)
@@ -1603,9 +1187,7 @@ Partial Public Class ThisAddIn
             report.AppendLine($"Total paragraphs: {paragraphList.Count}")
             report.AppendLine($"Styles applied: {appliedCount}")
             report.AppendLine($"Skipped: {skippedCount}")
-            If settings.ListNumberingReset > 0 Then
-                report.AppendLine($"Numbering restarts applied: {restartCount}")
-            End If
+            If settings.ListNumberingReset > 0 Then report.AppendLine($"Numbering restarts applied: {restartCount}")
 
         Catch ex As Exception
             report.AppendLine($"Error in fast mode: {ex.Message}")
@@ -1615,8 +1197,178 @@ Partial Public Class ThisAddIn
     End Function
 
 
-    ' CHANGED: More robust numbered detection.
-    ' Word often gives empty/odd ListString for valid numbering (esp. outline templates).
+    ''' <summary>
+    ''' Rejects formatting-only revisions that affect only a portion of a paragraph.
+    ''' </summary>
+    ''' <param name="doc">Document whose revisions are inspected.</param>
+    Private Sub UndoInlineFormattingRevisions(doc As Word.Document)
+        If doc Is Nothing Then Exit Sub
+
+        Try
+            If doc.Revisions Is Nothing OrElse doc.Revisions.Count = 0 Then Exit Sub
+
+            For i As Integer = doc.Revisions.Count To 1 Step -1
+                Dim rev As Word.Revision = Nothing
+                Try
+                    rev = doc.Revisions(i)
+                Catch
+                    Continue For
+                End Try
+                If rev Is Nothing Then Continue For
+
+                ' Check by enum value, not string
+                If rev.Type <> WdRevisionType.wdRevisionProperty Then Continue For
+
+                Dim rng As Word.Range = Nothing
+                Try
+                    rng = rev.Range
+                Catch
+                    Continue For
+                End Try
+                If rng Is Nothing Then Continue For
+
+                Dim para As Word.Paragraph = Nothing
+                Try
+                    If rng.Paragraphs Is Nothing OrElse rng.Paragraphs.Count <> 1 Then Continue For
+                    para = rng.Paragraphs(1)
+                Catch
+                    Continue For
+                End Try
+                If para Is Nothing Then Continue For
+
+                ' Get paragraph text length (excluding paragraph mark)
+                Dim paraTextStart As Integer = para.Range.Start
+                Dim paraTextLen As Integer = 0
+                Try
+                    Dim paraText As String = para.Range.Text
+                    ' Remove trailing paragraph mark(s)
+                    paraText = paraText.TrimEnd(vbCr, vbLf, ChrW(13), ChrW(10))
+                    paraTextLen = paraText.Length
+                Catch
+                    Continue For
+                End Try
+
+                If paraTextLen <= 0 Then Continue For
+
+                Dim paraTextEnd As Integer = paraTextStart + paraTextLen
+
+                ' Calculate effective revision span within paragraph
+                Dim revStart As Integer = Math.Max(rng.Start, paraTextStart)
+                Dim revEnd As Integer = Math.Min(rng.End, paraTextEnd)
+
+                If revEnd <= revStart Then Continue For
+
+                ' Inline = revision does NOT cover entire paragraph text
+                Dim revLen As Integer = revEnd - revStart
+                If revLen >= paraTextLen Then
+                    ' Full paragraph formatting - leave tracked
+                    Continue For
+                End If
+
+                ' Reject (revert) inline formatting revision
+                Try
+                    rev.Reject()
+                Catch ex As Exception
+                    Debug.WriteLine($"[DocStyle] Could not reject inline formatting revision {i}: {ex.Message}")
+                End Try
+            Next
+
+        Catch ex As Exception
+            Debug.WriteLine($"[DocStyle] UndoInlineFormattingRevisions error: {ex.Message}")
+        End Try
+    End Sub
+
+
+
+    ''' <summary>
+    ''' Normalizes style names for dictionary lookups by removing repeated whitespace and normalizing non-breaking spaces.
+    ''' </summary>
+    ''' <param name="s">Raw style name.</param>
+    ''' <returns>Normalized style key.</returns>
+    Private Shared Function NormalizeStyleKey(s As String) As String
+        If s Is Nothing Then Return ""
+
+        ' Normalizes common invisible differences from LLM / copy-paste.
+        s = s.Replace(ChrW(&HA0), " ") ' NBSP -> space
+        s = Regex.Replace(s, "\s+", " ").Trim()
+
+        Return s
+    End Function
+
+    ''' <summary>
+    ''' Deletes a leading manual prefix marker from a paragraph as instructed by an LLM mapping response.
+    ''' Deletion occurs only at the paragraph start and never removes the paragraph mark.
+    ''' </summary>
+    ''' <param name="para">Paragraph to amend.</param>
+    ''' <param name="deletePrefix">Delete-prefix instruction object.</param>
+    ''' <param name="report">Report sink for non-fatal messages.</param>
+    ''' <param name="logicalIdx1Based">1-based paragraph index used in the report.</param>
+    ''' <returns>True if a prefix was deleted; otherwise False.</returns>
+    Private Function TryDeleteManualPrefixMarker(para As Word.Paragraph, deletePrefix As JObject, ByRef report As StringBuilder, logicalIdx1Based As Integer) As Boolean
+        Try
+            If para Is Nothing OrElse deletePrefix Is Nothing Then Return False
+
+            Dim kind As String = ""
+            Try : kind = CStr(deletePrefix("kind")) : Catch : kind = "" : End Try
+
+            Dim charCount As Integer = 0
+            Try : charCount = CInt(deletePrefix("charCount")) : Catch : charCount = 0 : End Try
+
+            Dim expectedText As String = ""
+            Try : expectedText = CStr(deletePrefix("text")) : Catch : expectedText = "" : End Try
+
+            If charCount <= 0 Then Return False
+            If String.Equals(kind, "None", StringComparison.OrdinalIgnoreCase) Then Return False
+
+            Dim pr As Word.Range = para.Range.Duplicate
+
+            ' Exclude paragraph mark to avoid deleting it
+            If pr.End > pr.Start Then
+                Try
+                    Dim lastChar As String = pr.Duplicate.Characters.Last.Text
+                    If lastChar = vbCr OrElse lastChar = vbLf Then
+                        pr.End -= 1
+                    End If
+                Catch
+                End Try
+            End If
+
+            If pr.End <= pr.Start Then Return False
+
+            ' Bound check
+            Dim maxLen As Integer = pr.End - pr.Start
+            If charCount > maxLen Then charCount = maxLen
+            If charCount <= 0 Then Return False
+
+            Dim prefixRng As Word.Range = para.Range.Document.Range(pr.Start, pr.Start + charCount)
+
+            ' Optional verification by exact text match
+            If Not String.IsNullOrEmpty(expectedText) Then
+                Dim actual As String = prefixRng.Text
+                actual = actual.Replace(ChrW(&HA0), " ") ' NBSP normalize
+                Dim exp As String = expectedText.Replace(ChrW(&HA0), " ")
+
+                If Not String.Equals(actual, exp, StringComparison.Ordinal) Then
+                    report.AppendLine($"Did not delete prefix for paragraph {logicalIdx1Based}: expected '{exp}' but found '{actual}'.")
+                    Return False
+                End If
+            End If
+
+            prefixRng.Delete()
+            Return True
+
+        Catch ex As Exception
+            report.AppendLine($"Error deleting prefix for paragraph {logicalIdx1Based}: {ex.Message}")
+            Return False
+        End Try
+    End Function
+
+
+    ''' <summary>
+    ''' Determines whether a paragraph is part of a numbered list (bullets excluded).
+    ''' </summary>
+    ''' <param name="p">Paragraph to inspect.</param>
+    ''' <returns>True if the paragraph is part of a non-bullet list; otherwise False.</returns>
     Private Function IsNumberedListParagraph(p As Word.Paragraph) As Boolean
         Try
             Dim lf As Word.ListFormat = p.Range.ListFormat
@@ -1631,7 +1383,6 @@ Partial Public Class ThisAddIn
             End If
 
             ' Treat all other list types as numbered.
-            ' (wdListOutlineNumbering / wdListMixedNumbering etc.)
             Return True
         Catch
             Return False
@@ -1640,7 +1391,12 @@ Partial Public Class ThisAddIn
 
 
 
-    ' Returns a short preview for debug output (no paragraph mark/newlines, maxLen chars).
+    ''' <summary>
+    ''' Returns a single-line paragraph text preview (no paragraph marks/newlines), truncated to <paramref name="maxLen"/>.
+    ''' </summary>
+    ''' <param name="p">Paragraph to preview.</param>
+    ''' <param name="maxLen">Maximum number of characters returned.</param>
+    ''' <returns>Preview string.</returns>
     Private Function GetParaPreview(p As Word.Paragraph, Optional maxLen As Integer = 25) As String
         Try
             Dim t As String = p.Range.Text
@@ -1655,8 +1411,12 @@ Partial Public Class ThisAddIn
     End Function
 
 
-    ' Snapshot paragraph-level properties that are commonly disturbed by list operations.
-    ' Intentionally does NOT include "style" because style must remain whatever was applied.
+    ''' <summary>
+    ''' Captures paragraph-level properties that are commonly disturbed by list operations.
+    ''' The style is intentionally excluded.
+    ''' </summary>
+    ''' <param name="p">Paragraph to snapshot.</param>
+    ''' <returns>JSON object containing captured properties.</returns>
     Private Function CaptureParaProps(p As Word.Paragraph) As JObject
         Dim o As New JObject()
 
@@ -1691,6 +1451,11 @@ Partial Public Class ThisAddIn
         Return o
     End Function
 
+    ''' <summary>
+    ''' Restores paragraph properties from a snapshot previously created by <see cref="CaptureParaProps"/>.
+    ''' </summary>
+    ''' <param name="p">Paragraph to restore.</param>
+    ''' <param name="props">Snapshot containing paragraph properties and optional tab stop definitions.</param>
     Private Sub RestoreParaProps(p As Word.Paragraph, props As JObject)
         If props Is Nothing Then Exit Sub
         Try
@@ -1729,9 +1494,15 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-    ' Restarts numbering for a single paragraph by re-applying its current ListTemplate
-    ' with ContinuePreviousList:=False. Preserves paragraph properties (except style) to avoid list ops
-    ' destroying the style/formatting.
+    ''' <summary>
+    ''' Restarts numbering for a single paragraph by re-applying its current list template with
+    ''' <c>ContinuePreviousList:=False</c> and restoring paragraph properties afterwards.
+    ''' </summary>
+    ''' <param name="p">Paragraph whose numbering is restarted.</param>
+    ''' <param name="logicalIndex1Based">1-based paragraph index used in debug output.</param>
+    ''' <param name="restoreProps">
+    ''' Optional baseline properties to restore after list operations; when omitted, a snapshot is captured from <paramref name="p"/>.
+    ''' </param>
     Private Sub RestartNumberingForParagraph(p As Word.Paragraph,
                                         Optional logicalIndex1Based As Integer = -1,
                                         Optional restoreProps As JObject = Nothing)
@@ -1741,7 +1512,7 @@ Partial Public Class ThisAddIn
             Dim beforeStyle As String = ""
             Try : beforeStyle = p.Style.NameLocal : Catch : End Try
 
-            ' CHANGED: if caller provided a baseline (e.g., template baseline), use it.
+            ' If caller provided a baseline (e.g., template baseline), use it; otherwise snapshot current properties.
             Dim propsToRestore As JObject = If(restoreProps, CaptureParaProps(p))
 
             Dim lf As Word.ListFormat = Nothing
@@ -1783,7 +1554,7 @@ Partial Public Class ThisAddIn
             )
             End Try
 
-            ' Restore the intended baseline (template baseline if provided)
+            ' Restore the intended baseline (template baseline if provided).
             RestoreParaProps(p, propsToRestore)
 
             Debug.WriteLine($"[DocStyle] RestartNumbering END   idx={logicalIndex1Based} preview='{preview}' styleBefore='{beforeStyle}' styleAfter='{TryGetStyleName(p)}' sigAfter='{GetListSignature(p)}'")
@@ -1792,7 +1563,11 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
-    ' --- NEW: helper for debug ---
+    ''' <summary>
+    ''' Returns the paragraph style name, or an empty string if unavailable.
+    ''' </summary>
+    ''' <param name="p">Paragraph to inspect.</param>
+    ''' <returns>Style name (<c>NameLocal</c>) or empty string.</returns>
     Private Function TryGetStyleName(p As Word.Paragraph) As String
         Try
             Return p.Style.NameLocal
@@ -1802,6 +1577,12 @@ Partial Public Class ThisAddIn
     End Function
 
 
+    ''' <summary>
+    ''' Determines whether a paragraph is considered "heading-like" based on its outline level and the configured maximum.
+    ''' </summary>
+    ''' <param name="p">Paragraph to inspect.</param>
+    ''' <param name="headingOutlineLevelMax">Maximum outline level treated as heading-like (0 disables).</param>
+    ''' <returns>True if the paragraph outline level is within the configured range; otherwise False.</returns>
     Private Function IsHeadingLikeParagraph(p As Word.Paragraph, headingOutlineLevelMax As Integer) As Boolean
         If headingOutlineLevelMax <= 0 Then Return False
         If headingOutlineLevelMax > 9 Then headingOutlineLevelMax = 9
@@ -1828,6 +1609,13 @@ Partial Public Class ThisAddIn
     End Function
 
 
+    ''' <summary>
+    ''' Determines an effective list nesting level for a paragraph, preferring the Word list level when available
+    ''' and otherwise inferring from paragraph indentation relative to <paramref name="baseIndent"/>.
+    ''' </summary>
+    ''' <param name="p">Paragraph to inspect.</param>
+    ''' <param name="baseIndent">Base indent (points) used as the reference for level 1.</param>
+    ''' <returns>Effective nesting level in the range 1..9.</returns>
     Private Function GuessNestingLevel(p As Word.Paragraph, baseIndent As Single) As Integer
         Try
             Dim lf As Word.ListFormat = p.Range.ListFormat
@@ -1852,6 +1640,16 @@ Partial Public Class ThisAddIn
     End Function
 
 
+    ''' <summary>
+    ''' Applies numbering restarts according to the configured mode and returns the number of restarts applied.
+    ''' </summary>
+    ''' <param name="doc">Active document being modified.</param>
+    ''' <param name="paragraphList">Paragraphs processed in display order.</param>
+    ''' <param name="paragraphHasList">Per-paragraph indicator whether the paragraph has list formatting.</param>
+    ''' <param name="settings">DocStyle runtime settings (controls restart mode and heading detection).</param>
+    ''' <param name="llmRestartParas">Paragraphs marked for restart by the LLM (LLM-assisted mode only).</param>
+    ''' <param name="templateBaselineByIndex">Baseline paragraph property snapshots captured during style application.</param>
+    ''' <returns>Number of paragraphs for which numbering restart was applied.</returns>
     Private Function ApplyNumberingRestarts(doc As Word.Document,
                                        paragraphList As List(Of Word.Paragraph),
                                        paragraphHasList As List(Of Boolean),
@@ -1972,7 +1770,7 @@ Partial Public Class ThisAddIn
                 RestartNumberingForParagraph(p, idx + 1, baseline)
                 restartCount += 1
 
-                ' REPAIR: Word can perturb sibling paragraphs in the same list/template after a restart.
+                ' Word can perturb sibling paragraphs in the same list/template after a restart.
                 ' Apply baseline to paragraphs that share the same ListTemplate instance as the restarted paragraph.
                 Try
                     Dim restartedTplId As Integer = GetListTemplateId(p)
@@ -2003,6 +1801,11 @@ Partial Public Class ThisAddIn
         Return restartCount
     End Function
 
+    ''' <summary>
+    ''' Determines whether a paragraph is part of a bullet list.
+    ''' </summary>
+    ''' <param name="p">Paragraph to inspect.</param>
+    ''' <returns>True if the paragraph list type is a bullet list; otherwise False.</returns>
     Private Function IsBulletListParagraph(p As Word.Paragraph) As Boolean
         Try
             Dim lf = p.Range.ListFormat
@@ -2013,19 +1816,12 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-    ' Finds the previous paragraph index that has non-empty text (ignoring pure paragraph marks).
-    Private Function FindPrevMeaningfulIndex(paragraphList As List(Of Word.Paragraph), startIdx As Integer) As Integer
-        For j As Integer = startIdx - 1 To 0 Step -1
-            Try
-                Dim t = paragraphList(j).Range.Text
-                t = t.TrimEnd(vbCr, vbLf, ChrW(13), ChrW(10)).Trim()
-                If Not String.IsNullOrWhiteSpace(t) Then Return j
-            Catch
-            End Try
-        Next
-        Return -1
-    End Function
 
+    ''' <summary>
+    ''' Builds a debug signature describing a paragraph's list type, list-template identity, list level, and list string.
+    ''' </summary>
+    ''' <param name="p">Paragraph to inspect.</param>
+    ''' <returns>Debug signature string.</returns>
     Private Function GetListSignature(p As Word.Paragraph) As String
         Try
             Dim lf = p.Range.ListFormat
@@ -2050,16 +1846,11 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-    ' --- NEW: helper to detect "has any list" quickly (bullets OR numbering) ---
-    Private Function HasAnyList(p As Word.Paragraph) As Boolean
-        Try
-            Return p.Range.ListFormat IsNot Nothing AndAlso p.Range.ListFormat.ListType <> WdListType.wdListNoNumbering
-        Catch
-            Return False
-        End Try
-    End Function
-
-    ' --- NEW: helper for template identity (best-effort) ---
+    ''' <summary>
+    ''' Returns an in-process identifier for a paragraph's list template.
+    ''' </summary>
+    ''' <param name="p">Paragraph to inspect.</param>
+    ''' <returns>Runtime hash code of the list template instance, or 0 if unavailable.</returns>
     Private Function GetListTemplateId(p As Word.Paragraph) As Integer
         Try
             Dim tpl = p.Range.ListFormat.ListTemplate
@@ -2071,311 +1862,14 @@ Partial Public Class ThisAddIn
     End Function
 
 
-    ''' <summary>
-    ''' Restarts numbering for a range of paragraphs.
-    ''' Creates a new list starting at the first paragraph and links all subsequent ones to it.
-    ''' </summary>
-    Private Sub RestartNumberingForRange(paragraphList As List(Of Word.Paragraph),
-                                          startIdx As Integer, endIdx As Integer)
-        Try
-            Dim startPara As Word.Paragraph = paragraphList(startIdx)
-
-            ' Save formatting for all paragraphs in range
-            Dim savedFormatting As New List(Of (
-                alignment As WdParagraphAlignment,
-                leftIndent As Single,
-                rightIndent As Single,
-                firstLineIndent As Single,
-                spaceBefore As Single,
-                spaceAfter As Single,
-                lineSpacing As Single,
-                lineSpacingRule As WdLineSpacing,
-                listLevel As Integer))()
-
-            For i As Integer = startIdx To endIdx
-                Try
-                    Dim para As Word.Paragraph = paragraphList(i)
-                    Dim lvl As Integer = 1
-                    Try : lvl = para.Range.ListFormat.ListLevelNumber : Catch : End Try
-
-                    savedFormatting.Add((
-                        para.Alignment,
-                        para.LeftIndent,
-                        para.RightIndent,
-                        para.FirstLineIndent,
-                        para.SpaceBefore,
-                        para.SpaceAfter,
-                        para.LineSpacing,
-                        para.LineSpacingRule,
-                        lvl))
-                Catch
-                    savedFormatting.Add((WdParagraphAlignment.wdAlignParagraphLeft, 0, 0, 0, 0, 0, 12, WdLineSpacing.wdLineSpaceSingle, 1))
-                End Try
-            Next
-
-            ' Build a range spanning all paragraphs that should be in this list
-            Dim rangeStart As Integer = startPara.Range.Start
-            Dim rangeEnd As Integer = paragraphList(endIdx).Range.End
-            Dim combinedRange As Word.Range = startPara.Range.Document.Range(rangeStart, rangeEnd)
-
-            ' Remove existing numbering from all paragraphs in range
-            combinedRange.ListFormat.RemoveNumbers()
-
-            ' Apply new numbering to the combined range - this creates a single new list
-            combinedRange.ListFormat.ApplyNumberDefault()
-
-            ' Restore formatting and list levels
-            For i As Integer = startIdx To endIdx
-                Try
-                    Dim para As Word.Paragraph = paragraphList(i)
-                    Dim saved = savedFormatting(i - startIdx)
-
-                    ' Restore paragraph formatting
-                    para.Alignment = saved.alignment
-                    para.LeftIndent = saved.leftIndent
-                    para.RightIndent = saved.rightIndent
-                    para.FirstLineIndent = saved.firstLineIndent
-                    para.SpaceBefore = saved.spaceBefore
-                    para.SpaceAfter = saved.spaceAfter
-                    para.LineSpacing = saved.lineSpacing
-                    para.LineSpacingRule = saved.lineSpacingRule
-
-                    ' Restore list level
-                    Dim currentLevel As Integer = 1
-                    Try : currentLevel = para.Range.ListFormat.ListLevelNumber : Catch : End Try
-
-                    If currentLevel < saved.listLevel Then
-                        For lvl As Integer = currentLevel + 1 To saved.listLevel
-                            para.Range.ListFormat.ListIndent()
-                        Next
-                    ElseIf currentLevel > saved.listLevel Then
-                        For lvl As Integer = currentLevel - 1 To saved.listLevel Step -1
-                            para.Range.ListFormat.ListOutdent()
-                        Next
-                    End If
-                Catch ex As Exception
-                    Debug.WriteLine($"Error restoring formatting for paragraph {i}: {ex.Message}")
-                End Try
-            Next
-
-            Debug.WriteLine($"Restarted numbering for paragraphs {startIdx + 1} to {endIdx + 1}")
-
-        Catch ex As Exception
-            Debug.WriteLine($"Error in RestartNumberingForRange: {ex.Message}")
-        End Try
-    End Sub
-
-
-
 
 
     ''' <summary>
-    ''' Applies styles using detailed mode (paragraph by paragraph with full formatting).
+    ''' Creates a minimal style template JSON string for LLM consumption.
+    ''' Only includes <c>userStyleName</c>, <c>whenToApply</c>, and an optional <c>hasList</c> hint.
     ''' </summary>
-    Private Async Function ApplyStylesDetailedMode(doc As Word.Document, targetRange As Word.Range,
-                                                    templateJson As String, templateObj As JObject,
-                                                    settings As DocStyleSettings,
-                                                    useSecondAPI As Boolean) As Task(Of String)
-        Dim report As New StringBuilder()
-        report.AppendLine("=== Style Template Application Report (Detailed Mode) ===")
-        report.AppendLine($"Date: {DateTime.Now:yyyy-MM-dd HH:mm:ss}")
-        report.AppendLine()
-
-        Try
-            ' Build user style name to wdStyle name mapping
-            Dim userStyleToWdStyle As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
-            If templateObj("userStyles") IsNot Nothing Then
-                For Each userStyle As JObject In CType(templateObj("userStyles"), JArray)
-                    Dim userStyleName As String = If(userStyle("userStyleName") IsNot Nothing, userStyle("userStyleName").ToString(), "")
-                    Dim wdStyleName As String = If(userStyle("wdStyleName") IsNot Nothing, userStyle("wdStyleName").ToString(), "Normal")
-                    If Not String.IsNullOrWhiteSpace(userStyleName) Then
-                        userStyleToWdStyle(userStyleName) = wdStyleName
-                    End If
-                Next
-            End If
-
-            ' Collect paragraphs to process
-            Dim paragraphList As New List(Of Word.Paragraph)()
-            For Each para As Word.Paragraph In targetRange.Paragraphs
-                Dim text As String = para.Range.Text.TrimEnd(vbCr, vbLf, ChrW(13), ChrW(10))
-                If String.IsNullOrWhiteSpace(text) Then Continue For
-
-                If Not settings.ProcessTables Then
-                    Try
-                        If para.Range.Cells.Count > 0 Then Continue For
-                    Catch
-                    End Try
-                End If
-
-                paragraphList.Add(para)
-            Next
-
-            If paragraphList.Count = 0 Then
-                report.AppendLine("No paragraphs to process.")
-                Return report.ToString()
-            End If
-
-            ' Build full document text for context
-            Dim fullDocText As String = targetRange.Text
-
-            ' Process paragraphs
-            Dim appliedCount As Integer = 0
-            Dim skippedCount As Integer = 0
-
-            ShowProgressBarInSeparateThread($"{AN} - Applying Styles", "Analyzing paragraphs...")
-            ProgressBarModule.CancelOperation = False
-            GlobalProgressMax = paragraphList.Count
-            GlobalProgressValue = 0
-
-            Try
-                For i As Integer = 0 To paragraphList.Count - 1
-                    If ProgressBarModule.CancelOperation Then
-                        report.AppendLine("Operation cancelled by user.")
-                        Exit For
-                    End If
-
-                    GlobalProgressValue = i + 1
-                    GlobalProgressLabel = $"Processing paragraph {i + 1} of {paragraphList.Count}"
-
-                    Dim para As Word.Paragraph = paragraphList(i)
-                    Dim paraText As String = para.Range.Text.TrimEnd(vbCr, vbLf, ChrW(13), ChrW(10))
-                    Dim paraPreview As String = GetParaPreview(para, ReportParaPreviewLen)
-
-                    ' Get current formatting as JSON (used for LLM context)
-                    Dim currentProps As JObject = ExtractParagraphFormattingForLLM(para, i + 1)
-
-                    ' Capture original list formatting before any changes
-                    Dim originalHasList As Boolean = False
-                    Dim originalListType As WdListType = WdListType.wdListNoNumbering
-                    Dim originalListLevel As Integer = 1
-                    Try
-                        originalListType = para.Range.ListFormat.ListType
-                        originalHasList = (originalListType <> WdListType.wdListNoNumbering)
-                        If originalHasList Then
-                            originalListLevel = para.Range.ListFormat.ListLevelNumber
-                        End If
-                    Catch
-                    End Try
-
-                    ' Build prompt
-                    Dim userPrompt As New StringBuilder()
-                    userPrompt.AppendLine("<STYLETEMPLATE>")
-                    userPrompt.AppendLine(templateJson)
-                    userPrompt.AppendLine("</STYLETEMPLATE>")
-                    userPrompt.AppendLine()
-                    userPrompt.AppendLine("<CURRENTPARA>")
-                    userPrompt.AppendLine(paraText)
-                    userPrompt.AppendLine("</CURRENTPARA>")
-                    userPrompt.AppendLine()
-                    userPrompt.AppendLine("<CURRENTPROPS>")
-                    userPrompt.AppendLine(currentProps.ToString(Formatting.None))
-                    userPrompt.AppendLine("</CURRENTPROPS>")
-                    userPrompt.AppendLine()
-                    userPrompt.AppendLine("<DOCUMENT>")
-                    userPrompt.AppendLine(fullDocText)
-                    userPrompt.AppendLine("</DOCUMENT>")
-
-                    If Not String.IsNullOrWhiteSpace(settings.DocumentContext) Then
-                        userPrompt.AppendLine()
-                        userPrompt.AppendLine("<CONTEXT>")
-                        userPrompt.AppendLine(settings.DocumentContext)
-                        userPrompt.AppendLine("</CONTEXT>")
-                    End If
-
-                    ' Call LLM
-                    Dim response As String = Await LLM(SP_ApplyDocStyle, userPrompt.ToString(), "", "", 0, useSecondAPI)
-
-                    ' Parse response
-                    Dim formatSpec As JObject
-                    Try
-                        response = ExtractJsonFromResponse(response)
-                        formatSpec = JObject.Parse(response)
-                    Catch ex As Exception
-                        report.AppendLine($"Paragraph {i + 1}: Error parsing LLM response - {ex.Message} | text='{paraPreview}'")
-                        Continue For
-                    End Try
-
-                    Dim userStyleName As String = If(formatSpec("userStyleName") IsNot Nothing, CStr(formatSpec("userStyleName")), "")
-                    Dim confidence As Integer = If(formatSpec("confidence") IsNot Nothing, CInt(formatSpec("confidence")), 100)
-                    Dim preserveListFormatting As Boolean = If(formatSpec("preserveListFormatting") IsNot Nothing, CBool(formatSpec("preserveListFormatting")), False)
-                    Dim reasoning As String = If(formatSpec("reasoning") IsNot Nothing, CStr(formatSpec("reasoning")), "")
-
-                    ' Resolve wdStyle name from user style name (do this early so we can report it even when skipped)
-                    Dim wdStyleName As String = "Normal"
-                    If userStyleToWdStyle.ContainsKey(userStyleName) Then
-                        wdStyleName = userStyleToWdStyle(userStyleName)
-                    ElseIf Not String.IsNullOrWhiteSpace(userStyleName) Then
-                        wdStyleName = userStyleName
-                    End If
-
-                    ' Check confidence threshold
-                    If settings.UseConfidenceThreshold AndAlso confidence < settings.ConfidenceThreshold Then
-                        skippedCount += 1
-                        report.AppendLine($"Paragraph {i + 1}: Skipped (confidence {confidence}% below threshold) | suggested='{userStyleName}' wdStyle='{wdStyleName}' | reasoning='{reasoning}' | text='{paraPreview}'")
-                        Continue For
-                    End If
-
-                    ' Preview mode
-                    If settings.PreviewMode Then
-                        para.Range.Select()
-                        Dim preview As Integer = ShowCustomYesNoBox(
-                            $"Apply user style '{userStyleName}' (Word style: '{wdStyleName}') to this paragraph?{vbCrLf}{vbCrLf}Confidence: {confidence}%{vbCrLf}Reasoning: {reasoning}{vbCrLf}Preserve list: {preserveListFormatting}{vbCrLf}{vbCrLf}Text: {paraText.Substring(0, Math.Min(100, paraText.Length))}...",
-                            "Yes", "Skip", $"{AN} - Preview")
-
-                        If preview = 0 Then
-                            ' User closed dialog without choosing - ask what to do
-                            Dim continueChoice As Integer = ShowCustomYesNoBox(
-                                "You closed the preview dialog without making a selection." & vbCrLf & vbCrLf &
-                                "Do you want to continue applying styles without individual preview, or abort the operation?",
-                                "Continue without preview", "Abort", $"{AN} - Continue?")
-                            If continueChoice = 1 Then
-                                ' Continue without preview - disable preview mode for remaining paragraphs
-                                settings.PreviewMode = False
-                                ' Fall through to apply style to current paragraph
-                            Else
-                                ' Abort the operation (user clicked Abort or closed dialog)
-                                report.AppendLine("Operation aborted by user.")
-                                Exit For
-                            End If
-                        ElseIf preview <> 1 Then
-                            ' User clicked Skip
-                            skippedCount += 1
-                            report.AppendLine($"Paragraph {i + 1}: Skipped (user skipped in preview) | suggested='{userStyleName}' wdStyle='{wdStyleName}' | reasoning='{reasoning}' | text='{paraPreview}'")
-                            Continue For
-                        End If
-                    End If
-
-                    ' Apply formatting
-                    Try
-                        ApplyFormattingToParagraphEx(doc, para, wdStyleName, formatSpec("formatting"),
-                                                      preserveListFormatting OrElse originalHasList,
-                                                      originalListType, originalListLevel)
-                        appliedCount += 1
-                    Catch ex As Exception
-                        report.AppendLine($"Paragraph {i + 1}: Error applying formatting - {ex.Message} | suggested='{userStyleName}' wdStyle='{wdStyleName}' | text='{paraPreview}'")
-                    End Try
-                Next
-            Finally
-                ProgressBarModule.CancelOperation = True
-            End Try
-
-            report.AppendLine()
-            report.AppendLine($"Total paragraphs: {paragraphList.Count}")
-            report.AppendLine($"Formatting applied: {appliedCount}")
-            report.AppendLine($"Skipped: {skippedCount}")
-
-        Catch ex As Exception
-            report.AppendLine($"Error in detailed mode: {ex.Message}")
-        End Try
-
-        Return report.ToString()
-    End Function
-
-
-    ''' <summary>
-    ''' Creates a minimal style template for LLM consumption.
-    ''' Only includes userStyleName and whenToApply - no formatting details.
-    ''' </summary>
+    ''' <param name="templateObj">Full template JSON object containing <c>templateName</c> and <c>userStyles</c>.</param>
+    ''' <returns>Serialized minimal JSON string (no indentation).</returns>
     Private Function CreateMinimalTemplateForLLM(templateObj As JObject) As String
         Dim minimal As New JObject()
         minimal("templateName") = templateObj("templateName")
@@ -2386,11 +1880,13 @@ Partial Public Class ThisAddIn
                 Dim minStyle As New JObject()
                 minStyle("userStyleName") = userStyle("userStyleName")
                 minStyle("whenToApply") = userStyle("whenToApply")
-                ' Optionally include hasList hint so LLM knows if style expects list
+
+                ' Includes a list presence hint when available in the template.
                 If userStyle("listFormatting") IsNot Nothing AndAlso
                    userStyle("listFormatting")("hasList") IsNot Nothing Then
                     minStyle("hasList") = userStyle("listFormatting")("hasList")
                 End If
+
                 minimalStyles.Add(minStyle)
             Next
         End If
@@ -2399,78 +1895,13 @@ Partial Public Class ThisAddIn
         Return minimal.ToString(Formatting.None)
     End Function
 
-    ''' <summary>
-    ''' Extracts paragraph formatting in a compact format optimized for LLM consumption during Step 2.
-    ''' Focuses on properties that help identify paragraph purpose: lists, indentation, outline level.
-    ''' </summary>
-    Private Function ExtractParagraphFormattingForLLM(para As Word.Paragraph, index As Integer) As JObject
-        Dim result As New JObject()
-        result("index") = index
-
-        ' List formatting - critical for understanding document structure
-        Try
-            Dim listFormat As Word.ListFormat = para.Range.ListFormat
-            If listFormat.ListType <> WdListType.wdListNoNumbering Then
-                Dim lf As New JObject()
-                lf("hasList") = True
-                lf("listType") = listFormat.ListType.ToString().Replace("wdList", "")
-                lf("listLevel") = listFormat.ListLevelNumber
-                lf("listString") = listFormat.ListString
-                result("listFormatting") = lf
-            Else
-                result("listFormatting") = New JObject From {{"hasList", False}}
-            End If
-        Catch
-            result("listFormatting") = New JObject From {{"hasList", False}}
-        End Try
-
-        ' Key paragraph formatting for structure identification
-        Try
-            Dim pf As New JObject()
-            pf("leftIndent") = Math.Round(para.LeftIndent, 1)
-            pf("firstLineIndent") = Math.Round(para.FirstLineIndent, 1)
-            pf("outlineLevel") = para.OutlineLevel.ToString().Replace("wdOutlineLevel", "")
-            pf("alignment") = para.Alignment.ToString().Replace("wdAlignParagraph", "")
-            result("paragraphFormatting") = pf
-        Catch
-        End Try
-
-        ' Basic font info for heading detection
-        Try
-            Dim font As Word.Font = para.Range.Font
-            Dim ff As New JObject()
-            If font.Bold = -1 Then ff("bold") = True
-            If font.Italic = -1 Then ff("italic") = True
-            If font.Size <> CSng(WdConstants.wdUndefined) AndAlso font.Size > 12 Then
-                ff("fontSize") = font.Size
-            End If
-            If ff.Count > 0 Then
-                result("fontFormatting") = ff
-            End If
-        Catch
-        End Try
-
-        ' Style info
-        Try
-            result("currentWdStyle") = para.Style.NameLocal
-        Catch
-        End Try
-
-        ' Table context
-        Try
-            If para.Range.Cells.Count > 0 Then
-                result("isInTable") = True
-            End If
-        Catch
-        End Try
-
-        Return result
-    End Function
-
 
     ''' <summary>
-    ''' Applies all formatting to a newly created style.
+    ''' Applies all formatting sections from a style definition JSON object to a newly created Word style.
     ''' </summary>
+    ''' <param name="doc">Active document that owns the created style.</param>
+    ''' <param name="style">Style to update.</param>
+    ''' <param name="styleDef">Style definition JSON object.</param>
     Private Sub ApplyAllFormattingToNewStyle(doc As Word.Document, style As Word.Style, styleDef As JObject)
         ' Apply paragraph formatting
         If styleDef("paragraphFormat") IsNot Nothing Then
@@ -2494,8 +1925,11 @@ Partial Public Class ThisAddIn
     End Sub
 
     ''' <summary>
-    ''' Compares and applies paragraph format only if different. Returns True if changes were made.
+    ''' Compares a style's paragraph formatting to a desired JSON definition and applies differences.
     ''' </summary>
+    ''' <param name="style">Style to update.</param>
+    ''' <param name="pf">Desired paragraph-format JSON token.</param>
+    ''' <returns>True if any changes were applied; otherwise False.</returns>
     Private Function ApplyParagraphFormatIfDifferent(style As Word.Style, pf As JToken) As Boolean
         Dim changesMade As Boolean = False
         Dim paraFormat As Word.ParagraphFormat = style.ParagraphFormat
@@ -2613,8 +2047,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Applies paragraph format to style without comparison (for new styles).
+    ''' Applies paragraph formatting from a JSON definition to a style (no comparison).
     ''' </summary>
+    ''' <param name="style">Style to update.</param>
+    ''' <param name="pf">Desired paragraph-format JSON token.</param>
     Private Sub ApplyParagraphFormatToStyle(style As Word.Style, pf As JToken)
         Dim paraFormat As Word.ParagraphFormat = style.ParagraphFormat
 
@@ -2638,8 +2074,11 @@ Partial Public Class ThisAddIn
     End Sub
 
     ''' <summary>
-    ''' Compares and applies tab stops only if different. Returns True if changes were made.
+    ''' Compares a style's tab stops to a desired JSON definition and applies differences.
     ''' </summary>
+    ''' <param name="style">Style to update.</param>
+    ''' <param name="tabsDef">Desired tab-stop JSON array.</param>
+    ''' <returns>True if any changes were applied; otherwise False.</returns>
     Private Function ApplyTabStopsIfDifferent(style As Word.Style, tabsDef As JArray) As Boolean
         Try
             ' Build current tab stops signature
@@ -2674,8 +2113,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Applies tab stops to style without comparison.
+    ''' Applies tab stops from a JSON definition to a style (no comparison).
     ''' </summary>
+    ''' <param name="style">Style to update.</param>
+    ''' <param name="tabsDef">Desired tab-stop JSON array.</param>
     Private Sub ApplyTabStopsToStyle(style As Word.Style, tabsDef As JArray)
         Try
             style.ParagraphFormat.TabStops.ClearAll()
@@ -2691,8 +2132,11 @@ Partial Public Class ThisAddIn
     End Sub
 
     ''' <summary>
-    ''' Compares and applies font format only if different. Returns True if changes were made.
+    ''' Compares a style's font formatting to a desired JSON definition and applies differences.
     ''' </summary>
+    ''' <param name="style">Style to update.</param>
+    ''' <param name="ff">Desired font-format JSON token.</param>
+    ''' <returns>True if any changes were applied; otherwise False.</returns>
     Private Function ApplyFontFormatIfDifferent(style As Word.Style, ff As JToken) As Boolean
         Dim changesMade As Boolean = False
         Dim font As Word.Font = style.Font
@@ -2846,8 +2290,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Applies font format to style without comparison.
+    ''' Applies font formatting from a JSON definition to a style (no comparison).
     ''' </summary>
+    ''' <param name="style">Style to update.</param>
+    ''' <param name="ff">Desired font-format JSON token.</param>
     Private Sub ApplyFontFormatToStyle(style As Word.Style, ff As JToken)
         Dim font As Word.Font = style.Font
 
@@ -2878,83 +2324,17 @@ Partial Public Class ThisAddIn
 
 
 
-    ''' <summary>
-    ''' Compares and applies list format. For built-in heading styles, we ARE more aggressive
-    ''' because the user explicitly wants to apply a template's numbering scheme.
-    ''' Returns True if changes were made.
-    ''' </summary>
-    Private Function ApplyListFormatIfDifferent(doc As Word.Document, style As Word.Style, lfDef As JToken, isBuiltIn As Boolean) As Boolean
-        If lfDef Is Nothing Then Return False
-
-        Dim templateWantsList As Boolean = False
-        If lfDef("hasListTemplate") IsNot Nothing Then
-            templateWantsList = CBool(lfDef("hasListTemplate"))
-        End If
-
-        ' Get current list template info
-        Dim currentTpl As Word.ListTemplate = Nothing
-        Dim styleHasListTemplate As Boolean = False
-        Try
-            currentTpl = style.ListTemplate
-            styleHasListTemplate = (currentTpl IsNot Nothing)
-        Catch
-            styleHasListTemplate = False
-        End Try
-
-        ' Case 1: Template says no list
-        If Not templateWantsList Then
-            If styleHasListTemplate Then
-                ' Remove list from style if template says it shouldn't have one
-                ' For headings, this is intentional - user wants to remove numbering
-                Try
-                    style.LinkToListTemplate(Nothing)
-                    Debug.WriteLine($"[DocStyle] Removed list template from style '{style.NameLocal}'")
-                    Return True
-                Catch ex As Exception
-                    Debug.WriteLine($"[DocStyle] Could not remove list template from '{style.NameLocal}': {ex.Message}")
-                    Return False
-                End Try
-            End If
-            Return False
-        End If
-
-        ' Case 2: Template wants a list - check if we need to update
-        If styleHasListTemplate Then
-            ' Compare fingerprints to see if the list template is actually different
-            Dim currentFingerprint As String = ComputeListTemplateFingerprint(currentTpl)
-            Dim desiredFingerprint As String = If(lfDef("templateFingerprint") IsNot Nothing,
-                                               CStr(lfDef("templateFingerprint")), "")
-
-            If Not String.IsNullOrEmpty(desiredFingerprint) AndAlso
-           currentFingerprint = desiredFingerprint Then
-                ' Same template - no changes needed
-                Debug.WriteLine($"[DocStyle] List template unchanged for style '{style.NameLocal}' (fingerprints match)")
-                Return False
-            End If
-
-            ' Different template - we need to replace it
-            ' For heading styles especially, this is critical for numbered headings
-            Debug.WriteLine($"[DocStyle] Replacing list template for style '{style.NameLocal}' (fingerprint mismatch)")
-            Debug.WriteLine($"[DocStyle]   Current: {currentFingerprint}")
-            Debug.WriteLine($"[DocStyle]   Desired: {desiredFingerprint}")
-        End If
-
-        ' Apply the new list template
-        ApplyListFormatToStyle(doc, style, lfDef)
-        Return True
-    End Function
 
     ''' <summary>
-    ''' Applies Word style definitions from template to the document.
-    ''' For heading styles and styles with list templates, we are MORE aggressive
-    ''' to ensure numbered headings are properly applied from the JSON template.
-    ''' Shows a confirmation dialog if all styles already exist to prevent corruption.
+    ''' Applies Word style definitions from a template to the document by creating missing styles and updating existing ones.
     ''' </summary>
+    ''' <param name="doc">Active document whose <c>Styles</c> collection is updated.</param>
+    ''' <param name="wdStyleDefinitions">JSON object containing style definitions keyed by Word style name.</param>
     Private Sub ApplyWdStyleDefinitionsToDocument(doc As Word.Document, wdStyleDefinitions As JObject)
-        ' Clear shared template cache at start
+        ' Clear shared template cache at start.
         _sharedListTemplates.Clear()
 
-        ' First pass: Check which styles already exist
+        ' First pass: Check which styles already exist.
         Dim allStylesExist As Boolean = True
         Dim existingStyles As New List(Of String)()
         Dim missingStyles As New List(Of String)()
@@ -2970,7 +2350,7 @@ Partial Public Class ThisAddIn
             End Try
         Next
 
-        ' If all styles exist, ask user for confirmation before updating
+        ' If all styles exist, ask user for confirmation before updating.
         If allStylesExist AndAlso existingStyles.Count > 0 Then
             Dim confirmResult As Integer = ShowCustomYesNoBox(
             $"All {existingStyles.Count} Word styles from the template already exist in this document." & vbCrLf & vbCrLf &
@@ -2989,7 +2369,7 @@ Partial Public Class ThisAddIn
         Dim stylesCreatedOrUpdated As New List(Of String)()
         Dim stylesSkipped As New List(Of String)()
 
-        ' Sort styles by linked level so level 1 styles (which create the template) come first
+        ' Sort styles by linked level so level 1 styles (which create the template) come first.
         Dim sortedProps = wdStyleDefinitions.Properties().OrderBy(Function(p)
                                                                       Try
                                                                           Dim def = CType(p.Value, JObject)
@@ -3011,7 +2391,7 @@ Partial Public Class ThisAddIn
                 Dim styleExists As Boolean = False
                 Dim isBuiltIn As Boolean = False
 
-                ' Check if style exists
+                ' Check if style exists.
                 Try
                     style = doc.Styles(styleName)
                     styleExists = True
@@ -3020,7 +2400,7 @@ Partial Public Class ThisAddIn
                     styleExists = False
                 End Try
 
-                ' Detect if this is a heading style (built-in or custom heading)
+                ' Detect heading style names in common UI languages.
                 Dim isHeadingStyle As Boolean = False
                 If Not String.IsNullOrEmpty(styleName) Then
                     isHeadingStyle = styleName.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) OrElse
@@ -3031,23 +2411,23 @@ Partial Public Class ThisAddIn
                                  Regex.IsMatch(styleName, "^(Heading|Überschrift|Titre|Título|Titolo)\s*\d", RegexOptions.IgnoreCase)
                 End If
 
-                ' Create style if it doesn't exist
+                ' Create style if it doesn't exist.
                 If Not styleExists Then
                     Try
                         style = doc.Styles.Add(styleName, WdStyleType.wdStyleTypeParagraph)
                         Debug.WriteLine($"[DocStyle] Created new wdStyle: {styleName}")
 
-                        ' For NEW styles, apply all formatting including list
+                        ' For newly created styles, apply all formatting including list formatting.
                         ApplyAllFormattingToNewStyle(doc, style, styleDef)
                         stylesCreatedOrUpdated.Add($"{styleName} (created)")
 
-                        ' Make style visible in Quick Styles gallery
+                        ' Make style visible in Quick Styles gallery.
                         Try
                             style.QuickStyle = True
                         Catch
                         End Try
 
-                        Continue For ' Skip the rest - we're done with this new style
+                        Continue For ' Skip the rest - this style has been created and initialized.
                     Catch ex As Exception
                         Debug.WriteLine($"[DocStyle] Could not create wdStyle '{styleName}': {ex.Message}")
                         Continue For
@@ -3056,25 +2436,25 @@ Partial Public Class ThisAddIn
 
                 If style Is Nothing Then Continue For
 
-                ' For EXISTING styles: update formatting
+                ' For existing styles: update formatting.
                 Dim changesMade As Boolean = False
 
-                ' Check and apply paragraph formatting differences
+                ' Check and apply paragraph formatting differences.
                 If styleDef("paragraphFormat") IsNot Nothing Then
                     changesMade = ApplyParagraphFormatIfDifferent(style, styleDef("paragraphFormat")) OrElse changesMade
                 End If
 
-                ' Check and apply tab stops differences
+                ' Check and apply tab stops differences.
                 If styleDef("tabStops") IsNot Nothing Then
                     changesMade = ApplyTabStopsIfDifferent(style, CType(styleDef("tabStops"), JArray)) OrElse changesMade
                 End If
 
-                ' Check and apply font formatting differences
+                ' Check and apply font formatting differences.
                 If styleDef("fontFormat") IsNot Nothing Then
                     changesMade = ApplyFontFormatIfDifferent(style, styleDef("fontFormat")) OrElse changesMade
                 End If
 
-                ' Handle list formatting - BE AGGRESSIVE for heading styles
+                ' Handle list formatting.
                 If styleDef("listFormat") IsNot Nothing Then
                     Dim lfDef As JToken = styleDef("listFormat")
                     Dim templateWantsList As Boolean = False
@@ -3092,16 +2472,13 @@ Partial Public Class ThisAddIn
                     End Try
 
                     If isHeadingStyle Then
-                        ' HEADING STYLES: Always apply list format from template
-                        ' This is critical for numbered headings (e.g., "1. Heading", "1.1 Subheading")
+                        ' Heading styles: apply or remove list template to match the template definition.
                         Debug.WriteLine($"[DocStyle] Processing heading style '{styleName}' (hasTemplate={styleHasListTemplate}, templateWantsList={templateWantsList})")
 
                         If templateWantsList Then
-                            ' Template wants a list - check if we need to replace
                             Dim needsUpdate As Boolean = True
 
                             If styleHasListTemplate Then
-                                ' Compare fingerprints
                                 Dim currentFingerprint As String = ComputeListTemplateFingerprint(currentTpl)
                                 Dim desiredFingerprint As String = If(lfDef("templateFingerprint") IsNot Nothing,
                                                                    CStr(lfDef("templateFingerprint")), "")
@@ -3119,14 +2496,12 @@ Partial Public Class ThisAddIn
                             End If
 
                             If needsUpdate Then
-                                ' Apply new list template
                                 ApplyListFormatToStyle(doc, style, lfDef)
                                 changesMade = True
                                 Debug.WriteLine($"[DocStyle] Applied list template to heading style '{styleName}'")
                             End If
 
                         ElseIf styleHasListTemplate Then
-                            ' Template says NO list, but style has one - remove it
                             Try
                                 style.LinkToListTemplate(Nothing)
                                 changesMade = True
@@ -3137,10 +2512,9 @@ Partial Public Class ThisAddIn
                         End If
 
                     Else
-                        ' NON-HEADING STYLES: Be more conservative but still allow updates
+                        ' Non-heading styles: update list template only when it differs from the template definition.
                         If templateWantsList Then
                             If styleHasListTemplate Then
-                                ' Compare fingerprints - only update if different
                                 Dim currentFingerprint As String = ComputeListTemplateFingerprint(currentTpl)
                                 Dim desiredFingerprint As String = If(lfDef("templateFingerprint") IsNot Nothing,
                                                                    CStr(lfDef("templateFingerprint")), "")
@@ -3148,7 +2522,6 @@ Partial Public Class ThisAddIn
                                 If String.IsNullOrEmpty(desiredFingerprint) OrElse
                                String.IsNullOrEmpty(currentFingerprint) OrElse
                                currentFingerprint <> desiredFingerprint Then
-                                    ' Different or unknown - update it
                                     ApplyListFormatToStyle(doc, style, lfDef)
                                     changesMade = True
                                     Debug.WriteLine($"[DocStyle] Updated list template for style '{styleName}' (fingerprint mismatch)")
@@ -3156,14 +2529,12 @@ Partial Public Class ThisAddIn
                                     Debug.WriteLine($"[DocStyle] List template unchanged for style '{styleName}' (fingerprints match)")
                                 End If
                             Else
-                                ' No existing list - add one (even for built-in if template specifies it)
                                 ApplyListFormatToStyle(doc, style, lfDef)
                                 changesMade = True
                                 Debug.WriteLine($"[DocStyle] Added list template to style '{styleName}'")
                             End If
 
                         ElseIf styleHasListTemplate AndAlso Not isBuiltIn Then
-                            ' Template says no list, style has one, and it's not built-in - remove
                             Try
                                 style.LinkToListTemplate(Nothing)
                                 changesMade = True
@@ -3183,7 +2554,7 @@ Partial Public Class ThisAddIn
                     Debug.WriteLine($"[DocStyle] Skipped wdStyle (no changes needed): {styleName}")
                 End If
 
-                ' Make style visible in Quick Styles gallery
+                ' Make style visible in Quick Styles gallery.
                 Try
                     style.QuickStyle = True
                 Catch
@@ -3194,7 +2565,7 @@ Partial Public Class ThisAddIn
             End Try
         Next
 
-        ' Clear cache after processing
+        ' Clear cache after processing.
         _sharedListTemplates.Clear()
 
         If stylesCreatedOrUpdated.Count > 0 Then
@@ -3207,17 +2578,19 @@ Partial Public Class ThisAddIn
 
 
     ''' <summary>
-    ''' Applies user style formatting (paragraph, font, list) from the template to a paragraph.
-    ''' This applies the formatting captured in the template as overrides after the Word style.
+    ''' Applies user style formatting (paragraph, font, list, and tab stops) from the template to a paragraph.
+    ''' Formatting is applied as overrides after the Word style assignment.
     ''' </summary>
+    ''' <param name="para">Paragraph to format.</param>
+    ''' <param name="userStyleDef">User style JSON definition containing formatting overrides.</param>
     Private Sub ApplyUserStyleFormattingFromTemplate(para As Word.Paragraph, userStyleDef As JObject)
         If userStyleDef Is Nothing Then Return
 
         Try
-            ' Keep a reference so we can reapply after list operations (RemoveNumbers can clobber indents/tabs).
+            ' Keep a reference so we can reapply after list operations (RemoveNumbers can affect indents/tabs).
             Dim pf As JToken = userStyleDef("paragraphFormatting")
 
-            ' 1) Apply paragraph formatting overrides (initial pass)
+            ' 1) Apply paragraph formatting overrides (initial pass).
             If pf IsNot Nothing Then
                 If pf("alignment") IsNot Nothing Then para.Alignment = ParseAlignment(CStr(pf("alignment")))
                 If pf("leftIndent") IsNot Nothing Then para.LeftIndent = CSng(pf("leftIndent"))
@@ -3231,7 +2604,7 @@ Partial Public Class ThisAddIn
                 If pf("keepWithNext") IsNot Nothing Then para.KeepWithNext = CInt(pf("keepWithNext"))
             End If
 
-            ' 2) Apply font formatting overrides
+            ' 2) Apply font formatting overrides.
             If userStyleDef("fontFormatting") IsNot Nothing Then
                 Dim ff = userStyleDef("fontFormatting")
                 Dim rng As Word.Range = para.Range
@@ -3244,7 +2617,7 @@ Partial Public Class ThisAddIn
                 If ff("underline") IsNot Nothing Then rng.Font.Underline = ParseUnderline(CStr(ff("underline")))
             End If
 
-            ' 3) Handle list formatting (RemoveNumbers may destroy indents/tabs)
+            ' 3) Apply list formatting transitions captured in the template.
             Dim didRemoveNumbers As Boolean = False
             If userStyleDef("listFormatting") IsNot Nothing Then
                 Dim lf = userStyleDef("listFormatting")
@@ -3271,14 +2644,14 @@ Partial Public Class ThisAddIn
                 End If
             End If
 
-            ' 4) Re-apply paragraph indents AFTER RemoveNumbers (this is the bug fix for MAIN TITLE)
+            ' 4) Re-apply paragraph indents after list removal (list operations can change indentation).
             If didRemoveNumbers AndAlso pf IsNot Nothing Then
                 If pf("leftIndent") IsNot Nothing Then para.LeftIndent = CSng(pf("leftIndent"))
                 If pf("rightIndent") IsNot Nothing Then para.RightIndent = CSng(pf("rightIndent"))
                 If pf("firstLineIndent") IsNot Nothing Then para.FirstLineIndent = CSng(pf("firstLineIndent"))
             End If
 
-            ' 5) Apply tab stops if specified (RemoveNumbers can also affect tabs)
+            ' 5) Apply tab stops if specified.
             If userStyleDef("tabStops") IsNot Nothing Then
                 Try
                     para.TabStops.ClearAll()
@@ -3302,93 +2675,14 @@ Partial Public Class ThisAddIn
     End Sub
 
 
-    ''' <summary>
-    ''' Applies formatting specification to a paragraph with list preservation support.
-    ''' </summary>
-    Private Sub ApplyFormattingToParagraphEx(doc As Word.Document, para As Word.Paragraph,
-                                              wdStyleName As String, formatting As JToken,
-                                              preserveList As Boolean,
-                                              originalListType As WdListType,
-                                              originalListLevel As Integer)
-        ' First apply style if specified
-        If Not String.IsNullOrWhiteSpace(wdStyleName) Then
-            Try
-                para.Style = doc.Styles(wdStyleName)
-            Catch
-                ' Style doesn't exist, try Normal
-                Try
-                    para.Style = doc.Styles("Normal")
-                Catch
-                End Try
-            End Try
-        End If
-
-        ' Restore list formatting if needed (applying a style may remove it)
-        If preserveList AndAlso originalListType <> WdListType.wdListNoNumbering Then
-            Try
-                ' Check if list was removed by style application
-                If para.Range.ListFormat.ListType = WdListType.wdListNoNumbering Then
-                    If originalListType = WdListType.wdListBullet Then
-                        para.Range.ListFormat.ApplyBulletDefault()
-                    ElseIf originalListType = WdListType.wdListSimpleNumbering OrElse
-                           originalListType = WdListType.wdListListNumOnly OrElse
-                           originalListType = WdListType.wdListMixedNumbering Then
-                        para.Range.ListFormat.ApplyNumberDefault()
-                    ElseIf originalListType = WdListType.wdListOutlineNumbering Then
-                        para.Range.ListFormat.ApplyOutlineNumberDefault()
-                    End If
-
-                    ' Restore level
-                    If originalListLevel > 1 Then
-                        For lvl As Integer = 2 To originalListLevel
-                            para.Range.ListFormat.ListIndent()
-                        Next
-                    End If
-                End If
-            Catch ex As Exception
-                Debug.WriteLine($"Could not restore list formatting: {ex.Message}")
-            End Try
-        End If
-
-        ' Then apply additional formatting overrides from LLM response
-        If formatting Is Nothing Then Return
-
-        Try
-            ' Paragraph formatting
-            If formatting("alignment") IsNot Nothing AndAlso CStr(formatting("alignment")) <> "" Then
-                para.Alignment = ParseAlignment(CStr(formatting("alignment")))
-            End If
-            If formatting("leftIndent") IsNot Nothing Then para.LeftIndent = CSng(formatting("leftIndent"))
-            If formatting("rightIndent") IsNot Nothing Then para.RightIndent = CSng(formatting("rightIndent"))
-            If formatting("firstLineIndent") IsNot Nothing Then para.FirstLineIndent = CSng(formatting("firstLineIndent"))
-            If formatting("spaceBefore") IsNot Nothing Then para.SpaceBefore = CSng(formatting("spaceBefore"))
-            If formatting("spaceAfter") IsNot Nothing Then para.SpaceAfter = CSng(formatting("spaceAfter"))
-            If formatting("lineSpacing") IsNot Nothing Then para.LineSpacing = CSng(formatting("lineSpacing"))
-
-            ' Font formatting
-            Dim rng As Word.Range = para.Range
-            If formatting("fontName") IsNot Nothing AndAlso CStr(formatting("fontName")) <> "" Then
-                rng.Font.Name = CStr(formatting("fontName"))
-            End If
-            If formatting("fontSize") IsNot Nothing Then rng.Font.Size = CSng(formatting("fontSize"))
-            If formatting("bold") IsNot Nothing Then rng.Font.Bold = If(CBool(formatting("bold")), -1, 0)
-            If formatting("italic") IsNot Nothing Then rng.Font.Italic = If(CBool(formatting("italic")), -1, 0)
-            If formatting("underline") IsNot Nothing Then rng.Font.Underline = ParseUnderline(CStr(formatting("underline")))
-        Catch
-        End Try
-    End Sub
-
-
 
     ''' <summary>
-    ''' Applies list formatting to a style, correctly handling:
-    ''' - Shared outline templates (multiple styles using same template at different levels)
-    ''' - Bullet characters with correct fonts
-    ''' - All level properties including tab positions
-    ''' - Separate caching for outline vs non-outline templates
-    '''
-    ''' PATCH: Avoid dependency on ListGalleries for bullets (non-deterministic), use doc.ListTemplates.Add.
+    ''' Applies list formatting to a style, including list template creation and linking of the template at the configured list level.
+    ''' Shared templates are cached to reduce redundant template creation within the current run.
     ''' </summary>
+    ''' <param name="doc">Active document that owns the created list templates.</param>
+    ''' <param name="style">Style to link to a list template.</param>
+    ''' <param name="listFormatDef">List-format JSON definition.</param>
     Private Sub ApplyListFormatToStyle(doc As Word.Document, style As Word.Style, listFormatDef As JToken)
         If listFormatDef Is Nothing Then Return
         If listFormatDef("hasListTemplate") Is Nothing OrElse Not CBool(listFormatDef("hasListTemplate")) Then Return
@@ -3398,7 +2692,7 @@ Partial Public Class ThisAddIn
             Dim linkedLevel As Integer = If(listFormatDef("linkedLevel") IsNot Nothing, CInt(listFormatDef("linkedLevel")), 1)
             Dim fingerprint As String = If(listFormatDef("templateFingerprint") IsNot Nothing, CStr(listFormatDef("templateFingerprint")), "")
 
-            ' Check if this is a bullet-only template (all levels are bullets)
+            ' Check if this is a bullet-only template (all levels are bullets).
             Dim isBulletTemplate As Boolean = False
             If listFormatDef("levels") IsNot Nothing Then
                 isBulletTemplate = True
@@ -3411,12 +2705,12 @@ Partial Public Class ThisAddIn
                 Next
             End If
 
-            ' Include outline flag AND bullet flag in cache key
+            ' Include outline flag and bullet-only flag in cache key.
             Dim cacheKey As String = $"{If(isOutline, "O", "N")}:{If(isBulletTemplate, "B", "N")}:{fingerprint}"
 
             Dim listTemplate As Word.ListTemplate = Nothing
 
-            ' Check if we already created this template
+            ' Reuse a previously created template when a fingerprint exists and a cached template is available.
             If Not String.IsNullOrEmpty(fingerprint) Then
                 If _sharedListTemplates.ContainsKey(cacheKey) Then
                     listTemplate = _sharedListTemplates(cacheKey)
@@ -3424,9 +2718,9 @@ Partial Public Class ThisAddIn
                 End If
             End If
 
-            ' Create new template if needed
+            ' Create new template if needed.
             If listTemplate Is Nothing Then
-                ' PATCH: Always create our own template for bullets too (gallery templates vary by user/profile)
+                ' Always create a new list template instance in the document.
                 listTemplate = doc.ListTemplates.Add(OutlineNumbered:=isOutline)
 
                 Debug.WriteLine($"Created new list template for style '{style.NameLocal}' (outline={isOutline}, bullet={isBulletTemplate}, levels={listTemplate.ListLevels.Count})")
@@ -3443,17 +2737,14 @@ Partial Public Class ThisAddIn
                             Dim isBulletLevel As Boolean = numberStyleStr.ToLower().Contains("bullet")
 
                             If isBulletLevel OrElse isBulletTemplate Then
-                                ' Bullet config
                                 Dim bulletFontName As String = If(levelDef("bulletFont") IsNot Nothing, CStr(levelDef("bulletFont")), "Symbol")
                                 Dim bulletCharCode As Integer = If(levelDef("bulletCharCode") IsNot Nothing, CInt(levelDef("bulletCharCode")), &H2022)
 
-                                ' IMPORTANT: reset first, then assign deterministically
                                 Try : level.Font.Reset() : Catch : End Try
                                 Try : level.Font.Name = bulletFontName : Catch : End Try
                                 Try : level.NumberStyle = WdListNumberStyle.wdListNumberStyleBullet : Catch : End Try
                                 Try : level.NumberFormat = ChrW(bulletCharCode) : Catch : End Try
                             Else
-                                ' Numbered config
                                 Dim numberStyle As WdListNumberStyle = ParseNumberStyle(If(levelDef("numberStyle") IsNot Nothing, CStr(levelDef("numberStyle")), "wdListNumberStyleArabic"))
                                 Try : level.NumberStyle = numberStyle : Catch : End Try
                                 If levelDef("numberFormat") IsNot Nothing AndAlso Not String.IsNullOrEmpty(CStr(levelDef("numberFormat"))) Then
@@ -3461,7 +2752,6 @@ Partial Public Class ThisAddIn
                                 End If
                             End If
 
-                            ' Common positions
                             If levelDef("numberPosition") IsNot Nothing Then level.NumberPosition = CSng(levelDef("numberPosition"))
                             If levelDef("textPosition") IsNot Nothing Then level.TextPosition = CSng(levelDef("textPosition"))
                             If levelDef("tabPosition") IsNot Nothing Then level.TabPosition = CSng(levelDef("tabPosition"))
@@ -3481,14 +2771,14 @@ Partial Public Class ThisAddIn
                     Next
                 End If
 
-                ' Cache templates for reuse
+                ' Cache templates for reuse.
                 If Not String.IsNullOrEmpty(fingerprint) AndAlso listTemplate IsNot Nothing Then
                     _sharedListTemplates(cacheKey) = listTemplate
                     Debug.WriteLine($"Cached list template for style '{style.NameLocal}' (key={cacheKey})")
                 End If
             End If
 
-            ' Link template to style at the CORRECT level
+            ' Link template to style at the configured level.
             If listTemplate IsNot Nothing Then
                 style.LinkToListTemplate(listTemplate, linkedLevel)
                 Debug.WriteLine($"Linked list template to style '{style.NameLocal}' at level {linkedLevel}")
@@ -3500,8 +2790,10 @@ Partial Public Class ThisAddIn
     End Sub
 
     ''' <summary>
-    ''' Parses line spacing rule string to Word enum.
+    ''' Parses a line spacing rule name into a <see cref="WdLineSpacing"/> enum value.
     ''' </summary>
+    ''' <param name="rule">Line-spacing rule name (possibly including the Word enum prefix).</param>
+    ''' <returns>Parsed line spacing rule.</returns>
     Private Function ParseLineSpacingRule(rule As String) As WdLineSpacing
         If String.IsNullOrWhiteSpace(rule) Then Return WdLineSpacing.wdLineSpaceSingle
 
@@ -3517,8 +2809,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Parses outline level string to Word enum.
+    ''' Parses an outline level name into a <see cref="WdOutlineLevel"/> enum value.
     ''' </summary>
+    ''' <param name="level">Outline level name (possibly including the Word enum prefix).</param>
+    ''' <returns>Parsed outline level.</returns>
     Private Function ParseOutlineLevel(level As String) As WdOutlineLevel
         If String.IsNullOrWhiteSpace(level) Then Return WdOutlineLevel.wdOutlineLevelBodyText
 
@@ -3538,8 +2832,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Parses tab alignment string to Word enum.
+    ''' Parses a tab alignment name into a <see cref="WdTabAlignment"/> enum value.
     ''' </summary>
+    ''' <param name="alignment">Tab alignment name (possibly including the Word enum prefix).</param>
+    ''' <returns>Parsed tab alignment.</returns>
     Private Function ParseTabAlignment(alignment As String) As WdTabAlignment
         If String.IsNullOrWhiteSpace(alignment) Then Return WdTabAlignment.wdAlignTabLeft
 
@@ -3555,8 +2851,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Parses tab leader string to Word enum.
+    ''' Parses a tab leader name into a <see cref="WdTabLeader"/> enum value.
     ''' </summary>
+    ''' <param name="leader">Tab leader name (possibly including the Word enum prefix).</param>
+    ''' <returns>Parsed tab leader.</returns>
     Private Function ParseTabLeader(leader As String) As WdTabLeader
         If String.IsNullOrWhiteSpace(leader) Then Return WdTabLeader.wdTabLeaderSpaces
 
@@ -3572,8 +2870,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Parses underline string to Word enum.
+    ''' Parses an underline name into a <see cref="WdUnderline"/> enum value.
     ''' </summary>
+    ''' <param name="underline">Underline name (possibly including the Word enum prefix).</param>
+    ''' <returns>Parsed underline value.</returns>
     Private Function ParseUnderline(underline As String) As WdUnderline
         If String.IsNullOrWhiteSpace(underline) Then Return WdUnderline.wdUnderlineNone
 
@@ -3600,8 +2900,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Parses RGB hex string to Word color.
+    ''' Parses a 6-digit RGB hex string (<c>#RRGGBB</c>) into a <see cref="WdColor"/> value.
     ''' </summary>
+    ''' <param name="rgb">RGB hex string or <c>auto</c>/<c>unknown</c>.</param>
+    ''' <returns>Parsed Word color value.</returns>
     Private Function ParseColorFromRGB(rgb As String) As WdColor
         If String.IsNullOrWhiteSpace(rgb) OrElse rgb = "auto" OrElse rgb = "unknown" Then
             Return WdColor.wdColorAutomatic
@@ -3622,56 +2924,13 @@ Partial Public Class ThisAddIn
     End Function
 
 
-    ''' <summary>
-    ''' Creates a simple bullet template as fallback when gallery approach fails.
-    ''' </summary>
-    Private Function CreateSimpleBulletTemplate(doc As Word.Document, listFormatDef As JToken) As Word.ListTemplate
-        Try
-            ' Create a temporary range to apply bullet format
-            Dim tempRange As Word.Range = doc.Content
-            tempRange.Collapse(WdCollapseDirection.wdCollapseEnd)
-
-            ' Apply default bullet
-            tempRange.ListFormat.ApplyBulletDefault()
-
-            ' Get the template that was created
-            Dim listTemplate As Word.ListTemplate = tempRange.ListFormat.ListTemplate
-
-            ' Remove the bullet from the temp range
-            tempRange.ListFormat.RemoveNumbers()
-
-            ' Now customize the template if we have level definitions
-            If listFormatDef("levels") IsNot Nothing Then
-                Dim firstLevel As JObject = CType(listFormatDef("levels"), JArray).FirstOrDefault()
-                If firstLevel IsNot Nothing Then
-                    Try
-                        Dim level As Word.ListLevel = listTemplate.ListLevels(1)
-
-                        Dim bulletFontName As String = If(firstLevel("bulletFont") IsNot Nothing, CStr(firstLevel("bulletFont")), "Symbol")
-                        Dim bulletCharCode As Integer = If(firstLevel("bulletCharCode") IsNot Nothing, CInt(firstLevel("bulletCharCode")), 61623)
-
-                        level.Font.Name = bulletFontName
-
-                        If firstLevel("numberPosition") IsNot Nothing Then level.NumberPosition = CSng(firstLevel("numberPosition"))
-                        If firstLevel("textPosition") IsNot Nothing Then level.TextPosition = CSng(firstLevel("textPosition"))
-                        If firstLevel("tabPosition") IsNot Nothing Then level.TabPosition = CSng(firstLevel("tabPosition"))
-                    Catch
-                    End Try
-                End If
-            End If
-
-            Debug.WriteLine("Created simple bullet template as fallback")
-            Return listTemplate
-        Catch ex As Exception
-            Debug.WriteLine($"Failed to create simple bullet template: {ex.Message}")
-            Return Nothing
-        End Try
-    End Function
 
 
     ''' <summary>
-    ''' Parses list level alignment string to Word enum.
+    ''' Parses a list level alignment name into a <see cref="WdListLevelAlignment"/> enum value.
     ''' </summary>
+    ''' <param name="alignment">List level alignment name (possibly including the Word enum prefix).</param>
+    ''' <returns>Parsed list level alignment value.</returns>
     Private Function ParseListLevelAlignment(alignment As String) As WdListLevelAlignment
         If String.IsNullOrWhiteSpace(alignment) Then Return WdListLevelAlignment.wdListLevelAlignLeft
 
@@ -3684,8 +2943,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Parses trailing character string to Word enum.
+    ''' Parses a trailing character name into a <see cref="WdTrailingCharacter"/> enum value.
     ''' </summary>
+    ''' <param name="trailing">Trailing character name (possibly including the Word enum prefix).</param>
+    ''' <returns>Parsed trailing character value.</returns>
     Private Function ParseTrailingCharacter(trailing As String) As WdTrailingCharacter
         If String.IsNullOrWhiteSpace(trailing) Then Return WdTrailingCharacter.wdTrailingTab
 
@@ -3696,9 +2957,12 @@ Partial Public Class ThisAddIn
             Case Else : Return WdTrailingCharacter.wdTrailingTab
         End Select
     End Function
+
     ''' <summary>
-    ''' Parses number style string to Word enum.
+    ''' Parses a list number style name into a <see cref="WdListNumberStyle"/> enum value.
     ''' </summary>
+    ''' <param name="style">List number style name (possibly including the Word enum prefix).</param>
+    ''' <returns>Parsed list number style value.</returns>
     Private Function ParseNumberStyle(style As String) As WdListNumberStyle
         If String.IsNullOrWhiteSpace(style) Then Return WdListNumberStyle.wdListNumberStyleArabic
 
@@ -3720,7 +2984,6 @@ Partial Public Class ThisAddIn
             Case Else : Return WdListNumberStyle.wdListNumberStyleArabic
         End Select
     End Function
-
 #End Region
 
 #Region "Helper Classes and Functions"
@@ -3737,6 +3000,9 @@ Partial Public Class ThisAddIn
     ''' <summary>
     ''' Loads available style templates from configured paths, reading display names from JSON.
     ''' </summary>
+    ''' <param name="pathGlobal">Directory containing shared templates.</param>
+    ''' <param name="pathLocal">Directory containing personal templates.</param>
+    ''' <returns>List of resolved template metadata objects.</returns>
     Private Function LoadStyleTemplates(pathGlobal As String, pathLocal As String) As List(Of DocStyleTemplate)
         Dim templates As New List(Of DocStyleTemplate)()
 
@@ -3773,6 +3039,9 @@ Partial Public Class ThisAddIn
     ''' Attempts to load template metadata from a JSON file.
     ''' Returns Nothing if the file cannot be parsed as valid JSON.
     ''' </summary>
+    ''' <param name="filePath">Path to the template JSON file.</param>
+    ''' <param name="isLocal">True when the file was discovered in the local template directory.</param>
+    ''' <returns>Template metadata, or Nothing if unreadable/invalid.</returns>
     Private Function TryLoadTemplateMetadata(filePath As String, isLocal As Boolean) As DocStyleTemplate
         Try
             Dim jsonContent As String = File.ReadAllText(filePath, Encoding.UTF8)
@@ -3794,15 +3063,17 @@ Partial Public Class ThisAddIn
                 .IsLocal = isLocal
             }
         Catch
-            ' Invalid JSON or unreadable file - skip it
             Debug.WriteLine($"Skipping invalid template file: {filePath}")
             Return Nothing
         End Try
     End Function
 
     ''' <summary>
-    ''' Extracts JSON from LLM response (handles markdown code blocks).
+    ''' Extracts the JSON payload from an LLM response.
+    ''' Supports markdown code blocks and raw JSON responses.
     ''' </summary>
+    ''' <param name="response">Raw LLM response text.</param>
+    ''' <returns>Extracted JSON string (array or object).</returns>
     Private Function ExtractJsonFromResponse(response As String) As String
         If String.IsNullOrWhiteSpace(response) Then Return "{}"
 
@@ -3822,8 +3093,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Parses alignment string to Word alignment enum.
+    ''' Parses an alignment name into a <see cref="WdParagraphAlignment"/> enum value.
     ''' </summary>
+    ''' <param name="alignment">Alignment name (possibly including the Word enum prefix).</param>
+    ''' <returns>Parsed paragraph alignment value.</returns>
     Private Function ParseAlignment(alignment As String) As WdParagraphAlignment
         If String.IsNullOrWhiteSpace(alignment) Then Return WdParagraphAlignment.wdAlignParagraphLeft
 
@@ -3836,10 +3109,12 @@ Partial Public Class ThisAddIn
         End Select
     End Function
 
-#End Region
-
-#Region "Existing Helper Functions (from original code)"
-
+    ''' <summary>
+    ''' Extracts paragraph formatting into a JSON object for template creation.
+    ''' </summary>
+    ''' <param name="para">Paragraph to inspect.</param>
+    ''' <param name="paraRange">Duplicated paragraph range (for table/cell checks and other range-based info).</param>
+    ''' <returns>JSON object containing paragraph formatting properties and optional error information.</returns>
     Private Function ExtractParagraphFormat(para As Word.Paragraph, paraRange As Word.Range) As JObject
         Dim pf As New JObject()
         Try
@@ -3864,19 +3139,22 @@ Partial Public Class ThisAddIn
             Try
                 Dim paraFormat As Object = para.Format
                 pf("noSpaceBetweenParagraphsOfSameStyle") = paraFormat.NoSpaceBetweenParagraphsOfSameStyle
-            Catch : End Try
+            Catch
+            End Try
 
             Try
                 Dim paraFormat As Object = para.Format
                 pf("mirrorIndents") = paraFormat.MirrorIndents
-            Catch : End Try
+            Catch
+            End Try
 
             Try : pf("readingOrder") = para.ReadingOrder.ToString() : Catch : End Try
 
             Try
                 Dim paraFormat As Object = para.Format
                 pf("contextualSpacing") = paraFormat.ContextualSpacing
-            Catch : End Try
+            Catch
+            End Try
 
         Catch ex As Exception
             pf("error") = ex.Message
@@ -3884,6 +3162,12 @@ Partial Public Class ThisAddIn
         Return pf
     End Function
 
+    ''' <summary>
+    ''' Extracts character/font formatting into a JSON object for template creation.
+    ''' Values that are mixed across the selection are returned as the string <c>mixed</c>.
+    ''' </summary>
+    ''' <param name="rng">Range to inspect.</param>
+    ''' <returns>JSON object containing font formatting properties and optional error information.</returns>
     Private Function ExtractFontFormat(rng As Word.Range) As JObject
         Dim ff As New JObject()
         Try
@@ -3900,7 +3184,8 @@ Partial Public Class ThisAddIn
                     ff("underlineColor") = font.UnderlineColor.ToString()
                     ff("underlineColorRGB") = ColorToRGB(font.UnderlineColor)
                 End If
-            Catch : End Try
+            Catch
+            End Try
 
             If font.StrikeThrough <> CInt(WdConstants.wdUndefined) Then ff("strikeThrough") = (font.StrikeThrough = -1) Else ff("strikeThrough") = "mixed"
             If font.DoubleStrikeThrough <> CInt(WdConstants.wdUndefined) Then ff("doubleStrikeThrough") = (font.DoubleStrikeThrough = -1) Else ff("doubleStrikeThrough") = "mixed"
@@ -3920,7 +3205,9 @@ Partial Public Class ThisAddIn
                 Else
                     ff("highlightColor") = "mixed"
                 End If
-            Catch : ff("highlightColor") = "none" : End Try
+            Catch
+                ff("highlightColor") = "none"
+            End Try
 
             If font.AllCaps <> CInt(WdConstants.wdUndefined) Then ff("allCaps") = (font.AllCaps = -1) Else ff("allCaps") = "mixed"
             If font.SmallCaps <> CInt(WdConstants.wdUndefined) Then ff("smallCaps") = (font.SmallCaps = -1) Else ff("smallCaps") = "mixed"
@@ -3930,18 +3217,21 @@ Partial Public Class ThisAddIn
                 ff("spacing") = font.Spacing
                 ff("position") = font.Position
                 ff("kerning") = font.Kerning
-            Catch : End Try
+            Catch
+            End Try
 
             Try
                 Dim fontObj As Object = font
                 ff("themeFont") = fontObj.ThemeFont.ToString()
-            Catch : End Try
+            Catch
+            End Try
 
             Try
                 Dim fontObj As Object = font
                 ff("themeColor") = fontObj.ThemeColor.ToString()
                 ff("themeTint") = fontObj.TintAndShade
-            Catch : End Try
+            Catch
+            End Try
 
         Catch ex As Exception
             ff("error") = ex.Message
@@ -3949,6 +3239,11 @@ Partial Public Class ThisAddIn
         Return ff
     End Function
 
+    ''' <summary>
+    ''' Extracts list formatting into a JSON object for template creation.
+    ''' </summary>
+    ''' <param name="rng">Range to inspect.</param>
+    ''' <returns>JSON object describing list presence and current list level details when available.</returns>
     Private Function ExtractListFormat(rng As Word.Range) As JObject
         Dim lf As New JObject()
         Try
@@ -3979,7 +3274,8 @@ Partial Public Class ThisAddIn
                         levelInfo("startAt") = level.StartAt
                         lf("currentLevelFormat") = levelInfo
                     End If
-                Catch : End Try
+                Catch
+                End Try
             End If
 
         Catch ex As Exception
@@ -3989,29 +3285,10 @@ Partial Public Class ThisAddIn
     End Function
 
     ''' <summary>
-    ''' Extracts custom tab stop definitions.
-    ''' </summary>
-    Private Function ExtractTabStops(para As Word.Paragraph) As JArray
-        Dim tabs As New JArray()
-        Try
-            For Each tabStop As Word.TabStop In para.TabStops
-                Dim tab As New JObject()
-                tab("position") = tabStop.Position
-                tab("positionDescription") = "Position in points from left margin"
-                tab("alignment") = tabStop.Alignment.ToString()
-                tab("alignmentDescription") = "wdAlignTabLeft, wdAlignTabCenter, wdAlignTabRight, wdAlignTabDecimal, wdAlignTabBar"
-                tab("leader") = tabStop.Leader.ToString()
-                tab("leaderDescription") = "wdTabLeaderSpaces, wdTabLeaderDots, wdTabLeaderDashes, wdTabLeaderLines"
-                tabs.Add(tab)
-            Next
-        Catch
-        End Try
-        Return tabs
-    End Function
-
-    ''' <summary>
     ''' Extracts paragraph border formatting.
     ''' </summary>
+    ''' <param name="para">Paragraph to inspect.</param>
+    ''' <returns>JSON object describing borders present on the paragraph.</returns>
     Private Function ExtractBorders(para As Word.Paragraph) As JObject
         Dim borders As New JObject()
         Try
@@ -4038,7 +3315,6 @@ Partial Public Class ThisAddIn
                 End Try
             Next
 
-            ' Box border distance
             Try
                 borders("distanceFromText") = New JObject From {
                     {"top", para.Borders.DistanceFromTop},
@@ -4058,6 +3334,8 @@ Partial Public Class ThisAddIn
     ''' <summary>
     ''' Extracts paragraph shading/background properties.
     ''' </summary>
+    ''' <param name="para">Paragraph to inspect.</param>
+    ''' <returns>JSON object describing shading properties.</returns>
     Private Function ExtractShading(para As Word.Paragraph) As JObject
         Dim shading As New JObject()
         Try
@@ -4085,6 +3363,8 @@ Partial Public Class ThisAddIn
     ''' <summary>
     ''' Converts a Word color value to RGB hex string.
     ''' </summary>
+    ''' <param name="color">Word color value.</param>
+    ''' <returns>RGB hex string (<c>#RRGGBB</c>), or <c>auto</c>/<c>unknown</c>.</returns>
     Private Function ColorToRGB(color As WdColor) As String
         Try
             Dim colorValue As Long = CLng(color)
@@ -4100,12 +3380,13 @@ Partial Public Class ThisAddIn
         End Try
     End Function
 
-#End Region
 
-
-
-#Region "DocStyle - Idempotent Style/List Helpers (PATCH)"
-
+    ''' <summary>
+    ''' Computes a fingerprint string for a list template.
+    ''' Used to detect equivalent list templates and avoid reapplying identical formatting.
+    ''' </summary>
+    ''' <param name="tpl">List template instance.</param>
+    ''' <returns>Fingerprint string, or empty string if unavailable.</returns>
     Private Function ComputeListTemplateFingerprint(tpl As Word.ListTemplate) As String
         If tpl Is Nothing Then Return ""
 
@@ -4128,7 +3409,6 @@ Partial Public Class ThisAddIn
                     Dim isBullet As Boolean = ns.IndexOf("bullet", StringComparison.OrdinalIgnoreCase) >= 0
 
                     If isBullet Then
-                        ' Bullet formats are unstable in Word; fingerprint must include bullet font + char code.
                         Dim bFont As String = ""
                         Try
                             If ll.Font IsNot Nothing AndAlso Not String.IsNullOrEmpty(ll.Font.Name) Then
@@ -4172,18 +3452,6 @@ Partial Public Class ThisAddIn
             Return ""
         End Try
     End Function
-    Private Function TryGetStyleLinkedLevel(s As Word.Style, ByRef level As Integer) As Boolean
-        level = 1
-        Try
-            level = s.ListLevelNumber
-            If level <= 0 Then level = 1
-            Return True
-        Catch
-            Return False
-        End Try
-    End Function
-
-
 
 #End Region
 

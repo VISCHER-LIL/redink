@@ -104,6 +104,8 @@ Namespace SharedLibrary
                 context.SP_Explain = If(configDict.ContainsKey("SP_Explain"), configDict("SP_Explain"), Default_SP_Explain)
                 context.SP_FindClause = If(configDict.ContainsKey("SP_FindClause"), configDict("SP_FindClause"), Default_SP_FindClause)
                 context.SP_FindClause_Clean = If(configDict.ContainsKey("SP_FindClause_Clean"), configDict("SP_FindClause_Clean"), Default_SP_FindClause_Clean)
+                context.SP_ApplyDocStyle = If(configDict.ContainsKey("SP_ApplyDocStyle"), configDict("SP_ApplyDocStyle"), Default_SP_ApplyDocStyle)
+                context.SP_ApplyDocStyle_NumberingHint = If(configDict.ContainsKey("SP_ApplyDocStyle_NumberingHint"), configDict("SP_ApplyDocStyle_NumberingHint"), Default_SP_ApplyDocStyle_NumberingHint)
                 context.SP_DocCheck_Clause = If(configDict.ContainsKey("SP_DocCheck_Clause"), configDict("SP_DocCheck_Clause"), Default_SP_DocCheck_Clause)
                 context.SP_DocCheck_MultiClause = If(configDict.ContainsKey("SP_DocCheck_MultiClause"), configDict("SP_DocCheck_MultiClause"), Default_SP_DocCheck_MultiClause)
                 context.SP_DocCheck_MultiClauseSum = If(configDict.ContainsKey("SP_DocCheck_MultiClauseSum"), configDict("SP_DocCheck_MultiClauseSum"), Default_SP_DocCheck_MulticlauseSum)
@@ -236,6 +238,8 @@ Namespace SharedLibrary
                 context.INI_FindClausePathLocal = If(configDict.ContainsKey("FindClausePathLocal"), configDict("FindClausePathLocal"), "")
                 context.INI_DocCheckPath = If(configDict.ContainsKey("DocCheckPath"), configDict("DocCheckPath"), "")
                 context.INI_DocCheckPathLocal = If(configDict.ContainsKey("DocCheckPathLocal"), configDict("DocCheckPathLocal"), "")
+                context.INI_DocStylePath = If(configDict.ContainsKey("DocStylePath"), configDict("DocStylePath"), "")
+                context.INI_DocStylePathLocal = If(configDict.ContainsKey("DocStylePathLocal"), configDict("DocStylePathLocal"), "")
                 context.INI_PromptLibPath_Transcript = If(configDict.ContainsKey("PromptLib_Transcript"), configDict("PromptLib_Transcript"), "")
 
                 ' Process Internet search if enabled

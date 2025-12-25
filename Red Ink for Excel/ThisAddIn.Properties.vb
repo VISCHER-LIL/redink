@@ -696,6 +696,24 @@ Partial Public Class ThisAddIn
             _context.SP_FindClause_Clean = value
         End Set
     End Property
+
+    Public Shared Property SP_ApplyDocStyle As String
+        Get
+            Return _context.SP_ApplyDocStyle
+        End Get
+        Set(value As String)
+            _context.SP_ApplyDocStyle = value
+        End Set
+    End Property
+
+    Public Shared Property SP_ApplyDocStyle_NumberingHint As String
+        Get
+            Return _context.SP_ApplyDocStyle_NumberingHint
+        End Get
+        Set(value As String)
+            _context.SP_ApplyDocStyle_NumberingHint = value
+        End Set
+    End Property
     Public Shared Property SP_DocCheck_Clause As String
         Get
             Return _context.SP_DocCheck_Clause
@@ -1721,6 +1739,24 @@ Partial Public Class ThisAddIn
         End Get
         Set(value As String)
             _context.INI_DocCheckPathLocal = value
+        End Set
+    End Property
+
+    Public Shared Property INI_DocStylePath As String
+        Get
+            Return _context.INI_DocStylePath
+        End Get
+        Set(value As String)
+            _context.INI_DocStylePath = value
+        End Set
+    End Property
+
+    Public Shared Property INI_DocStylePathLocal As String
+        Get
+            Return _context.INI_DocStylePathLocal
+        End Get
+        Set(value As String)
+            _context.INI_DocStylePathLocal = value
         End Set
     End Property
 

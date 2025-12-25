@@ -125,6 +125,8 @@ Namespace SharedLibrary
             Property SP_Explain As String
             Property SP_FindClause As String
             Property SP_FindClause_Clean As String
+            Property SP_ApplyDocStyle As String
+            Property SP_ApplyDocStyle_NumberingHint As String
             Property SP_DocCheck_Clause As String
             Property SP_DocCheck_MultiClause As String
             Property SP_DocCheck_MultiClauseSum As String
@@ -226,6 +228,11 @@ Namespace SharedLibrary
 
             Property INI_DocCheckPath As String
             Property INI_DocCheckPathLocal As String
+
+            Property INI_DocStylePath As String
+            Property INI_DocStylePathLocal As String
+
+
             Property INI_PromptLibPath_Transcript As String
             Property PromptLibrary() As List(Of String)
             Property PromptTitles() As List(Of String)
@@ -348,6 +355,8 @@ Namespace SharedLibrary
         Public Property SP_Explain As String Implements ISharedContext.SP_Explain
         Public Property SP_FindClause As String Implements ISharedContext.SP_FindClause
         Public Property SP_FindClause_Clean As String Implements ISharedContext.SP_FindClause_Clean
+        Public Property SP_ApplyDocStyle As String Implements ISharedContext.SP_ApplyDocStyle
+        Public Property SP_ApplyDocStyle_NumberingHint As String Implements ISharedContext.SP_ApplyDocStyle_NumberingHint
         Public Property SP_DocCheck_Clause As String Implements ISharedContext.SP_DocCheck_Clause
         Public Property SP_DocCheck_MultiClause As String Implements ISharedContext.SP_DocCheck_MultiClause
         Public Property SP_DocCheck_MultiClauseSum As String Implements ISharedContext.SP_DocCheck_MultiClauseSum
@@ -447,6 +456,8 @@ Namespace SharedLibrary
         Public Property INI_WebAgentPathLocal As String Implements ISharedContext.INI_WebAgentPathLocal
         Public Property INI_DocCheckPath As String Implements ISharedContext.INI_DocCheckPath
         Public Property INI_DocCheckPathLocal As String Implements ISharedContext.INI_DocCheckPathLocal
+        Public Property INI_DocStylePath As String Implements ISharedContext.INI_DocStylePath
+        Public Property INI_DocStylePathLocal As String Implements ISharedContext.INI_DocStylePathLocal
         Public Property INI_PromptLibPath_Transcript As String Implements ISharedContext.INI_PromptLibPath_Transcript
         Public Property PromptLibrary() As List(Of String) Implements ISharedContext.PromptLibrary
         Public Property PromptTitles() As List(Of String) Implements ISharedContext.PromptTitles

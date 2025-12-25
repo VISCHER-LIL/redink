@@ -886,6 +886,14 @@ Partial Class Ribbon1
             Me.RI_EditRedact.Visible = True
         End If
 
+        If Trim(ThisAddIn.INI_DocStylePath) = "" And Trim(ThisAddIn.INI_DocStylePath) = "" Then
+            Me.RI_ApplyDocStyle.Visible = False
+            Me.RI_LearnDocStyle.Visible = False
+        Else
+            Me.RI_ApplyDocStyle.Visible = True
+            Me.RI_LearnDocStyle.Visible = True
+        End If
+
         If Trim(ThisAddIn.INI_SpecialServicePath) = "" Then
             Me.RI_SpecialModel.Visible = False
         Else

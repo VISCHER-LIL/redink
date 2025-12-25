@@ -203,5 +203,11 @@
     <Setting Name="DocStyle_RuleHeadingOutlineLevelMax" Type="System.Int32" Scope="User">
       <Value Profile="(Default)">4</Value>
     </Setting>
+    <Setting Name="DocStyle_LastStyleTemplateDisplay" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="DocStyle_RestoreInlineFormatting" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">False</Value>
+    </Setting>
   </Settings>
 </SettingsFile>

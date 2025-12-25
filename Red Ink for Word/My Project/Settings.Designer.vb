@@ -856,6 +856,30 @@ Namespace My
                 Me("DocStyle_RuleHeadingOutlineLevelMax") = value
             End Set
         End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("")>  _
+        Public Property DocStyle_LastStyleTemplateDisplay() As String
+            Get
+                Return CType(Me("DocStyle_LastStyleTemplateDisplay"),String)
+            End Get
+            Set
+                Me("DocStyle_LastStyleTemplateDisplay") = value
+            End Set
+        End Property
+        
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("False")>  _
+        Public Property DocStyle_RestoreInlineFormatting() As Boolean
+            Get
+                Return CType(Me("DocStyle_RestoreInlineFormatting"),Boolean)
+            End Get
+            Set
+                Me("DocStyle_RestoreInlineFormatting") = value
+            End Set
+        End Property
     End Class
 End Namespace
 
