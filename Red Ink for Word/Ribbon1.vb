@@ -312,4 +312,11 @@ Public Class Ribbon1
         Globals.ThisAddIn.DiscussInky()
     End Sub
 
+    Private Sub RI_LearnDocStyle_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_LearnDocStyle.Click
+        Globals.ThisAddIn.ExtractParagraphStylesToJson()
+    End Sub
+
+    Private Sub RI_ApplyDocStyle_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_ApplyDocStyle.Click
+        Globals.ThisAddIn.ApplyStyleTemplate()
+    End Sub
 End Class

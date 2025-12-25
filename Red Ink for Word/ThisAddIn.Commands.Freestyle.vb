@@ -610,6 +610,19 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
+            ' Run learn doc style
+            If OtherPrompt.StartsWith("learndocstyle", StringComparison.OrdinalIgnoreCase) Then
+                ExtractParagraphStylesToJson()
+                Return
+            End If
+
+            ' Run apply doc style
+            If OtherPrompt.StartsWith("applydocstyle", StringComparison.OrdinalIgnoreCase) Then
+                ApplyStyleTemplate()
+                Return
+            End If
+
+
             ' Find clause in library/database
             If OtherPrompt.StartsWith("findclause", StringComparison.OrdinalIgnoreCase) Then
                 FindClause()
