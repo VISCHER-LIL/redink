@@ -13,6 +13,9 @@ Namespace SharedLibrary
         Public Shared ReadOnly Property AppsUrl As String = "https://redink.ai/apps"
         Public Shared ReadOnly Property AppsUrlDir As String = "/develop/"
         Public Shared ReadOnly Property VersionQualifier As String = " Develop"
+
+        Public Shared ReadOnly DefaultUpdateIntervalDays As Integer = 1
+
 #End If
 
     End Class

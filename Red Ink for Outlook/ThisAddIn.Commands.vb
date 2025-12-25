@@ -81,7 +81,8 @@ Partial Public Class ThisAddIn
 
             ' Use fully qualified names to avoid ambiguity
             Dim outlookApp As Microsoft.Office.Interop.Outlook.Application = Globals.ThisAddIn.Application
-            Dim inspector As Microsoft.Office.Interop.Outlook.Inspector = ComRetry(Function() outlookApp.ActiveInspector())
+
+            Dim inspector As Microsoft.Office.Interop.Outlook.Inspector = GetActiveInspector()
 
             Dim Textlength As Long
 
@@ -364,7 +365,7 @@ Partial Public Class ThisAddIn
                         Dim selectedItem As Object = selection(1)
                         If TypeOf selectedItem Is Outlook.MailItem Then
                             Dim mail As Outlook.MailItem = CType(selectedItem, Outlook.MailItem)
-                            Dim selectedText As String = mail.Body
+                            Dim selectedText As String = GetMailBody(mail)
                             ShowSumup(selectedText)
                             Return
                         Else
@@ -383,9 +384,9 @@ Partial Public Class ThisAddIn
                                 TranslateLanguage = INI_Language1
                             End If
 
+                            ' In OpenInspectorAndReapplySelection, replace the Translate single-item part:
                             Dim mail As Outlook.MailItem = CType(selectedItem, Outlook.MailItem)
-                            Dim selectedText As String = mail.Body
-
+                            Dim selectedText As String = GetMailBody(mail)
                             ShowTranslate(selectedText)
                             Return
 
@@ -479,6 +480,31 @@ Partial Public Class ThisAddIn
         End Try
     End Sub
 
+
+    Private Function GetMailBody(mi As Outlook.MailItem) As String
+        If mi Is Nothing Then Return ""
+
+        Const PR_BODY As String = "http://schemas.microsoft.com/mapi/proptag/0x1000001E" ' PidTagBody (string)
+
+        Try
+            ' Prefer MAPI property (works even if item is open read-only elsewhere)
+            Dim pa = ComRetry(Function() mi.PropertyAccessor)
+            If pa IsNot Nothing Then
+                Dim bodyObj As Object = ComRetry(Function() pa.GetProperty(PR_BODY))
+                Dim body As String = TryCast(bodyObj, String)
+                If Not String.IsNullOrEmpty(body) Then Return body
+            End If
+        Catch
+            ' ignore -> fall back
+        End Try
+
+        Try
+            ' Fallback to Outlook Body (may fail if locked, so keep it last)
+            Return ComRetry(Function() mi.Body)
+        Catch
+            Return ""
+        End Try
+    End Function
 
     ''' <summary>
     ''' Extracts latest (non-quoted) mail body portion by scanning for known reply/forward markers and header patterns.
