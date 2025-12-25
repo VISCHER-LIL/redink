@@ -1,7 +1,7 @@
 ﻿' Part of "Red Ink for Excel"
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 '
-' 22.12.2025
+' 25.12.2025
 '
 ' The compiled version of Red Ink also ...
 '
@@ -55,7 +55,7 @@ Partial Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Shared Version As String = "V.221225" & SharedMethods.VersionQualifier
+    Public Shared Version As String = "V.251225" & SharedMethods.VersionQualifier
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -71,6 +71,7 @@ Partial Public Class ThisAddIn
     Private Const PanePrefix As String = "Pane:"
     Private Const BubblesPrefix As String = "Bubbles:"
     Private Const ExtTrigger As String = "{doc}"
+    Private Const ExtTriggerFixed As String = "{[path]}"
     Private Const ExtWSTrigger As String = "(addws)"
     Private Const ObjectTrigger As String = "(file)"
     Private Const ObjectTrigger2 As String = "(clip)"

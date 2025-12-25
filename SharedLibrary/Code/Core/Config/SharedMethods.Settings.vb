@@ -554,7 +554,7 @@ Namespace SharedLibrary
         "DoubleS", "NoEmDash", "Clean", "MarkdownBubbles", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
         "KeepFormat2", "KeepParaFormatInline", "ReplaceText2", "DoMarkupOutlook", "DoMarkupWord",
         "APIDebug", "ISearch_Approve", "ISearch", "Lib", "ContextMenu", "SecondAPI", "APIEncrypted", "APIEncrypted_2",
-        "OAuth2", "OAuth2_2", "PromptLib"
+        "OAuth2", "OAuth2_2", "PromptLib", "Ignore"
             }
             Return booleanSettings.Contains(settingKey)
         End Function
@@ -641,6 +641,8 @@ Namespace SharedLibrary
                     Return context.INI_DoubleS.ToString()
                 Case "Clean"
                     Return context.INI_Clean.ToString()
+                Case "Ignore"
+                    Return context.INI_Ignore.ToString()
                 Case "NoEmDash"
                     Return context.INI_NoDash.ToString()
                 Case "MarkdownBubbles"
@@ -887,6 +889,8 @@ Namespace SharedLibrary
                     context.INI_DoubleS = Boolean.Parse(value)
                 Case "Clean"
                     context.INI_Clean = Boolean.Parse(value)
+                Case "Ignore"
+                    context.INI_Ignore = Boolean.Parse(value)
                 Case "NoEmDash"
                     context.INI_NoDash = Boolean.Parse(value)
                 Case "MarkdownBubbles"
@@ -1049,6 +1053,7 @@ Namespace SharedLibrary
             End Select
 
             If context.INI_PromptLibPath.Trim() = "" And context.INI_PromptLibPathLocal.Trim() = "" Then context.INI_PromptLib = False Else context.INI_PromptLib = True
+            If context.INI_Ignore Then context.Ignore = context.SP_Ignore Else context.Ignore = ""
 
         End Sub
 
@@ -1160,7 +1165,6 @@ Namespace SharedLibrary
         Public Shared Sub UpdateAppConfig(ByRef context As ISharedContext)
             Try
 
-
                 Dim IniFilePath As String = ""
                 Dim RegFilePath As String = ""
                 Dim DefaultPath As String = ""
@@ -1219,6 +1223,7 @@ Namespace SharedLibrary
                     {"Language2", context.INI_Language2},
                     {"DoubleS", context.INI_DoubleS.ToString()},
                     {"Clean", context.INI_Clean.ToString()},
+                    {"Ignore", context.INI_Ignore.ToString()},
                     {"NoEmDash", context.INI_NoDash.ToString()},
                     {"DefaultPrefix", context.INI_DefaultPrefix},
                     {"MarkdownBubbles", context.INI_MarkdownBubbles.ToString()},
@@ -1360,6 +1365,7 @@ Namespace SharedLibrary
                     {"SP_ContextSearchMulti", context.SP_ContextSearchMulti},
                     {"SP_RangeOfCells", context.SP_RangeOfCells},
                     {"SP_ParseFile", context.SP_ParseFile},
+                    {"SP_Ignore", context.SP_Ignore},
                     {"SP_WriteNeatly", context.SP_WriteNeatly},
                     {"SP_Add_KeepFormulasIntact", context.SP_Add_KeepFormulasIntact},
                     {"SP_Add_KeepHTMLIntact", context.SP_Add_KeepHTMLIntact},
@@ -1433,6 +1439,7 @@ Namespace SharedLibrary
                     {"SP_ContextSearchMulti", Default_SP_ContextSearchMulti},
                     {"SP_RangeOfCells", Default_SP_RangeOfCells},
                     {"SP_ParseFile", Default_SP_ParseFile},
+                    {"SP_Ignore", Default_SP_Ignore},
                     {"SP_WriteNeatly", Default_SP_WriteNeatly},
                     {"SP_Add_KeepFormulasIntact", Default_SP_Add_KeepFormulasIntact},
                     {"SP_Add_KeepHTMLIntact", Default_SP_Add_KeepHTMLIntact},
@@ -1737,8 +1744,6 @@ Namespace SharedLibrary
         End Function
 
 
-
-
         Public Shared Function ShowVariableConfigurationWindow(
         variableNames As List(Of String),
         variableValues As Dictionary(Of String, Object),
@@ -1977,6 +1982,7 @@ Namespace SharedLibrary
             variableValues.Add("TokenCount", context.INI_TokenCount)
             variableValues.Add("DoubleS", context.INI_DoubleS)
             variableValues.Add("Clean", context.INI_Clean)
+            variableValues.Add("Ignore", context.INI_Ignore)
             variableValues.Add("NoEmDash", context.INI_NoDash)
             variableValues.Add("DefaultPrefix", context.INI_DefaultPrefix)
             variableValues.Add("MarkdownBubbles", context.INI_MarkdownBubbles)
@@ -2124,6 +2130,7 @@ Namespace SharedLibrary
             variableValues.Add("SP_ContextSearchMulti", context.SP_ContextSearchMulti)
             variableValues.Add("SP_RangeOfCells", context.SP_RangeOfCells)
             variableValues.Add("SP_ParseFile", context.SP_ParseFile)
+            variableValues.Add("SP_Ignore", context.SP_Ignore)
             variableValues.Add("SP_WriteNeatly", context.SP_WriteNeatly)
             variableValues.Add("SP_Add_KeepFormulasIntact", context.SP_Add_KeepFormulasIntact)
             variableValues.Add("SP_Add_KeepHTMLIntact", context.SP_Add_KeepHTMLIntact)
@@ -2173,6 +2180,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("TokenCount") Then context.INI_TokenCount = CStr(updatedValues("TokenCount"))
                 If updatedValues.ContainsKey("DoubleS") Then context.INI_DoubleS = CBool(updatedValues("DoubleS"))
                 If updatedValues.ContainsKey("Clean") Then context.INI_Clean = CBool(updatedValues("Clean"))
+                If updatedValues.ContainsKey("Ignore") Then context.INI_Ignore = CBool(updatedValues("Ignore"))
                 If updatedValues.ContainsKey("NoEmDash") Then context.INI_NoDash = CBool(updatedValues("NoEmDash"))
                 If updatedValues.ContainsKey("DefaultPrefix") Then context.INI_DefaultPrefix = CStr(updatedValues("DefaultPrefix"))
                 If updatedValues.ContainsKey("MarkdownBubbles") Then context.INI_MarkdownBubbles = CBool(updatedValues("MarkdownBubbles"))
@@ -2267,6 +2275,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_ContextSearchMulti") Then context.SP_ContextSearchMulti = CStr(updatedValues("SP_ContextSearchMulti"))
                 If updatedValues.ContainsKey("SP_RangeOfCells") Then context.SP_RangeOfCells = CStr(updatedValues("SP_RangeOfCells"))
                 If updatedValues.ContainsKey("SP_ParseFile") Then context.SP_ParseFile = CStr(updatedValues("SP_ParseFile"))
+                If updatedValues.ContainsKey("SP_Ignore") Then context.SP_Ignore = CStr(updatedValues("SP_Ignore"))
                 If updatedValues.ContainsKey("SP_WriteNeatly") Then context.SP_WriteNeatly = CStr(updatedValues("SP_WriteNeatly"))
                 If updatedValues.ContainsKey("SP_Add_KeepFormulasIntact") Then context.SP_Add_KeepFormulasIntact = CStr(updatedValues("SP_Add_KeepFormulasIntact"))
                 If updatedValues.ContainsKey("SP_Add_KeepHTMLIntact") Then context.SP_Add_KeepHTMLIntact = CStr(updatedValues("SP_Add_KeepHTMLIntact"))

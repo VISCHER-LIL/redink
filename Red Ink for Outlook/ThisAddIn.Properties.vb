@@ -216,6 +216,15 @@ Partial Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_Ignore As Boolean
+        Get
+            Return _context.INI_Ignore
+        End Get
+        Set(value As Boolean)
+            _context.INI_Ignore = value
+        End Set
+    End Property
+
     Public Shared Property INI_NoDash As Boolean
         Get
             Return _context.INI_NoDash
@@ -1066,6 +1075,16 @@ Partial Public Class ThisAddIn
             _context.SP_ParseFile = value
         End Set
     End Property
+
+    Public Shared Property SP_Ignore As String
+        Get
+            Return _context.SP_Ignore
+        End Get
+        Set(value As String)
+            _context.SP_Ignore = value
+        End Set
+    End Property
+
     Public Shared Property SP_WriteNeatly As String
         Get
             Return _context.SP_WriteNeatly
@@ -1893,6 +1912,15 @@ Partial Public Class ThisAddIn
         End Get
         Set(value As String)
             _context.SP_Add_MergePrompt = value
+        End Set
+    End Property
+
+    Public Shared Property Ignore As String
+        Get
+            Return _context.Ignore
+        End Get
+        Set(value As String)
+            _context.Ignore = value
         End Set
     End Property
 

@@ -68,6 +68,7 @@ Partial Public Class ThisAddIn
     Private Const TPMarkupTriggerR As String = ")"
     Private Const TPMarkupTriggerInstruct As String = "(rev[:user])"
     Private Const ExtTrigger As String = "{doc}"
+    Private Const ExtTriggerFixed As String = "{[path]}"
     Private Const AddDocTrigger As String = "(adddoc)"
     Private Const MyStyleTrigger As String = "(mystyle)"
     Private Const MultiModelTrigger As String = "(multimodel)"

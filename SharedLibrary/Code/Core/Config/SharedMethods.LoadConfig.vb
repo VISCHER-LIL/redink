@@ -165,6 +165,7 @@ Namespace SharedLibrary
                 context.SP_MergePrompt2 = If(configDict.ContainsKey("SP_MergePrompt2"), configDict("SP_MergePrompt2"), Default_SP_MergePrompt2)
                 context.SP_Add_MergePrompt = If(configDict.ContainsKey("SP_Add_MergePrompt"), configDict("SP_Add_MergePrompt"), Default_SP_Add_MergePrompt)
                 context.SP_FindPrompts = If(configDict.ContainsKey("SP_FindPrompts"), configDict("SP_FindPrompts"), Default_SP_FindPrompts)
+                context.SP_Ignore = If(configDict.ContainsKey("SP_Ignore"), configDict("SP_Ignore"), Default_SP_Ignore)
 
                 ' Required For Excel Helper
                 context.INI_OpenSSLPath = If(configDict.ContainsKey("OpenSSLPath"), configDict("OpenSSLPath"), "%APPDATA%\Microsoft\OpenSSL_Runtime\openssl.exe")
@@ -192,6 +193,7 @@ Namespace SharedLibrary
                 ' Boolean parameters
                 context.INI_DoubleS = ParseBoolean(configDict, "DoubleS")
                 context.INI_Clean = ParseBoolean(configDict, "Clean")
+                context.INI_Ignore = ParseBoolean(configDict, "Ignore")
                 context.INI_NoDash = ParseBoolean(configDict, "NoEmDash")
                 context.INI_MarkdownBubbles = ParseBoolean(configDict, "MarkdownBubbles")
                 context.INI_KeepFormat1 = ParseBoolean(configDict, "KeepFormat1")
@@ -199,15 +201,16 @@ Namespace SharedLibrary
                 context.INI_KeepFormat2 = ParseBoolean(configDict, "KeepFormat2")
                 context.INI_MarkdownConvert = ParseBoolean(configDict, "MarkdownConvert", True)
                 context.INI_KeepParaFormatInline = ParseBoolean(configDict, "KeepParaFormatInline")
-                context.INI_ReplaceText2 = ParseBoolean(configDict, "ReplaceText2")
+                context.INI_ReplaceText2 = ParseBoolean(configDict, "ReplaceText2", True)
                 context.INI_DoMarkupOutlook = ParseBoolean(configDict, "DoMarkupOutlook", True)
                 context.INI_DoMarkupWord = ParseBoolean(configDict, "DoMarkupWord", True)
                 context.INI_RoastMe = ParseBoolean(configDict, "RoastMe", False)
                 context.INI_APIDebug = ParseBoolean(configDict, "APIDebug")
                 context.INI_APIEncrypted = ParseBoolean(configDict, "APIKeyEncrypted")
-
                 context.INI_ShortcutsWordExcel = If(configDict.ContainsKey("ShortcutsWordExcel"), configDict("ShortcutsWordExcel"), "")
                 context.INI_ContextMenu = ParseBoolean(configDict, "ContextMenu", True)
+
+                If context.INI_Ignore Then context.Ignore = context.SP_Ignore Else context.Ignore = ""
 
                 ' Other parameters
 
@@ -326,8 +329,6 @@ Namespace SharedLibrary
 
                 context.INI_APIKeyBack = context.INI_APIKey
                 context.INI_APIKeyBack_2 = context.INI_APIKey_2
-
-                'LicensedTill = If(configDict.ContainsKey("LicensedTill"), CDate(configDict("LicensedTill")), MaxUseDate)
 
                 If Not LicenseOK(context, configDict) Then
                     ShowCustomMessageBox($"{AN} disabled due to invalid or expired license.")
