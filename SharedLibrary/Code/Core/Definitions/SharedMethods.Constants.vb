@@ -63,16 +63,18 @@ Namespace SharedLibrary
 
         ' App Updating and Download Urls and VersionQualifier (will be added to the version string in the add-ins and the About box)
 
+#If DEVELOP Then
+
         ' Note: The properties for DEVELOP are defined at SharedMethods.OwnBuild.UpdateURLs.vb, so you can keep it untouched if you update your codebase with code from the repo
 
-#If PREVIEW Then
+#ElseIf PREVIEW Then
 
         Public Shared ReadOnly Property AppsUrl As String = "https://redink.ai"
         Public Shared ReadOnly Property AppsUrlDir As String = "/apps/preview/"
         Public Shared ReadOnly Property VersionQualifier As String = " Preview"
         Public Shared Readonly DefaultUpdateIntervalDays As Integer = 3
 
-#ElseIf Not DEVELOP Then    ' This is for General Audience (GA)
+#Else   ' This is for General Audience (GA)
 
         Public Shared ReadOnly Property AppsUrl As String = "https://redink.ai"
         Public Shared ReadOnly Property AppsUrlDir As String = "/apps/ga/"
