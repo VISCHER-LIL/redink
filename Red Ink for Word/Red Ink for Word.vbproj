@@ -44,7 +44,6 @@
     <UpdateIntervalUnits>days</UpdateIntervalUnits>
     <PublisherName>LawDigital Ltd.</PublisherName>
     <SupportUrl>https://redink.ai</SupportUrl>
-    <FriendlyName>Red Ink for Word</FriendlyName>
     <OfficeApplicationDescription />
     <LoadBehavior>3</LoadBehavior>
   </PropertyGroup>
