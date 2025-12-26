@@ -17,17 +17,15 @@
     </NuGetPackageImportStamp>
     <TargetFrameworkProfile />
   </PropertyGroup>
-	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
-		<DefineConstants>DEVELOP</DefineConstants>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
-		<DefineConstants>PREVIEW</DefineConstants>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(RedInkEnvironment)' != 'Develop' and '$(RedInkEnvironment)' != 'Preview'">
-		<DefineConstants>GA</DefineConstants>
-	</PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
+    <DefineConstants>DEVELOP</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
+    <DefineConstants>PREVIEW</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' != 'Develop' and '$(RedInkEnvironment)' != 'Preview'">
+    <DefineConstants>GA</DefineConstants>
+  </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
@@ -331,6 +329,7 @@
     <Compile Include="Code\Core\Clipboard\SharedMethods.ClipboardSnapshot.vb" />
     <Compile Include="Code\Core\Clipboard\SharedMethods.PutInClipboard.vb" />
     <Compile Include="Code\Core\Clipboard\SharedMethods.StoreAndRestoreClipboard.vb" />
+    <Compile Include="Code\Core\Config\SharedMethods.UpdateIni.vb" />
     <Compile Include="Code\Core\Config\SharedMethods.License.vb" />
     <Compile Include="Code\Core\Config\SharedMethods.LoadConfig.vb" />
     <Compile Include="Code\Core\Config\SharedMethods.Settings.vb" />
