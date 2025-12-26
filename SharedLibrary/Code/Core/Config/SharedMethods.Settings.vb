@@ -554,7 +554,7 @@ Namespace SharedLibrary
         "DoubleS", "NoEmDash", "Clean", "MarkdownBubbles", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
         "KeepFormat2", "KeepParaFormatInline", "ReplaceText2", "DoMarkupOutlook", "DoMarkupWord",
         "APIDebug", "ISearch_Approve", "ISearch", "Lib", "ContextMenu", "SecondAPI", "APIEncrypted", "APIEncrypted_2",
-        "OAuth2", "OAuth2_2", "PromptLib"
+        "OAuth2", "OAuth2_2", "PromptLib", "Ignore"
             }
             Return booleanSettings.Contains(settingKey)
         End Function
@@ -641,6 +641,8 @@ Namespace SharedLibrary
                     Return context.INI_DoubleS.ToString()
                 Case "Clean"
                     Return context.INI_Clean.ToString()
+                Case "Ignore"
+                    Return context.INI_Ignore.ToString()
                 Case "NoEmDash"
                     Return context.INI_NoDash.ToString()
                 Case "MarkdownBubbles"
@@ -715,6 +717,10 @@ Namespace SharedLibrary
                     Return context.INI_DocCheckPath
                 Case "DocCheckPathLocal"
                     Return context.INI_DocCheckPathLocal
+                Case "DocStylePath"
+                    Return context.INI_DocStylePath
+                Case "DocStylePathLocal"
+                    Return context.INI_DocStylePathLocal
                 Case "PromptLibPath_Transcript"
                     Return context.INI_PromptLibPath_Transcript
                 Case "SpeechModelPath"
@@ -883,6 +889,8 @@ Namespace SharedLibrary
                     context.INI_DoubleS = Boolean.Parse(value)
                 Case "Clean"
                     context.INI_Clean = Boolean.Parse(value)
+                Case "Ignore"
+                    context.INI_Ignore = Boolean.Parse(value)
                 Case "NoEmDash"
                     context.INI_NoDash = Boolean.Parse(value)
                 Case "MarkdownBubbles"
@@ -959,6 +967,10 @@ Namespace SharedLibrary
                     context.INI_DocCheckPath = value
                 Case "DocCheckPathLocal"
                     context.INI_DocCheckPathLocal = value
+                Case "DocStylePath"
+                    context.INI_DocStylePath = value
+                Case "DocStylePathLocal"
+                    context.INI_DocStylePathLocal = value
                 Case "SpeechModelPath"
                     context.INI_SpeechModelPath = value
                 Case "LocalModelPath"
@@ -1041,6 +1053,7 @@ Namespace SharedLibrary
             End Select
 
             If context.INI_PromptLibPath.Trim() = "" And context.INI_PromptLibPathLocal.Trim() = "" Then context.INI_PromptLib = False Else context.INI_PromptLib = True
+            If context.INI_Ignore Then context.Ignore = context.SP_Ignore Else context.Ignore = ""
 
         End Sub
 
@@ -1152,7 +1165,6 @@ Namespace SharedLibrary
         Public Shared Sub UpdateAppConfig(ByRef context As ISharedContext)
             Try
 
-
                 Dim IniFilePath As String = ""
                 Dim RegFilePath As String = ""
                 Dim DefaultPath As String = ""
@@ -1211,6 +1223,7 @@ Namespace SharedLibrary
                     {"Language2", context.INI_Language2},
                     {"DoubleS", context.INI_DoubleS.ToString()},
                     {"Clean", context.INI_Clean.ToString()},
+                    {"Ignore", context.INI_Ignore.ToString()},
                     {"NoEmDash", context.INI_NoDash.ToString()},
                     {"DefaultPrefix", context.INI_DefaultPrefix},
                     {"MarkdownBubbles", context.INI_MarkdownBubbles.ToString()},
@@ -1306,6 +1319,8 @@ Namespace SharedLibrary
                     {"WebAgentPathLocal", context.INI_WebAgentPathLocal},
                     {"DocCheckPath", context.INI_DocCheckPath},
                     {"DocCheckPathLocal", context.INI_DocCheckPathLocal},
+                    {"DocStylePath", context.INI_DocStylePath},
+                    {"DocStylePathLocal", context.INI_DocStylePathLocal},
                     {"PromptLib_Transcript", context.INI_PromptLibPath_Transcript},
                     {"SP_Translate", context.SP_Translate},
                     {"SP_Correct", context.SP_Correct},
@@ -1313,6 +1328,8 @@ Namespace SharedLibrary
                     {"SP_Explain", context.SP_Explain},
                     {"SP_FindClause", context.SP_FindClause},
                     {"SP_FindClause_Clean", context.SP_FindClause_Clean},
+                    {"SP_ApplyDocStyle", context.SP_ApplyDocStyle},
+                    {"SP_ApplyDocStyle_NumberingHint", context.SP_ApplyDocStyle_NumberingHint},
                     {"SP_DocCheck_Clause", context.SP_DocCheck_Clause},
                     {"SP_DocCheck_MultiClause", context.SP_DocCheck_MultiClause},
                     {"SP_DocCheck_MultiClauseSum", context.SP_DocCheck_MultiClauseSum},
@@ -1348,6 +1365,7 @@ Namespace SharedLibrary
                     {"SP_ContextSearchMulti", context.SP_ContextSearchMulti},
                     {"SP_RangeOfCells", context.SP_RangeOfCells},
                     {"SP_ParseFile", context.SP_ParseFile},
+                    {"SP_Ignore", context.SP_Ignore},
                     {"SP_WriteNeatly", context.SP_WriteNeatly},
                     {"SP_Add_KeepFormulasIntact", context.SP_Add_KeepFormulasIntact},
                     {"SP_Add_KeepHTMLIntact", context.SP_Add_KeepHTMLIntact},
@@ -1384,6 +1402,8 @@ Namespace SharedLibrary
                     {"SP_Explain", Default_SP_Explain},
                     {"SP_FindClause", Default_SP_FindClause},
                     {"SP_FindClause_Clean", Default_SP_FindClause_Clean},
+                    {"SP_ApplyDocStyle", Default_SP_ApplyDocStyle},
+                    {"SP_ApplyDocStyle_NumberingHint", Default_SP_ApplyDocStyle_NumberingHint},
                     {"SP_DocCheck_Clause", Default_SP_DocCheck_Clause},
                     {"SP_DocCheck_MultiClause", Default_SP_DocCheck_MultiClause},
                     {"SP_DocCheck_MultiClauseSum", Default_SP_DocCheck_MulticlauseSum},
@@ -1419,6 +1439,7 @@ Namespace SharedLibrary
                     {"SP_ContextSearchMulti", Default_SP_ContextSearchMulti},
                     {"SP_RangeOfCells", Default_SP_RangeOfCells},
                     {"SP_ParseFile", Default_SP_ParseFile},
+                    {"SP_Ignore", Default_SP_Ignore},
                     {"SP_WriteNeatly", Default_SP_WriteNeatly},
                     {"SP_Add_KeepFormulasIntact", Default_SP_Add_KeepFormulasIntact},
                     {"SP_Add_KeepHTMLIntact", Default_SP_Add_KeepHTMLIntact},
@@ -1630,6 +1651,8 @@ Namespace SharedLibrary
                     {"WebAgentPathLocal", context.INI_WebAgentPathLocal},
                     {"DocCheckPath", context.INI_DocCheckPath},
                     {"DocCheckPathLocal", context.INI_DocCheckPathLocal},
+                    {"DocStylePath", context.INI_DocStylePath},
+                    {"DocStylePathLocal", context.INI_DocStylePathLocal},
                     {"PromptLib_Transcript", context.INI_PromptLibPath_Transcript},
                     {"RedactionInstructionsPath", context.INI_RedactionInstructionsPath},
                     {"RedactionInstructionsPathLocal", context.INI_RedactionInstructionsPathLocal},
@@ -1719,8 +1742,6 @@ Namespace SharedLibrary
             End If
             Return RemoveCR(candidate)
         End Function
-
-
 
 
         Public Shared Function ShowVariableConfigurationWindow(
@@ -1961,6 +1982,7 @@ Namespace SharedLibrary
             variableValues.Add("TokenCount", context.INI_TokenCount)
             variableValues.Add("DoubleS", context.INI_DoubleS)
             variableValues.Add("Clean", context.INI_Clean)
+            variableValues.Add("Ignore", context.INI_Ignore)
             variableValues.Add("NoEmDash", context.INI_NoDash)
             variableValues.Add("DefaultPrefix", context.INI_DefaultPrefix)
             variableValues.Add("MarkdownBubbles", context.INI_MarkdownBubbles)
@@ -2062,6 +2084,8 @@ Namespace SharedLibrary
             variableValues.Add("WebAgentPathLocal", context.INI_WebAgentPathLocal)
             variableValues.Add("DocCheckPath", context.INI_DocCheckPath)
             variableValues.Add("DocCheckPathLocal", context.INI_DocCheckPathLocal)
+            variableValues.Add("DocStylePath", context.INI_DocStylePath)
+            variableValues.Add("DocStylePathLocal", context.INI_DocStylePathLocal)
             variableValues.Add("PromptLib_Transcript", context.INI_PromptLibPath_Transcript)
             variableValues.Add("SP_Translate", context.SP_Translate)
             variableValues.Add("SP_Correct", context.SP_Correct)
@@ -2069,6 +2093,8 @@ Namespace SharedLibrary
             variableValues.Add("SP_Explain", context.SP_Explain)
             variableValues.Add("SP_FindClause", context.SP_FindClause)
             variableValues.Add("SP_FindClause_Clean", context.SP_FindClause_Clean)
+            variableValues.Add("SP_ApplyDocStyle", context.SP_ApplyDocStyle)
+            variableValues.Add("SP_ApplyDocStyle_NumberingHint", context.SP_ApplyDocStyle_NumberingHint)
             variableValues.Add("SP_DocCheck_Clause", context.SP_DocCheck_Clause)
             variableValues.Add("SP_DocCheck_MultiClause", context.SP_DocCheck_MultiClause)
             variableValues.Add("SP_DocCheck_MultiClauseSum", context.SP_DocCheck_MultiClauseSum)
@@ -2104,6 +2130,7 @@ Namespace SharedLibrary
             variableValues.Add("SP_ContextSearchMulti", context.SP_ContextSearchMulti)
             variableValues.Add("SP_RangeOfCells", context.SP_RangeOfCells)
             variableValues.Add("SP_ParseFile", context.SP_ParseFile)
+            variableValues.Add("SP_Ignore", context.SP_Ignore)
             variableValues.Add("SP_WriteNeatly", context.SP_WriteNeatly)
             variableValues.Add("SP_Add_KeepFormulasIntact", context.SP_Add_KeepFormulasIntact)
             variableValues.Add("SP_Add_KeepHTMLIntact", context.SP_Add_KeepHTMLIntact)
@@ -2153,6 +2180,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("TokenCount") Then context.INI_TokenCount = CStr(updatedValues("TokenCount"))
                 If updatedValues.ContainsKey("DoubleS") Then context.INI_DoubleS = CBool(updatedValues("DoubleS"))
                 If updatedValues.ContainsKey("Clean") Then context.INI_Clean = CBool(updatedValues("Clean"))
+                If updatedValues.ContainsKey("Ignore") Then context.INI_Ignore = CBool(updatedValues("Ignore"))
                 If updatedValues.ContainsKey("NoEmDash") Then context.INI_NoDash = CBool(updatedValues("NoEmDash"))
                 If updatedValues.ContainsKey("DefaultPrefix") Then context.INI_DefaultPrefix = CStr(updatedValues("DefaultPrefix"))
                 If updatedValues.ContainsKey("MarkdownBubbles") Then context.INI_MarkdownBubbles = CBool(updatedValues("MarkdownBubbles"))
@@ -2210,6 +2238,8 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_Explain") Then context.SP_Explain = CStr(updatedValues("SP_Explain"))
                 If updatedValues.ContainsKey("SP_FindClause") Then context.SP_FindClause = CStr(updatedValues("SP_FindClause"))
                 If updatedValues.ContainsKey("SP_FindClause_Clean") Then context.SP_FindClause_Clean = CStr(updatedValues("SP_FindClause_Clean"))
+                If updatedValues.ContainsKey("SP_ApplyDocStyle") Then context.SP_ApplyDocStyle = CStr(updatedValues("SP_ApplyDocStyle"))
+                If updatedValues.ContainsKey("SP_ApplyDocStyle_NumberingHint") Then context.SP_ApplyDocStyle_NumberingHint = CStr(updatedValues("SP_ApplyDocStyle_NumberingHint"))
                 If updatedValues.ContainsKey("SP_DocCheck_Clause") Then context.SP_DocCheck_Clause = CStr(updatedValues("SP_DocCheck_Clause"))
                 If updatedValues.ContainsKey("SP_DocCheck_MultiClause") Then context.SP_DocCheck_MultiClause = CStr(updatedValues("SP_DocCheck_MultiClause"))
                 If updatedValues.ContainsKey("SP_DocCheck_MultiClauseSum") Then context.SP_DocCheck_MultiClauseSum = CStr(updatedValues("SP_DocCheck_MultiClauseSum"))
@@ -2245,6 +2275,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_ContextSearchMulti") Then context.SP_ContextSearchMulti = CStr(updatedValues("SP_ContextSearchMulti"))
                 If updatedValues.ContainsKey("SP_RangeOfCells") Then context.SP_RangeOfCells = CStr(updatedValues("SP_RangeOfCells"))
                 If updatedValues.ContainsKey("SP_ParseFile") Then context.SP_ParseFile = CStr(updatedValues("SP_ParseFile"))
+                If updatedValues.ContainsKey("SP_Ignore") Then context.SP_Ignore = CStr(updatedValues("SP_Ignore"))
                 If updatedValues.ContainsKey("SP_WriteNeatly") Then context.SP_WriteNeatly = CStr(updatedValues("SP_WriteNeatly"))
                 If updatedValues.ContainsKey("SP_Add_KeepFormulasIntact") Then context.SP_Add_KeepFormulasIntact = CStr(updatedValues("SP_Add_KeepFormulasIntact"))
                 If updatedValues.ContainsKey("SP_Add_KeepHTMLIntact") Then context.SP_Add_KeepHTMLIntact = CStr(updatedValues("SP_Add_KeepHTMLIntact"))
@@ -2299,7 +2330,6 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("HelpMeInkyPath") Then context.INI_HelpMeInkyPath = CStr(updatedValues("HelpMeInkyPath"))
                 If updatedValues.ContainsKey("DiscussInkyPath") Then context.INI_DiscussInkyPath = CStr(updatedValues("DiscussInkyPath"))
                 If updatedValues.ContainsKey("DiscussInkyPathLocal") Then context.INI_DiscussInkyPathLocal = CStr(updatedValues("DiscussInkyPathLocal"))
-
                 If updatedValues.ContainsKey("RedactionInstructionsPath") Then context.INI_RedactionInstructionsPath = CStr(updatedValues("RedactionInstructionsPath"))
                 If updatedValues.ContainsKey("RedactionInstructionsPathLocal") Then context.INI_RedactionInstructionsPathLocal = CStr(updatedValues("RedactionInstructionsPathLocal"))
                 If updatedValues.ContainsKey("ExtractorPath") Then context.INI_ExtractorPath = CStr(updatedValues("ExtractorPath"))
@@ -2320,6 +2350,8 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("WebAgentPathLocal") Then context.INI_WebAgentPathLocal = CStr(updatedValues("WebAgentPathLocal"))
                 If updatedValues.ContainsKey("DocCheckPath") Then context.INI_DocCheckPath = CStr(updatedValues("DocCheckPath"))
                 If updatedValues.ContainsKey("DocCheckPathLocal") Then context.INI_DocCheckPathLocal = CStr(updatedValues("DocCheckPathLocal"))
+                If updatedValues.ContainsKey("DocStylePath") Then context.INI_DocStylePath = CStr(updatedValues("DocStylePath"))
+                If updatedValues.ContainsKey("DocStylePathLocal") Then context.INI_DocStylePathLocal = CStr(updatedValues("DocStylePathLocal"))
                 If updatedValues.ContainsKey("PromptLib_Transcript") Then context.INI_PromptLibPath_Transcript = CStr(updatedValues("PromptLib_Transcript"))
 
                 ' Call UpdateAppConfig after all updates

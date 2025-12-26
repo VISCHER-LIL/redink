@@ -71,6 +71,7 @@ Partial Public Class ThisAddIn
     Private Const PanePrefix As String = "Pane:"
     Private Const BubblesPrefix As String = "Bubbles:"
     Private Const ExtTrigger As String = "{doc}"
+    Private Const ExtTriggerFixed As String = "{[path]}"
     Private Const ExtWSTrigger As String = "(addws)"
     Private Const ObjectTrigger As String = "(file)"
     Private Const ObjectTrigger2 As String = "(clip)"
