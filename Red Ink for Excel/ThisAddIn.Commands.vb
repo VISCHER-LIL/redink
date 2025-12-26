@@ -22,13 +22,13 @@ Option Explicit On
 '          controlling range vs cell-by-cell vs formula handling, color check, pane usage,
 '          file object inclusion, batch path, worksheet content, and shortening percentage.
 '   - Freestyle(...) parses prefix triggers (CellByCellPrefix, CellByCellPrefix2, TextPrefix,
-'       TextPrefix2, BubblesPrefix, PanePrefix, BatchPrefix, PurePrefix, ExtTrigger,
+'       TextPrefix2, BubblesPrefix, PanePrefix, BatchPrefix, PurePrefix, ExtTrigger, ExtTriggerFixed,
 '       ExtWSTrigger, ColorTrigger, ObjectTrigger, ObjectTrigger2) to derive execution mode
 '       and augment OtherPrompt with file content, worksheet text, color analysis, file object
 '       reference, clipboard object, or batch directory processing.
 '   - Batch processing: collects a target insertion line (LineNumber) and directory path
 '       (BatchPath), validating presence of allowedExtensions.
-'   - File/worksheet inclusion: replaces ExtTrigger occurrences with tagged file content; adds
+'   - File/worksheet inclusion: replaces ExtTrigger and ExtTriggerFixed occurrences with tagged file content; adds
 '       additional worksheet text via GatherSelectedWorksheets when ExtWSTrigger is present.
 '   - Settings: builds dictionaries of setting names/descriptions and displays a settings window;
 '       refreshes menus via AddContextMenu using a SplashScreen.
@@ -305,7 +305,7 @@ Partial Public Class ThisAddIn
         Dim BatchInstruct As String = $"use '{BatchPrefix}' if to process a directory of files"
         Dim BubblesInstruct As String = $"use '{BubblesPrefix}' for inserting comments only"
         Dim PaneInstruct As String = $"use '{PanePrefix}' for using the pane"
-        Dim ExtInstruct As String = $"; insert '{ExtTrigger}' (multiple times) for text of (a) file(s) (txt, docx, pdf) or '{ExtWSTrigger}' to add more worksheet(s)"
+        Dim ExtInstruct As String = $"; insert '{ExtTrigger}' or '{ExtTriggerFixed}' (multiple times) for text of (a) file(s) (txt, docx, pdf) or '{ExtWSTrigger}' to add more worksheet(s)"
         Dim AddonInstruct As String = $"; add '{ColorTrigger}' to check for colorcodes"
         Dim ObjectInstruct As String = $"; add '{ObjectTrigger}'/'{ObjectTrigger2}' for adding a file object"
         Dim FileObject As String = ""
@@ -497,6 +497,8 @@ Partial Public Class ThisAddIn
             DoColor = True
             OtherPrompt = Regex.Replace(OtherPrompt, Regex.Escape(ColorTrigger), "", RegexOptions.IgnoreCase)
         End If
+
+
         If Not String.IsNullOrEmpty(OtherPrompt) AndAlso OtherPrompt.IndexOf(ExtTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
             ' Count total occurrences first (case-insensitive) so inserted file text containing {doc} does not trigger extra loops.
             Dim totalOccurrences As Integer = Regex.Matches(OtherPrompt, Regex.Escape(ExtTrigger), RegexOptions.IgnoreCase).Count
@@ -555,6 +557,204 @@ Partial Public Class ThisAddIn
                 Next
             End If
         End If
+
+        ' === External file embedding via fixed path placeholder (e.g., "{C:\x\y.txt}" or "<C:\x\y.txt>") ===
+        ' ExtTriggerFixed contains the template, currently "{[path]}". The prefix/suffix around "[path]" define the delimiter pair.
+        ' If the text between prefix/suffix is a valid existing file path, replace the whole token with the file contents (silent).
+        ' If the file does not exist or cannot be loaded, replace with "".
+        ' Otherwise (e.g., "{summer}"), leave the token untouched.
+        '
+        ' Wrapping behavior: identical to {doc} (ExtTrigger):
+        '   - If the token is already enclosed by an XML tag pair <tag>...{pathToken}...</tag>, do NOT add <document...> wrapper.
+        '   - Otherwise, auto-wrap with <document> or <documentN>...</documentN> (N = occurrence #35; only counts actual file tokens).
+        If Not String.IsNullOrEmpty(OtherPrompt) AndAlso
+           Not String.IsNullOrWhiteSpace(ExtTriggerFixed) AndAlso
+           ExtTriggerFixed.IndexOf("[path]", StringComparison.OrdinalIgnoreCase) >= 0 Then
+
+            Dim pathTokenIndex As Integer = ExtTriggerFixed.IndexOf("[path]", StringComparison.OrdinalIgnoreCase)
+            Dim fixedPrefix As String = ExtTriggerFixed.Substring(0, pathTokenIndex)
+            Dim fixedSuffix As String = ExtTriggerFixed.Substring(pathTokenIndex + "[path]".Length)
+
+            ' Safety: do nothing if delimiters are not usable.
+            If String.IsNullOrEmpty(fixedPrefix) AndAlso String.IsNullOrEmpty(fixedSuffix) Then
+                ' No-op
+            Else
+                ' counts per path (to report repeated includes)
+                Dim loadedOkCounts As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase)
+                Dim loadedFailCounts As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase)
+
+                ' Match minimal text between delimiters.
+                Dim patternFixed As String =
+                    Regex.Escape(fixedPrefix) &
+                    "(?<path>.*?)" &
+                    Regex.Escape(fixedSuffix)
+
+                Dim fixedMatches As MatchCollection = Regex.Matches(
+                    OtherPrompt,
+                    patternFixed,
+                    RegexOptions.IgnoreCase Or RegexOptions.Singleline
+                )
+
+                If fixedMatches.Count > 0 Then
+
+                    ' Determine how many of the tokens are actual "path attempts" (used for numbering <documentN>).
+                    Dim fileTokenMatches As New List(Of Match)()
+                    For Each m As Match In fixedMatches
+                        Dim candidatePath As String = If(m.Groups("path").Value, "").Trim()
+
+                        If (candidatePath.Length >= 2 AndAlso candidatePath.StartsWith("""", StringComparison.Ordinal) AndAlso candidatePath.EndsWith("""", StringComparison.Ordinal)) OrElse
+                           (candidatePath.Length >= 2 AndAlso candidatePath.StartsWith("'", StringComparison.Ordinal) AndAlso candidatePath.EndsWith("'", StringComparison.Ordinal)) Then
+                            candidatePath = candidatePath.Substring(1, candidatePath.Length - 2).Trim()
+                        End If
+
+                        Dim looksLikePath As Boolean =
+                            candidatePath.Contains("\") OrElse candidatePath.Contains("/") OrElse candidatePath.Contains(":")
+
+                        If looksLikePath Then
+                            fileTokenMatches.Add(m)
+                        End If
+                    Next
+
+                    ' Map match index -> occurrence number (1..N) only for actual file tokens (so numbering is stable even with "{summer}" etc.).
+                    Dim occurrenceMap As New Dictionary(Of Integer, Integer)()
+                    Dim occ As Integer = 0
+                    For Each m As Match In fileTokenMatches
+                        occ += 1
+                        occurrenceMap(m.Index) = occ
+                    Next
+
+                    ' Detect if a placeholder occurrence is already enclosed by any tag, e.g. <tag>...{pathToken}...</tag>
+                    ' (Same intent as ExtTrigger's wrappedPattern; we key off the actual matched token value.)
+                    Dim wrappedPatternTemplate As String =
+                        "<(?<name>[A-Za-z][\w\-]*)\b[^>]*>[^<]*{TOKEN}[^<]*</\k<name>>"
+
+                    ' Reverse replace to keep indices stable.
+                    For i As Integer = fixedMatches.Count - 1 To 0 Step -1
+                        Dim m As Match = fixedMatches(i)
+                        Dim tokenText As String = m.Value
+                        Dim inner As String = m.Groups("path").Value
+                        Dim candidatePath As String = If(inner, "").Trim()
+
+                        ' Default: keep original text unchanged.
+                        Dim replacementText As String = tokenText
+
+                        Dim countedPath As String = candidatePath
+
+                        Try
+                            If Not String.IsNullOrWhiteSpace(candidatePath) Then
+
+                                ' Allow quoted paths: {"C:\x\y.txt"} or {'C:\x\y.txt'}
+                                If (candidatePath.Length >= 2 AndAlso candidatePath.StartsWith("""", StringComparison.Ordinal) AndAlso candidatePath.EndsWith("""", StringComparison.Ordinal)) OrElse
+                                   (candidatePath.Length >= 2 AndAlso candidatePath.StartsWith("'", StringComparison.Ordinal) AndAlso candidatePath.EndsWith("'", StringComparison.Ordinal)) Then
+                                    candidatePath = candidatePath.Substring(1, candidatePath.Length - 2).Trim()
+                                End If
+
+                                countedPath = candidatePath
+
+                                Dim looksLikePath As Boolean =
+                                    candidatePath.Contains("\") OrElse candidatePath.Contains("/") OrElse candidatePath.Contains(":")
+
+                                If looksLikePath Then
+
+                                    ' Expand environment vars (e.g. %APPDATA%) before File.Exists / read.
+                                    Dim expandedPath As String = SLib.ExpandEnvironmentVariables(candidatePath)
+                                    If Not String.IsNullOrWhiteSpace(expandedPath) Then
+                                        candidatePath = expandedPath
+                                        countedPath = expandedPath
+                                    End If
+
+                                    If IO.File.Exists(candidatePath) Then
+                                        DragDropFormLabel = ""
+                                        DragDropFormFilter = ""
+
+                                        Dim docFixed As String = Await GetFileContent(candidatePath, False, Not String.IsNullOrWhiteSpace(INI_APICall_Object), True)
+                                        ' If not loadable -> replace with empty string (still considered a file token occurrence).
+                                        If String.IsNullOrWhiteSpace(docFixed) Then
+                                            replacementText = ""
+                                        Else
+                                            ' Apply the same "already wrapped by any XML tag?" logic as used for ExtTrigger.
+                                            Dim wrappedPatternThis As String =
+                                                wrappedPatternTemplate.Replace("{TOKEN}", Regex.Escape(tokenText))
+
+                                            Dim isWrappedThis As Boolean = Regex.IsMatch(OtherPrompt, wrappedPatternThis, RegexOptions.IgnoreCase Or RegexOptions.Singleline)
+
+                                            Dim occurrenceNumber As Integer = 0
+                                            If occurrenceMap.ContainsKey(m.Index) Then
+                                                occurrenceNumber = occurrenceMap(m.Index)
+                                            End If
+
+                                            ' For single file-token occurrence use <document>; for multiple use <documentN>.
+                                            If fileTokenMatches.Count <= 1 OrElse occurrenceNumber <= 0 Then
+                                                replacementText = If(isWrappedThis, docFixed, $"<document>{docFixed}</document>")
+                                            Else
+                                                replacementText = If(isWrappedThis, docFixed, $"<document{occurrenceNumber}>{docFixed}</document{occurrenceNumber}>")
+                                            End If
+                                        End If
+
+                                        If loadedOkCounts.ContainsKey(candidatePath) Then
+                                            loadedOkCounts(candidatePath) += 1
+                                        Else
+                                            loadedOkCounts(candidatePath) = 1
+                                        End If
+                                    Else
+                                        ' Path attempt but missing -> replace with empty string.
+                                        replacementText = ""
+
+                                        If loadedFailCounts.ContainsKey(candidatePath) Then
+                                            loadedFailCounts(candidatePath) += 1
+                                        Else
+                                            loadedFailCounts(candidatePath) = 1
+                                        End If
+                                    End If
+                                End If
+                                ' else: not a path attempt (e.g., "{summer}") -> keep token unchanged
+                            End If
+
+                        Catch ex As Exception
+                            replacementText = ""
+                            If Not String.IsNullOrWhiteSpace(countedPath) Then
+                                If loadedFailCounts.ContainsKey(countedPath) Then
+                                    loadedFailCounts(countedPath) += 1
+                                Else
+                                    loadedFailCounts(countedPath) = 1
+                                End If
+                            End If
+                        End Try
+
+                        OtherPrompt = OtherPrompt.Substring(0, m.Index) &
+                                     replacementText &
+                                     OtherPrompt.Substring(m.Index + m.Length)
+                    Next
+
+                    ' Summary message (report only path attempts that succeeded/failed; tokens like "{summer}" are ignored)
+                    If loadedOkCounts.Count > 0 OrElse loadedFailCounts.Count > 0 Then
+                        Dim summary As New System.Text.StringBuilder()
+                        summary.AppendLine("Fixed-path file includes:")
+                        summary.AppendLine("")
+
+                        If loadedOkCounts.Count > 0 Then
+                            summary.AppendLine("Loaded successfully:")
+                            For Each kvp In loadedOkCounts.OrderBy(Function(x) x.Key)
+                                Dim suffix As String = If(kvp.Value > 1, $" ({kvp.Value}x)", "")
+                                summary.AppendLine(" - " & kvp.Key & suffix)
+                            Next
+                            summary.AppendLine("")
+                        End If
+
+                        If loadedFailCounts.Count > 0 Then
+                            summary.AppendLine("Failed to load (replaced with empty string):")
+                            For Each kvp In loadedFailCounts.OrderBy(Function(x) x.Key)
+                                Dim suffix As String = If(kvp.Value > 1, $" ({kvp.Value}x)", "")
+                                summary.AppendLine(" - " & kvp.Key & suffix)
+                            Next
+                        End If
+
+                        ShowCustomMessageBox(summary.ToString().TrimEnd())
+                    End If
+                End If
+            End If
+        End If
+
         If Not String.IsNullOrEmpty(OtherPrompt) And OtherPrompt.IndexOf(ExtWSTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
             If Not DoRange Then
                 ShowCustomMessageBox($"{ExtWSTrigger} cannot be combined with cell by cell processing - exiting.")
@@ -629,6 +829,7 @@ Partial Public Class ThisAddIn
             {"Timeout_2", "Timeout of {model2}"},
             {"DoubleS", "Convert '" & ChrW(223) & "' to 'ss'"},
             {"NoEmDash", "Convert em to en dash"},
+            {"Ignore", "Activate 'Ignore' prompt (for 'prompt injection' protection)"},
             {"PreCorrection", "Additional instruction for prompts"},
             {"PostCorrection", "Prompt to apply after queries"},
             {"Language1", "Default translation language 1"},
@@ -644,6 +845,7 @@ Partial Public Class ThisAddIn
             {"Timeout_2", "In milliseconds"},
             {"DoubleS", "For Switzerland"},
             {"NoEmDash", "This will convert long dashes typically generated by LLMs but that are not commonly used (thus suggesting that the text has been AI generated)"},
+            {"Ignore", "Allow system prompts to use {Ignore} as a placeholder for text to ignore, such as malicious prompt injections; Freestyle and some other commands use {Ignore}; the chatbots have an independent protection"},
             {"PreCorrection", "Add prompting text that will be added to all basic requests (e.g., for special language tasks)"},
             {"PostCorrection", "Add a prompt that will be applied to each result before it is further processed (slow!)"},
             {"Language1", "The language (in English) that will be used for the first quick access button in the ribbon"},

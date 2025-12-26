@@ -118,6 +118,8 @@ Partial Class Ribbon1
         Me.RI_PrimLang2 = Me.Factory.CreateRibbonButton
         Me.RI_Correct2 = Me.Factory.CreateRibbonButton
         Me.RI_Chat = Me.Factory.CreateRibbonButton
+        Me.RI_LearnDocStyle = Me.Factory.CreateRibbonButton
+        Me.RI_ApplyDocStyle = Me.Factory.CreateRibbonButton
         Me.Tab1.SuspendLayout()
         Me.Group1.SuspendLayout()
         Me.Group2.SuspendLayout()
@@ -215,6 +217,8 @@ Partial Class Ribbon1
         Me.Menu4.Items.Add(Me.RI_BalloonMergePartPrompt)
         Me.Menu4.Items.Add(Me.RI_BalloonMergeFullPrompt)
         Me.Menu4.Items.Add(Me.RI_Filibuster)
+        Me.Menu4.Items.Add(Me.RI_ApplyDocStyle)
+        Me.Menu4.Items.Add(Me.RI_LearnDocStyle)
         Me.Menu4.Label = "Improve"
         Me.Menu4.Name = "Menu4"
         Me.Menu4.OfficeImageId = "Drawing1GalleryBrightness"
@@ -733,6 +737,24 @@ Partial Class Ribbon1
         Me.RI_Chat.ScreenTip = "Will open a window where you can chat with the LLM"
         Me.RI_Chat.ShowImage = True
         '
+        'RI_LearnDocStyle
+        '
+        Me.RI_LearnDocStyle.Label = "Learn MyDocStyle"
+        Me.RI_LearnDocStyle.Name = "RI_LearnDocStyle"
+        Me.RI_LearnDocStyle.OfficeImageId = "StylesPaneNewStyle"
+        Me.RI_LearnDocStyle.ScreenTip = "Creates a MyDocStyle template based on a specially drafted document that contains" &
+    " instructions when to apply which style to a paragraph"
+        Me.RI_LearnDocStyle.ShowImage = True
+        '
+        'RI_ApplyDocStyle
+        '
+        Me.RI_ApplyDocStyle.Label = "Apply MyDocStyle"
+        Me.RI_ApplyDocStyle.Name = "RI_ApplyDocStyle"
+        Me.RI_ApplyDocStyle.OfficeImageId = "StyleGalleryClassic"
+        Me.RI_ApplyDocStyle.ScreenTip = "Apply a previously learned document formatting style to the current document or s" &
+    "election"
+        Me.RI_ApplyDocStyle.ShowImage = True
+        '
         'Ribbon1
         '
         Me.Name = "Ribbon1"
@@ -864,6 +886,14 @@ Partial Class Ribbon1
             Me.RI_EditRedact.Visible = True
         End If
 
+        If Trim(ThisAddIn.INI_DocStylePath) = "" And Trim(ThisAddIn.INI_DocStylePath) = "" Then
+            Me.RI_ApplyDocStyle.Visible = False
+            Me.RI_LearnDocStyle.Visible = False
+        Else
+            Me.RI_ApplyDocStyle.Visible = True
+            Me.RI_LearnDocStyle.Visible = True
+        End If
+
         If Trim(ThisAddIn.INI_SpecialServicePath) = "" Then
             Me.RI_SpecialModel.Visible = False
         Else
@@ -992,6 +1022,8 @@ Partial Class Ribbon1
     Friend WithEvents RI_LiveCompare As RibbonButton
     Friend WithEvents RI_RevisionsSummary As RibbonButton
     Friend WithEvents RI_DiscussInky As RibbonButton
+    Friend WithEvents RI_ApplyDocStyle As RibbonButton
+    Friend WithEvents RI_LearnDocStyle As RibbonButton
 End Class
 
 Partial Class ThisRibbonCollection

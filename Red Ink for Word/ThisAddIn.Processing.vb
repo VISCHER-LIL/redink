@@ -21,6 +21,8 @@
 '    and revision-tag helpers (`AddMarkupTags`, `InsertMarkupText`, `SearchAndReplace`).
 '  - Output & UI Surfaces: dispatches results to clipboard panes, new docs, in-place replacements,
 '    podcast scripts, slide decks, bubbles/pushbacks, with progress/cancellation handling.
+'  - Story Routing: Detects non-main stories (comments, footnotes/endnotes) and routes processing to
+'    specialized handlers (`ProcessSelectedTextInActiveCommentBubble`, `ProcessSelectedTextInActiveFootnote`).
 '
 ' External Dependencies:
 '  - Microsoft.Office.Interop.Word for document automation and story navigation.
@@ -177,6 +179,39 @@ Partial Public Class ThisAddIn
         If SysCommand = "" Then
             ShowCustomMessageBox("The (system-)prompt for the LLM is missing.")
             Return ""
+        End If
+
+        ' Route comment-bubble selections to a comment pipeline
+        If selection IsNot Nothing AndAlso selection.StoryType = Word.WdStoryType.wdCommentsStory Then
+            Dim bubbleSel As Word.Range = Nothing
+            Try
+                bubbleSel = selection.Range.Duplicate
+            Catch
+                bubbleSel = Nothing
+            End Try
+
+
+            Return Await ProcessSelectedTextInActiveCommentBubble(
+                                SysCommand,
+                                CheckMaxToken,
+                                bubbleSel,
+                                UseSecondAPI:=UseSecondAPI,
+                                SelectionMandatory:=SelectionMandatory,
+                                FileObject:=FileObject
+                            )
+        End If
+
+        If selection IsNot Nothing AndAlso
+   (selection.StoryType = Word.WdStoryType.wdFootnotesStory OrElse
+    selection.StoryType = Word.WdStoryType.wdEndnotesStory) Then
+
+            Return Await ProcessSelectedTextInActiveFootnote(
+                        SysCommand,
+                        CheckMaxToken,
+                        UseSecondAPI,
+                        SelectionMandatory,
+                        FileObject
+                    )
         End If
 
         If selection.Type = WdSelectionType.wdSelectionIP And SelectionMandatory Then
@@ -1492,6 +1527,183 @@ Partial Public Class ThisAddIn
 
     End Function
 
+
+    ''' <summary>
+    ''' Processes text in the active footnote or endnote story by sending either the current selection (when non-empty)
+    ''' or the entire note text to the LLM, then replacing that same scope with the LLM result using the standard
+    ''' Markdown-to-Word insertion pipeline.
+    ''' </summary>
+    ''' <param name="sysCommand">System prompt used for the LLM call.</param>
+    ''' <param name="checkMaxToken">When true, estimates token count for the input text and warns if the configured output limit may be exceeded.</param>
+    ''' <param name="useSecondApi">When true, routes the LLM call to the configured secondary API.</param>
+    ''' <param name="selectionMandatory">When true, shows an error when the resolved input text is empty.</param>
+    ''' <param name="fileObject">Optional file object parameter forwarded to the LLM call.</param>
+    ''' <returns>Always returns an empty string; errors are reported via message boxes.</returns>
+    ''' <remarks>
+    ''' This routine is invoked when <see cref="Microsoft.Office.Interop.Word.Selection.StoryType"/> is
+    ''' <see cref="Microsoft.Office.Interop.Word.WdStoryType.wdFootnotesStory"/> or
+    ''' <see cref="Microsoft.Office.Interop.Word.WdStoryType.wdEndnotesStory"/>.
+    ''' </remarks>
+    Private Async Function ProcessSelectedTextInActiveFootnote(
+    ByVal sysCommand As String,
+    ByVal checkMaxToken As Boolean,
+    ByVal useSecondApi As Boolean,
+    ByVal selectionMandatory As Boolean,
+    Optional ByVal fileObject As String = ""
+) As Task(Of String)
+
+        Try
+            Dim app As Word.Application = Globals.ThisAddIn.Application
+            If app Is Nothing OrElse app.Selection Is Nothing OrElse app.Selection.Range Is Nothing Then Return ""
+
+            Dim sel As Word.Range = app.Selection.Range
+
+            Dim doc As Word.Document = Nothing
+            Try : doc = sel.Document : Catch : doc = Nothing : End Try
+            If doc Is Nothing Then Return ""
+
+            ' Must be inside footnote or endnote story.
+            Dim st As Word.WdStoryType
+            Try : st = sel.StoryType : Catch : Return "" : End Try
+
+            Dim inFootnote As Boolean = (st = Word.WdStoryType.wdFootnotesStory)
+            Dim inEndnote As Boolean = (st = Word.WdStoryType.wdEndnotesStory)
+
+            If Not inFootnote AndAlso Not inEndnote Then
+                ShowCustomMessageBox("Place the cursor inside a footnote/endnote (or select footnote text), then retry.")
+                Return ""
+            End If
+
+            ' 1) Resolve owning note object
+            Dim owningFootnote As Word.Footnote = Nothing
+            Dim owningEndnote As Word.Endnote = Nothing
+
+            If inFootnote Then
+                Try
+                    For Each fn As Word.Footnote In doc.Footnotes
+                        Dim r As Word.Range = fn.Range
+                        If sel.Start >= r.Start AndAlso sel.End <= r.End Then
+                            owningFootnote = fn
+                            Exit For
+                        End If
+                    Next
+                Catch
+                End Try
+            ElseIf inEndnote Then
+                Try
+                    For Each en As Word.Endnote In doc.Endnotes
+                        Dim r As Word.Range = en.Range
+                        If sel.Start >= r.Start AndAlso sel.End <= r.End Then
+                            owningEndnote = en
+                            Exit For
+                        End If
+                    Next
+                Catch
+                End Try
+            End If
+
+            Dim noteRange As Word.Range = Nothing
+            Try
+                If owningFootnote IsNot Nothing Then noteRange = owningFootnote.Range.Duplicate
+                If owningEndnote IsNot Nothing Then noteRange = owningEndnote.Range.Duplicate
+            Catch
+                noteRange = Nothing
+            End Try
+
+            If noteRange Is Nothing Then
+                ShowCustomMessageBox("Cursor is in footnote/endnote story, but no owning note could be resolved.")
+                Return ""
+            End If
+
+            ' 2) Decide whether the user actually has a meaningful selection
+            Dim hasRealSelection As Boolean = False
+            Try
+                hasRealSelection = (sel.Start < sel.End AndAlso Not String.IsNullOrWhiteSpace(SafeRangeText(sel)))
+            Catch
+                hasRealSelection = False
+            End Try
+
+            ' 3) Input range: selection if meaningful, else whole note
+            Dim inputRange As Word.Range = If(hasRealSelection, sel.Duplicate, noteRange.Duplicate)
+
+            ' Best-effort: exclude trailing marker
+            Try
+                If inputRange.End > inputRange.Start Then inputRange.End -= 1
+            Catch
+            End Try
+
+            Dim inputText As String = SafeRangeText(inputRange)
+            If String.IsNullOrWhiteSpace(inputText) Then
+                If selectionMandatory Then ShowCustomMessageBox("The footnote/endnote contains no text to process.")
+                Return ""
+            End If
+
+            ' 4) Optional token warning
+            If checkMaxToken Then
+                Dim maxTok As Integer = If(useSecondApi, INI_MaxOutputToken_2, INI_MaxOutputToken)
+                If maxTok > 0 Then
+                    Dim est As Integer = EstimateTokenCount(inputText)
+                    If est > maxTok Then
+                        ShowCustomMessageBox($"Your footnote/endnote text may exceed the model output limits ({maxTok} tokens).")
+                    End If
+                End If
+            End If
+
+            ' 5) Call LLM
+            Dim llmResult As String =
+            Await LLM(
+                promptSystem:=sysCommand,
+                promptUser:="<TEXTTOPROCESS>" & inputText & "</TEXTTOPROCESS>",
+                Model:="",
+                Temperature:="",
+                Timeout:=0,
+                UseSecondAPI:=useSecondApi,
+                Hidesplash:=False,
+                AddUserPrompt:=OtherPrompt,
+                FileObject:=fileObject
+            )
+
+            llmResult = llmResult.Replace("<TEXTTOPROCESS>", "").Replace("</TEXTTOPROCESS>", "")
+
+            If Not String.IsNullOrEmpty(llmResult) Then
+                llmResult = Await PostCorrection(llmResult, useSecondApi)
+            End If
+
+            If String.IsNullOrWhiteSpace(llmResult) Then
+                ShowCustomMessageBox("The LLM did not return any content to process.")
+                Return ""
+            End If
+
+            ' 6) Write back: selection or whole note
+            Dim targetRange As Word.Range = If(hasRealSelection, sel.Duplicate, noteRange.Duplicate)
+
+            Try
+                If targetRange.End > targetRange.Start Then targetRange.End -= 1
+            Catch
+            End Try
+
+            ' Clear + insert (footnotes accept formatted insertion like main doc text)
+            Try
+                targetRange.Text = ""
+            Catch
+            End Try
+
+            ' Insert formatted content into footnote/endnote text (use the main document markdown pipeline)
+            Dim trSel As Word.Selection = app.Selection
+            trSel.SetRange(targetRange.Start, targetRange.End)
+            trSel.Select()
+
+            ' Reuse your main inserter (HTML/Markdown -> Word)
+            InsertTextWithMarkdown(trSel, llmResult, TrailingCR:=False, AddTrailingIfNeeded:=True)
+
+            Return ""
+
+        Catch ex As Exception
+            Debug.WriteLine($"ProcessSelectedTextInActiveFootnote error: {ex.Message}{vbCrLf}{ex.StackTrace}")
+            ShowCustomMessageBox($"Error processing footnote/endnote: {ex.Message}")
+            Return ""
+        End Try
+    End Function
 
 
     ''' <summary>
