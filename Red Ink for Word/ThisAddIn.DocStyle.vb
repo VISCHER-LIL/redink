@@ -43,8 +43,6 @@ Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
-
-
     ''' <summary>
     ''' Cache for shared list templates during style definition application.
     ''' Key is a template fingerprint cache key, value is the created <see cref="Word.ListTemplate"/> instance.
@@ -1119,11 +1117,44 @@ Partial Public Class ThisAddIn
                         Continue For
                     End If
 
+                    Dim userStyleDef As JObject = Nothing
+                    userStyleNameToDef.TryGetValue(userStyleName, userStyleDef)
+
+                    ' Skip if no actual changes would occur
+                    Dim wouldChange As Boolean = WouldStyleApplicationChangeAnything(para, doc, wdStyleName, userStyleDef)
+                    If Not wouldChange Then
+                        skippedCount += 1
+                        report.AppendLine($"Skipped paragraph {paraIdx + 1}: no changes needed | style='{wdStyleName}' | text='{paraPreview}'")
+                        Continue For
+                    End If
+
                     If settings.PreviewMode Then
+                        ' Temporarily highlight the paragraph for visibility
+                        Dim originalHighlight As WdColorIndex = WdColorIndex.wdNoHighlight
+                        Try
+                            originalHighlight = para.Range.HighlightColorIndex
+                            para.Range.HighlightColorIndex = WdColorIndex.wdYellow
+                        Catch
+                        End Try
+
                         para.Range.Select()
+
+                        ' Ensure the selection is visible in the document window
+                        Try
+                            Globals.ThisAddIn.Application.ActiveWindow.ScrollIntoView(para.Range)
+                            Globals.ThisAddIn.Application.ScreenRefresh()
+                        Catch
+                        End Try
+
                         Dim preview As Integer = ShowCustomYesNoBox(
                         $"Apply user style '{userStyleNameRaw}' (normalized: '{userStyleName}') (Word style: '{wdStyleName}') to this paragraph?{vbCrLf}{vbCrLf}Confidence: {confidence}%{vbCrLf}Text: {para.Range.Text.Substring(0, Math.Min(100, para.Range.Text.Length))}...",
                         "Yes", "Skip", $"{AN} - Preview")
+
+                        ' Restore original highlight
+                        Try
+                            para.Range.HighlightColorIndex = originalHighlight
+                        Catch
+                        End Try
 
                         If preview = 0 Then
                             Dim continueChoice As Integer = ShowCustomYesNoBox(
@@ -1151,8 +1182,6 @@ Partial Public Class ThisAddIn
 
                         para.Style = doc.Styles(wdStyleName)
 
-                        Dim userStyleDef As JObject = Nothing
-                        userStyleNameToDef.TryGetValue(userStyleName, userStyleDef)
                         If userStyleDef IsNot Nothing Then
                             ApplyUserStyleFormattingFromTemplate(para, userStyleDef)
                         Else
@@ -1196,6 +1225,106 @@ Partial Public Class ThisAddIn
         Return report.ToString()
     End Function
 
+
+    ''' <summary>
+    ''' Determines whether applying a style and formatting to a paragraph would result in any actual changes.
+    ''' </summary>
+    ''' <param name="para">Paragraph to check.</param>
+    ''' <param name="doc">Document containing the paragraph.</param>
+    ''' <param name="wdStyleName">Word style name to apply.</param>
+    ''' <param name="userStyleDef">User style definition containing formatting overrides.</param>
+    ''' <returns>True if applying the style would change the paragraph; otherwise False.</returns>
+    Private Function WouldStyleApplicationChangeAnything(para As Word.Paragraph, doc As Word.Document, wdStyleName As String, userStyleDef As JObject) As Boolean
+        Try
+            ' Check if style would change
+            Dim currentStyleName As String = ""
+            Try
+                currentStyleName = para.Style.NameLocal
+            Catch
+                currentStyleName = ""
+            End Try
+
+            If Not String.Equals(currentStyleName, wdStyleName, StringComparison.OrdinalIgnoreCase) Then
+                Return True ' Style name differs
+            End If
+
+            ' Check paragraph formatting differences if userStyleDef is provided
+            If userStyleDef IsNot Nothing AndAlso userStyleDef("paragraphFormatting") IsNot Nothing Then
+                Dim pf = userStyleDef("paragraphFormatting")
+
+                If pf("alignment") IsNot Nothing Then
+                    Dim desired = ParseAlignment(CStr(pf("alignment")))
+                    If para.Alignment <> desired Then Return True
+                End If
+
+                If pf("leftIndent") IsNot Nothing Then
+                    If Math.Abs(para.LeftIndent - CSng(pf("leftIndent"))) > 0.5 Then Return True
+                End If
+
+                If pf("rightIndent") IsNot Nothing Then
+                    If Math.Abs(para.RightIndent - CSng(pf("rightIndent"))) > 0.5 Then Return True
+                End If
+
+                If pf("firstLineIndent") IsNot Nothing Then
+                    If Math.Abs(para.FirstLineIndent - CSng(pf("firstLineIndent"))) > 0.5 Then Return True
+                End If
+
+                If pf("spaceBefore") IsNot Nothing Then
+                    If Math.Abs(para.SpaceBefore - CSng(pf("spaceBefore"))) > 0.5 Then Return True
+                End If
+
+                If pf("spaceAfter") IsNot Nothing Then
+                    If Math.Abs(para.SpaceAfter - CSng(pf("spaceAfter"))) > 0.5 Then Return True
+                End If
+            End If
+
+            ' Check font formatting differences
+            If userStyleDef IsNot Nothing AndAlso userStyleDef("fontFormatting") IsNot Nothing Then
+                Dim ff = userStyleDef("fontFormatting")
+                Dim rng As Word.Range = para.Range
+
+                If ff("fontName") IsNot Nothing AndAlso CStr(ff("fontName")) <> "mixed" Then
+                    If rng.Font.Name <> CStr(ff("fontName")) Then Return True
+                End If
+
+                If ff("fontSize") IsNot Nothing AndAlso CStr(ff("fontSize")) <> "mixed" Then
+                    If Math.Abs(rng.Font.Size - CSng(ff("fontSize"))) > 0.1 Then Return True
+                End If
+
+                If ff("bold") IsNot Nothing AndAlso ff("bold").Type = JTokenType.Boolean Then
+                    Dim desired As Integer = If(CBool(ff("bold")), -1, 0)
+                    If rng.Font.Bold <> desired AndAlso rng.Font.Bold <> CInt(WdConstants.wdUndefined) Then Return True
+                End If
+
+                If ff("italic") IsNot Nothing AndAlso ff("italic").Type = JTokenType.Boolean Then
+                    Dim desired As Integer = If(CBool(ff("italic")), -1, 0)
+                    If rng.Font.Italic <> desired AndAlso rng.Font.Italic <> CInt(WdConstants.wdUndefined) Then Return True
+                End If
+            End If
+
+            ' Check list formatting transitions
+            If userStyleDef IsNot Nothing AndAlso userStyleDef("listFormatting") IsNot Nothing Then
+                Dim lf = userStyleDef("listFormatting")
+                Dim templateHasList As Boolean = If(lf("hasList") IsNot Nothing, CBool(lf("hasList")), False)
+
+                Dim currentHasList As Boolean = False
+                Try
+                    currentHasList = (para.Range.ListFormat.ListType <> WdListType.wdListNoNumbering)
+                Catch
+                End Try
+
+                If templateHasList <> currentHasList Then Return True
+            End If
+
+            ' No differences detected
+            Return False
+
+        Catch ex As Exception
+            Debug.WriteLine($"[DocStyle] WouldStyleApplicationChangeAnything error: {ex.Message}")
+            ' On error, assume change is needed to be safe
+            Return True
+        End Try
+    End Function
 
     ''' <summary>
     ''' Rejects formatting-only revisions that affect only a portion of a paragraph.
