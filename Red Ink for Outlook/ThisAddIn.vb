@@ -313,7 +313,7 @@ Partial Public Class ThisAddIn
 
         Try
             InitializeConfig(True, True)
-            UpdateHandler.PeriodicCheckForUpdates(INI_UpdateCheckInterval, "Outlook", INI_UpdatePath)
+            UpdateHandler.PeriodicCheckForUpdates(INI_UpdateCheckInterval, "Outlook", INI_UpdatePath, _context)
             Dim result = Globals.Ribbons.Ribbon1.UpdateRibbon()
             result = Globals.Ribbons.Ribbon2.UpdateRibbon()
             mainThreadControl.CreateControl()

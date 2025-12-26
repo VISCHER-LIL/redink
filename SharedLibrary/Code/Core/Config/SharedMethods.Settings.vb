@@ -219,12 +219,12 @@ Namespace SharedLibrary
             Dim updateButton As New System.Windows.Forms.Button()
             updateButton.Text = "Check for Updates"
             If Not String.IsNullOrWhiteSpace(context.INI_UpdatePath) Then
-                updateButton.Text = "Do local update"
+                updateButton.Text = "Do Local Update"
             End If
             Dim updateButtonSize As System.Drawing.Size = TextRenderer.MeasureText(updateButton.Text, standardFont)
             updateButton.Size = New System.Drawing.Size(updateButtonSize.Width + 20, updateButtonSize.Height + 10)
             updateButton.Location = New System.Drawing.Point(aboutButton.Right + buttonSpacing, cancelButton.Top)
-            If ApplicationDeployment.IsNetworkDeployed OrElse Not String.IsNullOrWhiteSpace(context.INI_UpdatePath) Then
+            If ApplicationDeployment.IsNetworkDeployed OrElse Not String.IsNullOrWhiteSpace(context.INI_UpdatePath) OrElse (context.INI_UpdateIniSilentMode = 0 AndAlso context.INI_UpdateIni) Then
                 settingsForm.Controls.Add(updateButton)
                 RightSide = updateButton.Right
             End If
@@ -387,10 +387,10 @@ Namespace SharedLibrary
                                               ShowAboutWindow(settingsForm, CapturedContext)
                                           End Sub
 
-            If ApplicationDeployment.IsNetworkDeployed OrElse Not String.IsNullOrWhiteSpace(CapturedContext.INI_UpdatePath) Then
+            If ApplicationDeployment.IsNetworkDeployed OrElse Not String.IsNullOrWhiteSpace(CapturedContext.INI_UpdatePath) OrElse (context.INI_UpdateIniSilentMode = 0 AndAlso context.INI_UpdateIni) Then
                 AddHandler updateButton.Click, Sub(sender, e)
                                                    Dim updater As New UpdateHandler()
-                                                   updater.CheckAndInstallUpdates(CapturedContext.RDV, CapturedContext.INI_UpdatePath)
+                                                   updater.CheckAndInstallUpdates(CapturedContext.RDV, CapturedContext.INI_UpdatePath, CapturedContext)
                                                End Sub
             End If
 
@@ -554,7 +554,8 @@ Namespace SharedLibrary
         "DoubleS", "NoEmDash", "Clean", "MarkdownBubbles", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
         "KeepFormat2", "KeepParaFormatInline", "ReplaceText2", "DoMarkupOutlook", "DoMarkupWord",
         "APIDebug", "ISearch_Approve", "ISearch", "Lib", "ContextMenu", "SecondAPI", "APIEncrypted", "APIEncrypted_2",
-        "OAuth2", "OAuth2_2", "PromptLib", "Ignore"
+        "OAuth2", "OAuth2_2", "PromptLib", "Ignore",
+        "UpdateIni", "UpdateIniAllowRemote", "UpdateIniNoSignature", "UpdateIniSilentLog"
             }
             Return booleanSettings.Contains(settingKey)
         End Function
@@ -807,6 +808,20 @@ Namespace SharedLibrary
                     Return context.INI_OAuth2.ToString()
                 Case "OAuth2_2"
                     Return context.INI_OAuth2_2.ToString()
+                Case "UpdateIni"
+                    Return context.INI_UpdateIni.ToString()
+                Case "UpdateIniAllowRemote"
+                    Return context.INI_UpdateIniAllowRemote.ToString()
+                Case "UpdateIniNoSignature"
+                    Return context.INI_UpdateIniNoSignature.ToString()
+                Case "UpdateSource"
+                    Return context.INI_UpdateSource
+                Case "UpdateIniIgnoreOverride"
+                    Return context.INI_UpdateIniIgnoreOverride
+                Case "UpdateIniSilentMode"
+                    Return context.INI_UpdateIniSilentMode.ToString()
+                Case "UpdateIniSilentLog"
+                    Return context.INI_UpdateIniSilentLog.ToString()
                 Case Else
                     Return ""
             End Select
@@ -1047,6 +1062,20 @@ Namespace SharedLibrary
                     context.INI_RenameLibPath = value
                 Case "RenameLibPathLocal"
                     context.INI_RenameLibPathLocal = value
+                Case "UpdateIni"
+                    context.INI_UpdateIni = Boolean.Parse(value)
+                Case "UpdateIniAllowRemote"
+                    context.INI_UpdateIniAllowRemote = Boolean.Parse(value)
+                Case "UpdateIniNoSignature"
+                    context.INI_UpdateIniNoSignature = Boolean.Parse(value)
+                Case "UpdateSource"
+                    context.INI_UpdateSource = value
+                Case "UpdateIniIgnoreOverride"
+                    context.INI_UpdateIniIgnoreOverride = value
+                Case "UpdateIniSilentMode"
+                    context.INI_UpdateIniSilentMode = Integer.Parse(value)
+                Case "UpdateIniSilentLog"
+                    context.INI_UpdateIniSilentLog = Boolean.Parse(value)
 
                 Case Else
                     MessageBox.Show($"Error in SetSettingValue - could not save the value for '{settingName}'.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
@@ -1389,7 +1418,14 @@ Namespace SharedLibrary
                     {"SP_FindPrompts", context.SP_FindPrompts},
                     {"SP_MergePrompt", context.SP_MergePrompt},
                     {"SP_MergePrompt2", context.SP_MergePrompt2},
-                    {"SP_Add_MergePrompt", context.SP_Add_MergePrompt}
+                    {"SP_Add_MergePrompt", context.SP_Add_MergePrompt},
+                    {"UpdateIni", context.INI_UpdateIni.ToString()},
+                    {"UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote.ToString()},
+                    {"UpdateIniNoSignature", context.INI_UpdateIniNoSignature.ToString()},
+                    {"UpdateSource", context.INI_UpdateSource},
+                    {"UpdateIniIgnoreOverride", context.INI_UpdateIniIgnoreOverride},
+                    {"UpdateIniSilentMode", context.INI_UpdateIniSilentMode.ToString()},
+                    {"UpdateIniSilentLog", context.INI_UpdateIniSilentLog.ToString()}
                 }
 
                 Dim KeysToSkipWhenDefault As New Dictionary(Of String, String) From {
@@ -1594,7 +1630,7 @@ Namespace SharedLibrary
                 ' Create a temporary file for the updated configuration
                 TempIniFilePath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(IniFilePath), $"{AN2}_temp.ini")
 
-                ' Define all expected keys and their default or in-memory values
+                ' Define all expected keys and their default or in-memory values --> they will remain in case of a reset of the configuration
                 Dim expectedKeys As New Dictionary(Of String, String) From {
                     {"APIKey", context.INI_APIKeyBack},
                     {"Endpoint", context.INI_Endpoint},
@@ -1664,7 +1700,14 @@ Namespace SharedLibrary
                     {"DiscussInkyPath", context.INI_DiscussInkyPath},
                     {"DiscussInkyPathLocal", context.INI_DiscussInkyPathLocal},
                     {"UpdateCheckInterval", context.INI_UpdateCheckInterval.ToString()},
-                    {"UpdatePath", context.INI_UpdatePath}
+                    {"UpdatePath", context.INI_UpdatePath},
+                    {"UpdateIni", context.INI_UpdateIni.ToString()},
+                    {"UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote.ToString()},
+                    {"UpdateIniNoSignature", context.INI_UpdateIniNoSignature.ToString()},
+                    {"UpdateSource", context.INI_UpdateSource},
+                    {"UpdateIniIgnoreOverride", context.INI_UpdateIniIgnoreOverride},
+                    {"UpdateIniSilentMode", context.INI_UpdateIniSilentMode.ToString()},
+                    {"UpdateIniSilentLog", context.INI_UpdateIniSilentLog.ToString()}
                 }
 
                 ' Read the original ini file content
@@ -2155,6 +2198,13 @@ Namespace SharedLibrary
             variableValues.Add("SP_FindPrompts", context.SP_FindPrompts)
             variableValues.Add("SP_MergePrompt", context.SP_MergePrompt)
             variableValues.Add("SP_MergePrompt2", context.SP_MergePrompt2)
+            variableValues.Add("UpdateIni", context.INI_UpdateIni)
+            variableValues.Add("UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote)
+            variableValues.Add("UpdateIniNoSignature", context.INI_UpdateIniNoSignature)
+            variableValues.Add("UpdateSource", context.INI_UpdateSource)
+            variableValues.Add("UpdateIniIgnoreOverride", context.INI_UpdateIniIgnoreOverride)
+            variableValues.Add("UpdateIniSilentMode", context.INI_UpdateIniSilentMode)
+            variableValues.Add("UpdateIniSilentLog", context.INI_UpdateIniSilentLog)
 
             ' Extract variable names from the dictionary
             Dim variableNames As New List(Of String)(variableValues.Keys)
@@ -2353,6 +2403,13 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("DocStylePath") Then context.INI_DocStylePath = CStr(updatedValues("DocStylePath"))
                 If updatedValues.ContainsKey("DocStylePathLocal") Then context.INI_DocStylePathLocal = CStr(updatedValues("DocStylePathLocal"))
                 If updatedValues.ContainsKey("PromptLib_Transcript") Then context.INI_PromptLibPath_Transcript = CStr(updatedValues("PromptLib_Transcript"))
+                If updatedValues.ContainsKey("UpdateIni") Then context.INI_UpdateIni = CBool(updatedValues("UpdateIni"))
+                If updatedValues.ContainsKey("UpdateIniAllowRemote") Then context.INI_UpdateIniAllowRemote = CBool(updatedValues("UpdateIniAllowRemote"))
+                If updatedValues.ContainsKey("UpdateIniNoSignature") Then context.INI_UpdateIniNoSignature = CBool(updatedValues("UpdateIniNoSignature"))
+                If updatedValues.ContainsKey("UpdateSource") Then context.INI_UpdateSource = CStr(updatedValues("UpdateSource"))
+                If updatedValues.ContainsKey("UpdateIniIgnoreOverride") Then context.INI_UpdateIniIgnoreOverride = CStr(updatedValues("UpdateIniIgnoreOverride"))
+                If updatedValues.ContainsKey("UpdateIniSilentMode") Then context.INI_UpdateIniSilentMode = CInt(updatedValues("UpdateIniSilentMode"))
+                If updatedValues.ContainsKey("UpdateIniSilentLog") Then context.INI_UpdateIniSilentLog = CBool(updatedValues("UpdateIniSilentLog"))
 
                 ' Call UpdateAppConfig after all updates
                 UpdateAppConfig(context)

@@ -216,6 +216,14 @@ Namespace SharedLibrary
 
                 context.INI_UpdateCheckInterval = If(configDict.ContainsKey("UpdateCheckInterval"), CInt(configDict("UpdateCheckInterval")), DefaultUpdateIntervalDays)
                 context.INI_UpdatePath = If(configDict.ContainsKey("UpdatePath"), configDict("UpdatePath"), "")
+                context.INI_UpdateIni = ParseBoolean(configDict, "UpdateIni", True)
+                context.INI_UpdateIniAllowRemote = ParseBoolean(configDict, "UpdateIniAllowRemote", True)
+                context.INI_UpdateIniNoSignature = ParseBoolean(configDict, "UpdateIniNoSignature", False)
+                context.INI_UpdateSource = If(configDict.ContainsKey("UpdateSource"), configDict("UpdateSource"), "")
+                context.INI_UpdateIniIgnoreOverride = If(configDict.ContainsKey("UpdateIniIgnoreOverride"), configDict("UpdateIniIgnoreOverride"), "")
+                context.INI_UpdateIniSilentMode = If(configDict.ContainsKey("UpdateIniSilentMode"), CInt(configDict("UpdateIniSilentMode")), 0)
+                context.INI_UpdateIniSilentLog = ParseBoolean(configDict, "UpdateIniSilentLog", True)
+
                 context.INI_HelpMeInkyPath = If(configDict.ContainsKey("HelpMeInkyPath"), configDict("HelpMeInkyPath"), Default_HelpMeInkyPath)
                 context.INI_DiscussInkyPath = If(configDict.ContainsKey("DiscussInkyPath"), configDict("DiscussInkyPath"), "")
                 context.INI_DiscussInkyPathLocal = If(configDict.ContainsKey("DiscussInkyPathLocal"), configDict("DiscussInkyPathLocal"), "")

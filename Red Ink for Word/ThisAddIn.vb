@@ -438,7 +438,7 @@ Partial Public Class ThisAddIn
     Public Sub InitializeAddInFeatures()
         InitializeConfig(True, True)
         AddContextMenu()
-        UpdateHandler.PeriodicCheckForUpdates(INI_UpdateCheckInterval, RDV, INI_UpdatePath)
+        UpdateHandler.PeriodicCheckForUpdates(INI_UpdateCheckInterval, RDV, INI_UpdatePath, _context)
     End Sub
 
 

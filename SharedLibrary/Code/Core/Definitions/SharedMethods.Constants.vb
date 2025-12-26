@@ -38,6 +38,8 @@ Namespace SharedLibrary
         Public Const RegPath_Base As String = "HKEY_CURRENT_USER\Software\" & AN3 & "\"
         Public Const RegPath_CodeBasis As String = "CodeBasis"
         Public Const RegPath_IniPath As String = "IniPath"
+        Public Const RegPath_PermitSilentInitUpdates As String = "PermitSilentIniUpdates" ' Set to yes, true or 1 to allow silent ini updates
+
         Public Const RegPath_IniPrio As Boolean = False ' True if the registry path shall have priority over the default path
 
         Private Const RegexSeparator1 As String = "|||"  ' Set also in Word Addin

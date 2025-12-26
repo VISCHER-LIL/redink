@@ -24,6 +24,7 @@ Option Strict On
 Imports System.Globalization
 Imports SharedLibrary.SharedLibrary
 Imports SharedLibrary.SharedLibrary.SharedContext
+Imports SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
@@ -1938,6 +1939,69 @@ Partial Public Class ThisAddIn
         End Get
         Set(value As String)
             _context.Ignore = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIniSilentMode As Integer
+        Get
+            Return _context.INI_UpdateIniSilentMode
+        End Get
+        Set(value As Integer)
+            _context.INI_UpdateIniSilentMode = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIniSilentLog As Boolean
+        Get
+            Return _context.INI_UpdateIniSilentLog
+        End Get
+        Set(value As Boolean)
+            _context.INI_UpdateIniSilentLog = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIni As Boolean
+        Get
+            Return _context.INI_UpdateIni
+        End Get
+        Set(value As Boolean)
+            _context.INI_UpdateIni = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIniAllowRemote As Boolean
+        Get
+            Return _context.INI_UpdateIniAllowRemote
+        End Get
+        Set(value As Boolean)
+            _context.INI_UpdateIniAllowRemote = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIniNoSignature As Boolean
+        Get
+            Return _context.INI_UpdateIniNoSignature
+        End Get
+        Set(value As Boolean)
+            _context.INI_UpdateIniNoSignature = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateSource As String
+        Get
+            Return _context.INI_UpdateSource
+        End Get
+        Set(value As String)
+            _context.INI_UpdateSource = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIniIgnoreOverride As String
+        Get
+            Return _context.INI_UpdateIniIgnoreOverride
+        End Get
+        Set(value As String)
+            _context.INI_UpdateIniIgnoreOverride = value
         End Set
     End Property
 

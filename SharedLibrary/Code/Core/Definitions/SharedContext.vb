@@ -232,6 +232,21 @@ Namespace SharedLibrary
             Property SP_Add_MergePrompt As String
             Property Ignore As String
 
+            ' Master switch for INI update mechanism
+            Property INI_UpdateIni As Boolean
+            ' Allow HTTPS sources (vs local/network only)
+            Property INI_UpdateIniAllowRemote As Boolean
+            ' Skip signature verification if True
+            Property INI_UpdateIniNoSignature As Boolean
+            ' Update source for redink.ini: "path; keylist; base64_public_key"
+            Property INI_UpdateSource As String
+            ' Override ignore settings with file-specific and segment-specific rules
+            Property INI_UpdateIniIgnoreOverride As String
+            ' Silent update mode: Controls whether updates are applied without user interaction
+            Property INI_UpdateIniSilentMode As Integer
+            ' Log silent update actions to a file for audit purposes
+            Property INI_UpdateIniSilentLog As Boolean
+
         End Interface
 
         Public Sub New()
@@ -459,6 +474,15 @@ Namespace SharedLibrary
         Public Property SP_MergePrompt As String Implements ISharedContext.SP_MergePrompt
         Public Property SP_MergePrompt2 As String Implements ISharedContext.SP_MergePrompt2
         Public Property SP_Add_MergePrompt As String Implements ISharedContext.SP_Add_MergePrompt
+
+        ' === INI Update Configuration ===
+        Public Property INI_UpdateIni As Boolean Implements ISharedContext.INI_UpdateIni
+        Public Property INI_UpdateIniAllowRemote As Boolean Implements ISharedContext.INI_UpdateIniAllowRemote
+        Public Property INI_UpdateIniNoSignature As Boolean Implements ISharedContext.INI_UpdateIniNoSignature
+        Public Property INI_UpdateSource As String Implements ISharedContext.INI_UpdateSource
+        Public Property INI_UpdateIniIgnoreOverride As String Implements ISharedContext.INI_UpdateIniIgnoreOverride
+        Public Property INI_UpdateIniSilentMode As Integer Implements ISharedContext.INI_UpdateIniSilentMode
+        Public Property INI_UpdateIniSilentLog As Boolean Implements ISharedContext.INI_UpdateIniSilentLog
 
         Public Property Ignore As String Implements ISharedContext.Ignore
 
