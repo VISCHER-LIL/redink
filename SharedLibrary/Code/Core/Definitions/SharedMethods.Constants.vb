@@ -77,7 +77,7 @@ Namespace SharedLibrary
         Public Shared ReadOnly Property AppsUrl As String = "https://redink.ai"
         Public Shared ReadOnly Property AppsUrlDir As String = "/apps/ga/"
         Public Shared ReadOnly Property VersionQualifier As String = ""
-        Public Shared Readonly DefaultUpdateIntervalDays As Integer = 3
+        Public Shared Readonly DefaultUpdateIntervalDays As Integer = 7
 
 #End If
 
