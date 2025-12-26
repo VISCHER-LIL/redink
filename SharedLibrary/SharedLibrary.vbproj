@@ -18,15 +18,15 @@
     <TargetFrameworkProfile />
   </PropertyGroup>
 	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
-		<DefineConstants>(DefineConstants);DEVELOP</DefineConstants>
+		<DefineConstants>$(DefineConstants),DEVELOP</DefineConstants>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
-		<DefineConstants>(DefineConstants);PREVIEW</DefineConstants>
+		<DefineConstants>$(DefineConstants),PREVIEW</DefineConstants>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(RedInkEnvironment)' != 'Develop' and '$(RedInkEnvironment)' != 'Preview'">
-		<DefineConstants>(DefineConstants);GA</DefineConstants>
+		<DefineConstants>$(DefineConstants),GA</DefineConstants>
 	</PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
