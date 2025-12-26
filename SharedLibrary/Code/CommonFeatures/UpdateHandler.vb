@@ -8,9 +8,11 @@ Option Explicit On
 Imports System.Deployment.Application
 Imports System.IO
 Imports System.Runtime.InteropServices
+Imports System.Runtime.Remoting.Contexts
 Imports System.Text
 Imports System.Threading
 Imports System.Windows.Forms
+Imports SharedLibrary.SharedLibrary.SharedContext
 Imports SharedLibrary.SharedLibrary.SharedMethods
 
 Namespace SharedLibrary
@@ -107,7 +109,7 @@ Namespace SharedLibrary
 
 
         ' LOGGING with trimming
-        Private Shared Sub WriteUpdateLog(message As String, Optional ex As Exception = Nothing)
+        Public Shared Sub WriteUpdateLog(message As String, Optional ex As Exception = Nothing)
             Try
                 Dim logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), SharedMethods.AN2)
                 If Not Directory.Exists(logDir) Then Directory.CreateDirectory(logDir)
@@ -209,7 +211,7 @@ Namespace SharedLibrary
         End Function
 
 
-        Public Sub CheckAndInstallUpdates(appname As String, LocalPath As String)
+        Public Sub CheckAndInstallUpdates(appname As String, LocalPath As String, Optional context As ISharedContext = Nothing)
             Try
                 Dim currentDate As Date = Date.Now
                 If ApplicationDeployment.IsNetworkDeployed AndAlso String.IsNullOrWhiteSpace(LocalPath) Then
@@ -287,6 +289,24 @@ Namespace SharedLibrary
                         End If
                     End If
                 End If
+
+                ' === INI Configuration Updates (manual check) ===                
+                If context IsNot Nothing Then
+                    Try
+                        If MainControl IsNot Nothing AndAlso MainControl.InvokeRequired Then
+                            MainControl.Invoke(Sub() If Not SharedMethods.CheckForIniUpdates(context) Then UIInvokeMessage(
+                                "No configuration updates available or made",
+                                $"{SharedMethods.AN} INI Updater"))
+                        Else
+                            If Not SharedMethods.CheckForIniUpdates(context) Then UIInvokeMessage(
+                                "No configuration updates available or made",
+                                $"{SharedMethods.AN} INI Updater")
+                        End If
+                    Catch iniEx As Exception
+                        WriteUpdateLog("[CheckAndInstallUpdates] INI update check failed", iniEx)
+                    End Try
+                End If
+
             Catch ex As DeploymentException
                 WriteUpdateLog("[CheckAndInstallUpdates] DeploymentException", ex)
                 UIInvokeMessage(
@@ -303,8 +323,7 @@ Namespace SharedLibrary
         Private Shared _appname As String
         Private Shared _localPath As String
         Private Shared _checkIntervalInDays As Integer
-
-        ' (Other retry-state methods unchanged)...
+        Private Shared _context As ISharedContext = Nothing
 
         Private Shared Sub GetRetryStateFromSettings(ByRef day As Date, ByRef count As Integer, ByRef shownToday As Boolean)
             day = Date.MinValue : count = 0 : shownToday = False
@@ -426,9 +445,10 @@ Namespace SharedLibrary
         End Function
 
         Public Shared Sub PeriodicCheckForUpdates(
-        checkIntervalInDays As Integer,
-        appname As String,
-        LocalPath As String)
+            checkIntervalInDays As Integer,
+            appname As String,
+            LocalPath As String,
+            Optional context As ISharedContext = Nothing)
 
             Dim splashManagedByOnCheck As Boolean = False
 
@@ -437,6 +457,7 @@ Namespace SharedLibrary
                 _appname = appname
                 _localPath = LocalPath
                 _checkIntervalInDays = checkIntervalInDays
+                _context = context
 
                 Dim lastCheck As Date = If(
                 Left(_appname, 4) = "Word", My.Settings.LastUpdateCheckWord,
@@ -497,6 +518,19 @@ Namespace SharedLibrary
                     ' Also reset daily retries on success
                     Dim day As Date = Date.Today : Dim cnt As Integer = 0 : Dim shown As Boolean = False
                     SetRetryStateToSettings(day, cnt, shown)
+                End If
+
+                ' === INI Configuration Updates (async path) ===
+                If _context IsNot Nothing Then
+                    Try
+                        If MainControl IsNot Nothing AndAlso MainControl.InvokeRequired Then
+                            MainControl.Invoke(Sub() SharedMethods.CheckForIniUpdates(_context))
+                        Else
+                            SharedMethods.CheckForIniUpdates(_context)
+                        End If
+                    Catch iniEx As Exception
+                        WriteUpdateLog("[OnCheck] INI update check failed", iniEx)
+                    End Try
                 End If
 
             Catch dex As DeploymentException
@@ -594,6 +628,19 @@ Namespace SharedLibrary
                 ' On any successful network check outcome, reset the daily retry state
                 Dim day As Date = Date.Today : Dim cnt As Integer = 0 : Dim shown As Boolean = False
                 SetRetryStateToSettings(day, cnt, shown)
+
+                ' === INI Configuration Updates (async network path) ===
+                If _context IsNot Nothing Then
+                    Try
+                        If MainControl IsNot Nothing AndAlso MainControl.InvokeRequired Then
+                            MainControl.Invoke(Sub() SharedMethods.CheckForIniUpdates(_context))
+                        Else
+                            SharedMethods.CheckForIniUpdates(_context)
+                        End If
+                    Catch iniEx As Exception
+                        WriteUpdateLog("[OnCheck] INI update check failed", iniEx)
+                    End Try
+                End If
 
             Catch dex As DeploymentException
                 WriteUpdateLog("[OnCheck] DeploymentException", dex)

@@ -508,6 +508,33 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
+            ' Signature Management for Update INI Key Functionality
+            If String.Equals(OtherPrompt.Trim(), "iniupdatekeys", StringComparison.OrdinalIgnoreCase) Then
+                ShowSignatureManagementDialog()
+                Return
+            End If
+
+            ' Batch Signing for Update INI Key Functionality
+            If String.Equals(OtherPrompt.Trim(), "iniupdatebatch", StringComparison.OrdinalIgnoreCase) Then
+                ShowBatchSigningDialog()
+                Return
+            End If
+
+
+            ' Signature Management for Update INI Key Functionality
+            If String.Equals(OtherPrompt.Trim(), "iniupdateignored", StringComparison.OrdinalIgnoreCase) Or String.Equals(OtherPrompt.Trim(), "iniupdateignore", StringComparison.OrdinalIgnoreCase) Then
+                ShowIgnoredParametersDialog()
+                Return
+            End If
+
+            ' Check for INI updates and apply if available
+            If String.Equals(OtherPrompt.Trim(), "iniupdate", StringComparison.OrdinalIgnoreCase) Then
+                Dim answer = CheckForIniUpdates(_context)
+                Return
+            End If
+
+
+
             ' Reset local configuration to defaults (with confirmation)
             If String.Equals(OtherPrompt.Trim(), "reset", StringComparison.OrdinalIgnoreCase) Then
                 If ShowCustomYesNoBox($"Do you really want to reset your local configuration file and settings (if any) by removing non-mandatory entries? The current configuration file '{AN2}.ini' will NOT be saved to a '.bak' file. If you only want to reload the configuration settings for giving up any temporary changes, use 'reload' instead.", "Yes", "No") = 1 Then

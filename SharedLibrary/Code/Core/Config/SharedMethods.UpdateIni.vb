@@ -7,22 +7,65 @@
 '          sources with digital signature verification and user approval workflow.
 '
 ' Architecture:
-'  - Update Sources: Supports local file paths, network shares, and HTTPS URLs
-'  - Digital Signatures: Ed25519 signatures via BouncyCastle for authenticity verification
-'  - User Approval: Shows changes in a dialog allowing per-parameter approval/rejection
-'  - Ignore List: Persists rejected parameters in My.Settings for future exclusion
-'  - Three INI Files: redink.ini (main), allmodels.ini (alternate models), specialservices.ini
+'  - Context-Based Configuration: All INI update settings are accessed via
+'    ISharedContext (_iniUpdateContext), which is set at the start of
+'    CheckForIniUpdates() and used by all helper methods.
+'  - Update Sources: Supports local file paths, network shares (UNC), and HTTPS URLs.
+'    Remote sources can be disabled via INI_UpdateIniAllowRemote.
+'  - Digital Signatures: Ed25519 signatures via BouncyCastle for authenticity
+'    verification. Each update file requires a corresponding .sig file unless
+'    INI_UpdateIniNoSignature is True.
+'  - Silent Update Modes: Supports five security levels (SilentUpdateSecurityLevel enum):
+'      0=Disabled (interactive), 1=SafeOnly, 2=SignedOnly, 3=LocalTrusted, 4=All
+'    Silent mode requires registry permission (PermitSilentIniUpdates).
+'  - User Approval: In interactive mode, shows changes in a dialog allowing
+'    per-parameter approval/rejection with visual highlighting of suspicious changes.
+'  - Ignore List: Persists rejected parameters in My.Settings for future exclusion.
+'    Override rules (INI_UpdateIniIgnoreOverride) allow file/segment/key-specific control.
+'  - Protected Keys: Keys starting with "Update" cannot be modified remotely.
+'  - Three INI Files Supported:
+'      1. redink.ini (main config) - uses INI_UpdateSource from context
+'      2. AlternateModelPath (segmented) - each segment has its own UpdateSource
+'      3. SpecialServicePath (segmented) - each segment has its own UpdateSource
 '
-' Configuration Keys (to be added to ISharedContext):
-'  - INI_UpdateIni: Boolean - Master switch for update mechanism
-'  - INI_UpdateIniAllowRemote: Boolean - Allow HTTPS sources (vs local/network only)
-'  - INI_UpdateIniNoSignature: Boolean - Skip signature verification if True
-'  - INI_UpdateSource: String - Update source for redink.ini (path; keys; pubkey)
+' Configuration Properties (in ISharedContext):
+'  - INI_UpdateIni: Boolean - Master switch for update mechanism (default: True)
+'  - INI_UpdateIniAllowRemote: Boolean - Allow HTTPS sources (default: True)
+'  - INI_UpdateIniNoSignature: Boolean - Skip signature verification (default: False)
+'  - INI_UpdateSource: String - Update source for redink.ini "path; keys; pubkey"
+'  - INI_UpdateIniIgnoreOverride: String - Override rules for ignore filtering
+'  - INI_UpdateIniSilentMode: Integer - Silent update security level (0-4)
+'  - INI_UpdateIniSilentLog: Boolean - Log silent update actions (default: True)
 '
 ' My.Settings Variables:
-'  - IgnoredUpdates_RedInk: String - Serialized ignored parameters for redink.ini
-'  - IgnoredUpdates_AlternateModels: String - Serialized ignored params per segment
-'  - IgnoredUpdates_SpecialServices: String - Serialized ignored params per segment
+'  - IgnoredUpdates_RedInk: String - Serialized ignored parameters for main INI
+'  - IgnoredUpdates_Custom: String - Serialized ignored params for other INI files
+'
+' Registry Keys (optional):
+'  - RegPath_PermitSilentInitUpdates: Must be "yes"/"true"/"1" to enable silent mode
+'
+' Public Entry Points:
+'  - CheckForIniUpdates(context): Main entry point, called from UpdateHandler
+'  - ShowIgnoredParametersDialog(): UI for managing ignored parameters
+'  - ShowSignatureManagementDialog(): UI for generating keys, signing, verifying
+'  - ShowBatchSigningDialog(): UI for signing multiple files
+'  - GenerateEd25519KeyPair(): Returns (PublicKey, PrivateKey) tuple
+'  - SignUpdateFile(filePath, privateKey): Signs a file, creates .sig
+'  - VerifySignatureFile(filePath, publicKey): Verifies a file's signature
+'
+' Data Structures:
+'  - SilentUpdateSecurityLevel: Enum defining silent update trust levels
+'  - IniParameterChange: Represents a detected change with approval state
+'  - IniSegment: Represents a parsed INI segment with UpdateSource metadata
+'  - ParsedIniFile: Represents a fully parsed INI file with segments
+'  - SignatureError/SignatureErrorType: For signature validation reporting
+'  - IgnoreOverrideRule: Internal class for parsing override filter rules
+'
+' Dependencies:
+'  - Org.BouncyCastle.Crypto (Ed25519 signatures)
+'  - SharedLibrary.SharedContext (ISharedContext interface)
+'  - UpdateHandler.WriteUpdateLog() (for audit logging)
+'
 ' =============================================================================
 
 Option Strict On
@@ -32,10 +75,8 @@ Imports System.Drawing
 Imports System.IO
 Imports System.Net
 Imports System.Net.Http
-Imports System.Security.Cryptography
 Imports System.Text
 Imports System.Windows.Forms
-Imports Org.BouncyCastle.Crypto
 Imports Org.BouncyCastle.Crypto.Generators
 Imports Org.BouncyCastle.Crypto.Parameters
 Imports Org.BouncyCastle.Crypto.Signers
@@ -45,57 +86,50 @@ Imports SharedLibrary.SharedLibrary.SharedContext
 Namespace SharedLibrary
     Partial Public Class SharedMethods
 
-#Region "Temporary Context Variable Assignments"
-        ' =============================================================================
-        ' TEMPORARY: These properties should be moved to ISharedContext and loaded
-        ' in InitializeConfig from the INI file. For now, they are placeholders.
-        ' =============================================================================
+        Private Const IniUpdateIgnored As String = "iniupdateignored"   ' the name of the Freestyle command
 
-        ' Master switch: If False, no update checks are performed
-        Private Shared _INI_UpdateIni As Boolean = False
-        Public Shared Property INI_UpdateIni As Boolean
+        ' Module-level context reference for INI update operations
+        Private Shared _iniUpdateContext As ISharedContext
+
+        ''' <summary>
+        ''' Defines the security level for silent (unattended) updates.
+        ''' </summary>
+        Public Enum SilentUpdateSecurityLevel
+            Disabled = 0
+            SafeOnly = 1
+            SignedOnly = 2
+            LocalTrusted = 3
+            All = 4
+        End Enum
+
+        ''' <summary>
+        ''' Gets the current silent update mode as a typed enum value.
+        ''' </summary>
+        Private Shared ReadOnly Property SilentMode As SilentUpdateSecurityLevel
             Get
-                Return _INI_UpdateIni
+                Return CType(_iniUpdateContext.INI_UpdateIniSilentMode, SilentUpdateSecurityLevel)
             End Get
-            Set(value As Boolean)
-                _INI_UpdateIni = value
-            End Set
         End Property
 
-        ' If False, only local file paths and network shares are allowed (no HTTPS)
-        Private Shared _INI_UpdateIniAllowRemote As Boolean = True
-        Public Shared Property INI_UpdateIniAllowRemote As Boolean
-            Get
-                Return _INI_UpdateIniAllowRemote
-            End Get
-            Set(value As Boolean)
-                _INI_UpdateIniAllowRemote = value
-            End Set
-        End Property
-
-        ' If True, signature verification is skipped (NOT RECOMMENDED for production)
-        Private Shared _INI_UpdateIniNoSignature As Boolean = False
-        Public Shared Property INI_UpdateIniNoSignature As Boolean
-            Get
-                Return _INI_UpdateIniNoSignature
-            End Get
-            Set(value As Boolean)
-                _INI_UpdateIniNoSignature = value
-            End Set
-        End Property
-
-        ' Update source for redink.ini: "path; keylist; base64_public_key"
-        Private Shared _INI_UpdateSource As String = ""
-        Public Shared Property INI_UpdateSource As String
-            Get
-                Return _INI_UpdateSource
-            End Get
-            Set(value As String)
-                _INI_UpdateSource = value
-            End Set
-        End Property
-
-#End Region
+        ' Overrides local ignore settings with file-specific and segment-specific rules.
+        ' Format: Comma-separated rules with + (ignore) or - (include) prefix
+        ' 
+        ' Rule formats:
+        '   +Key or -Key                    → Match parameter in any file/segment
+        '   +file.ini|Key                   → Match parameter in specific file (any segment)
+        '   +file.ini|Segment|Key           → Match parameter in specific file and segment
+        '   +*|Segment|Key                  → Match parameter in specific segment of any file
+        '   +file.ini|*|Key                 → Same as +file.ini|Key
+        '
+        ' Special values:
+        '   +all                            → Ignore all updates globally
+        '   -all                            → Clear all ignores, process all updates
+        '
+        ' Examples:
+        '   "-all"                          → Process all updates (default)
+        '   "+all,-redink.ini|ApiKey"       → Ignore all except ApiKey in redink.ini
+        '   "+allmodels.ini|*|Model"        → Ignore Model parameter in all segments of allmodels.ini
+        '   "-redink.ini|Endpoint,+Model"   → Force Endpoint in redink.ini, ignore Model everywhere
 
 #Region "Data Structures"
 
@@ -154,6 +188,56 @@ Namespace SharedLibrary
 
 #End Region
 
+#Region "Window Owner Helper"
+
+        ''' <summary>
+        ''' Helper class to wrap a window handle for use as dialog owner.
+        ''' </summary>
+        Private Class WindowWrapper
+            Implements IWin32Window
+
+            Private ReadOnly _hwnd As IntPtr
+
+            Public Sub New(handle As IntPtr)
+                _hwnd = handle
+            End Sub
+
+            Public ReadOnly Property Handle As IntPtr Implements IWin32Window.Handle
+                Get
+                    Return _hwnd
+                End Get
+            End Property
+        End Class
+
+        ''' <summary>
+        ''' Gets the owner window for modal dialogs.
+        ''' Uses UpdateHandler.HostHandle which is set during add-in startup.
+        ''' </summary>
+        Private Shared Function GetDialogOwner() As IWin32Window
+            Try
+                ' Use the host handle captured by UpdateHandler during startup
+                Dim handle = UpdateHandler.HostHandle
+                If handle <> IntPtr.Zero Then
+                    Return New WindowWrapper(handle)
+                End If
+
+                ' Fallback: get the foreground window
+                Dim foregroundHandle = GetForegroundWindow()
+                If foregroundHandle <> IntPtr.Zero Then
+                    Return New WindowWrapper(foregroundHandle)
+                End If
+            Catch
+            End Try
+
+            Return Nothing
+        End Function
+
+        <System.Runtime.InteropServices.DllImport("user32.dll")>
+        Private Shared Function GetForegroundWindow() As IntPtr
+        End Function
+
+#End Region
+
 #Region "Main Entry Point"
 
         ''' <summary>
@@ -162,22 +246,46 @@ Namespace SharedLibrary
         ''' <param name="context">The shared context containing configuration.</param>
         ''' <returns>True if updates were applied, False otherwise.</returns>
         Public Shared Function CheckForIniUpdates(ByRef context As ISharedContext) As Boolean
+
+            ' Store context for use by helper methods
+            _iniUpdateContext = context
+
             Try
                 ' Check master switch
-                If Not INI_UpdateIni Then
-                    Debug.WriteLine("INI Update: Disabled via INI_UpdateIni")
+                If Not _iniUpdateContext.INI_UpdateIni Then
+                    Debug.WriteLine("INI Update: Disabled via _iniUpdateContext.INI_UpdateIni")
                     Return False
                 End If
+
+                ' Check registry for silent update permission - override silent mode if not permitted
+                If _iniUpdateContext.INI_UpdateIniSilentMode <> SilentUpdateSecurityLevel.Disabled Then
+                    Dim permitSilentUpdates As String = GetFromRegistry(RegPath_Base, RegPath_PermitSilentInitUpdates, True)
+                    If String.IsNullOrWhiteSpace(permitSilentUpdates) OrElse
+                       Not (permitSilentUpdates.Equals("yes", StringComparison.OrdinalIgnoreCase) OrElse
+                            permitSilentUpdates.Equals("true", StringComparison.OrdinalIgnoreCase) OrElse
+                            permitSilentUpdates.Equals("1", StringComparison.OrdinalIgnoreCase)) Then
+                        Debug.WriteLine("INI Update: Silent mode disabled via registry (PermitSilentIniUpdates not set or false)")
+                        LogIniUpdateEvent("Silent Mode Override", "Registry key PermitSilentIniUpdates not set or false - forcing interactive mode")
+                        _iniUpdateContext.INI_UpdateIniSilentMode = SilentUpdateSecurityLevel.Disabled
+                    End If
+                End If
+
+                LogIniUpdateEvent("Check Started", $"SilentMode={_iniUpdateContext.INI_UpdateIniSilentMode}")
 
                 ' Collect all changes from all three INI files
                 Dim allChanges As New List(Of IniParameterChange)()
                 Dim signatureErrors As New List(Of String)()
+                Dim failedSources As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+
+                Dim updateSources As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
 
                 ' 1. Check redink.ini (main config)
                 Dim mainIniPath As String = GetDefaultINIPath(context.RDV)
-                If File.Exists(mainIniPath) AndAlso Not String.IsNullOrWhiteSpace(INI_UpdateSource) Then
+                If File.Exists(mainIniPath) AndAlso Not String.IsNullOrWhiteSpace(_iniUpdateContext.INI_UpdateSource) Then
                     Dim mainFileName = Path.GetFileName(mainIniPath)
-                    Dim mainChanges = CheckSingleIniFile(mainIniPath, mainFileName, INI_UpdateSource, Nothing, signatureErrors)
+                    Dim sourceInfo = ParseGlobalUpdateSource(_iniUpdateContext.INI_UpdateSource)
+                    updateSources(mainFileName) = sourceInfo.UpdatePath
+                    Dim mainChanges = CheckSingleIniFile(mainIniPath, mainFileName, _iniUpdateContext.INI_UpdateSource, Nothing, signatureErrors, failedSources)
                     If mainChanges IsNot Nothing Then allChanges.AddRange(mainChanges)
                 End If
 
@@ -186,7 +294,7 @@ Namespace SharedLibrary
                     Dim altPath = ExpandEnvironmentVariables(context.INI_AlternateModelPath)
                     If File.Exists(altPath) Then
                         Dim altFileName = Path.GetFileName(altPath)
-                        Dim altChanges = CheckSegmentedIniFile(altPath, altFileName, signatureErrors)
+                        Dim altChanges = CheckSegmentedIniFile(altPath, altFileName, signatureErrors, updateSources, failedSources)
                         If altChanges IsNot Nothing Then allChanges.AddRange(altChanges)
                     End If
                 End If
@@ -196,14 +304,20 @@ Namespace SharedLibrary
                     Dim svcPath = ExpandEnvironmentVariables(context.INI_SpecialServicePath)
                     If File.Exists(svcPath) Then
                         Dim svcFileName = Path.GetFileName(svcPath)
-                        Dim svcChanges = CheckSegmentedIniFile(svcPath, svcFileName, signatureErrors)
+                        Dim svcChanges = CheckSegmentedIniFile(svcPath, svcFileName, signatureErrors, updateSources, failedSources)
                         If svcChanges IsNot Nothing Then allChanges.AddRange(svcChanges)
                     End If
                 End If
 
-                ' Report any signature errors to the user
+                ' Handle signature errors - ALWAYS log security events
                 If signatureErrors.Count > 0 Then
-                    ShowSignatureErrorDialog(signatureErrors)
+                    LogIniUpdateEvent("SECURITY: Signature Errors",
+                        $"{signatureErrors.Count} signature error(s) detected:" & vbCrLf &
+                        String.Join(vbCrLf, signatureErrors), alwaysLog:=True)
+
+                    If _iniUpdateContext.INI_UpdateIniSilentMode = SilentUpdateSecurityLevel.Disabled Then
+                        ShowSignatureErrorDialog(signatureErrors)
+                    End If
                 End If
 
                 ' Filter out ignored parameters
@@ -211,22 +325,41 @@ Namespace SharedLibrary
 
                 If allChanges.Count = 0 Then
                     Debug.WriteLine("INI Update: No changes detected")
+                    LogIniUpdateEvent("Check Complete", "No changes detected")
                     Return False
                 End If
 
+                ' Log detected changes summary
+                Dim suspiciousCount As Integer = allChanges.Where(Function(c) c.IsSuspicious).Count()
+                LogIniUpdateEvent("Changes Detected",
+                    $"Total={allChanges.Count}, Suspicious={suspiciousCount}")
+
+                ' === SILENT MODE HANDLING ===
+                If _iniUpdateContext.INI_UpdateIniSilentMode <> SilentUpdateSecurityLevel.Disabled Then
+                    Return ProcessSilentUpdates(allChanges, context, failedSources, updateSources)
+                End If
+
+                ' === INTERACTIVE MODE (existing behavior) ===
                 ' Show approval dialog
                 Dim approvalResult = ShowUpdateApprovalDialog(allChanges)
                 If approvalResult = UpdateApprovalResult.Reject Then
-                    ' User rejected all - show ignore dialog
+                    LogIniUpdateEvent("User Action", "User rejected all changes")
                     ShowIgnoreConfirmationDialog(allChanges)
                     Return False
                 ElseIf approvalResult = UpdateApprovalResult.Cancel Then
+                    LogIniUpdateEvent("User Action", "User cancelled update dialog")
                     Return False
                 End If
 
                 ' Get approved and rejected changes
                 Dim approvedChanges = allChanges.Where(Function(c) c.IsSelected).ToList()
                 Dim rejectedChanges = allChanges.Where(Function(c) Not c.IsSelected).ToList()
+
+                ' Log user decisions
+                If approvedChanges.Count > 0 OrElse rejectedChanges.Count > 0 Then
+                    LogIniUpdateEvent("User Action",
+                        $"Approved={approvedChanges.Count}, Rejected={rejectedChanges.Count}")
+                End If
 
                 ' Show ignore dialog for rejected items
                 If rejectedChanges.Count > 0 Then
@@ -236,6 +369,9 @@ Namespace SharedLibrary
                 ' Apply approved changes
                 If approvedChanges.Count > 0 Then
                     ApplyApprovedUpdates(approvedChanges, context)
+                    LogIniUpdateEvent("Updates Applied",
+                        String.Join(vbCrLf, approvedChanges.Select(Function(c) $"{c.ToString()}: {c.OldValue} → {c.NewValue}")),
+                        alwaysLog:=True)
                     ShowCustomMessageBox($"{approvedChanges.Count} configuration parameter(s) have been updated. Changes will be active upon next reload.")
                     Return True
                 End If
@@ -244,6 +380,7 @@ Namespace SharedLibrary
 
             Catch ex As Exception
                 Debug.WriteLine($"INI Update Error: {ex.Message}")
+                LogIniUpdateEvent("ERROR", $"Unexpected error: {ex.Message}", alwaysLog:=True)
                 Return False
             End Try
         End Function
@@ -253,6 +390,144 @@ Namespace SharedLibrary
             Reject
             Cancel
         End Enum
+
+        ''' <summary>
+        ''' Determines if a source path is local (file system or network share, not HTTPS).
+        ''' </summary>
+        Private Shared Function IsLocalSource(sourcePath As String) As Boolean
+            If String.IsNullOrWhiteSpace(sourcePath) Then Return False
+
+            ' Remote sources start with http:// or https://
+            Return Not sourcePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) AndAlso
+           Not sourcePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+        End Function
+
+
+        ''' <summary>
+        ''' Processes updates silently based on the configured security level.
+        ''' </summary>
+        ''' <param name="changes">List of detected changes.</param>
+        ''' <param name="context">Shared context for file paths.</param>
+        ''' <param name="failedSources">Set of source paths that failed signature validation.</param>
+        ''' <param name="updateSources">Dictionary mapping IniFile names to their update source paths.</param>
+        ''' <returns>True if updates were applied.</returns>
+        Private Shared Function ProcessSilentUpdates(changes As List(Of IniParameterChange),
+                                      context As ISharedContext,
+                                      failedSources As HashSet(Of String),
+                                      updateSources As Dictionary(Of String, String)) As Boolean
+            Dim changesToApply As New List(Of IniParameterChange)()
+
+            Select Case _iniUpdateContext.INI_UpdateIniSilentMode
+                Case SilentUpdateSecurityLevel.SafeOnly
+                    changesToApply = changes.Where(Function(c) Not c.IsSuspicious).ToList()
+                    LogIniUpdateEvent("SafeOnly mode",
+                $"Applying {changesToApply.Count} safe changes, skipping {changes.Count - changesToApply.Count} suspicious changes")
+
+                Case SilentUpdateSecurityLevel.SignedOnly
+                    ' Only apply changes from sources that passed signature validation
+                    For Each change As IniParameterChange In changes
+                        Dim sourcePath As String = Nothing
+
+                        ' Get source path for this change
+                        If Not String.IsNullOrEmpty(change.SegmentName) Then
+                            Dim segmentKey As String = $"{change.IniFile}|{change.SegmentName}"
+                            If updateSources IsNot Nothing Then
+                                updateSources.TryGetValue(segmentKey, sourcePath)
+                            End If
+                        End If
+
+                        If sourcePath Is Nothing AndAlso updateSources IsNot Nothing Then
+                            updateSources.TryGetValue(change.IniFile, sourcePath)
+                        End If
+
+                        ' Only add if source didn't fail signature validation
+                        If String.IsNullOrWhiteSpace(sourcePath) OrElse Not failedSources.Contains(sourcePath) Then
+                            changesToApply.Add(change)
+                        End If
+                    Next
+
+                    Dim skippedCount = changes.Count - changesToApply.Count
+                    If skippedCount > 0 Then
+                        LogIniUpdateEvent("SignedOnly mode",
+                    $"Applying {changesToApply.Count} changes from valid sources, skipping {skippedCount} from sources with signature errors",
+                    alwaysLog:=True)
+                    Else
+                        LogIniUpdateEvent("SignedOnly mode", $"All signatures valid - applying {changesToApply.Count} changes")
+                    End If
+
+                Case SilentUpdateSecurityLevel.LocalTrusted
+                    For Each change As IniParameterChange In changes
+                        Dim sourcePath As String = Nothing
+
+                        If Not String.IsNullOrEmpty(change.SegmentName) Then
+                            Dim segmentKey As String = $"{change.IniFile}|{change.SegmentName}"
+                            If updateSources IsNot Nothing Then
+                                updateSources.TryGetValue(segmentKey, sourcePath)
+                            End If
+                        End If
+
+                        If sourcePath Is Nothing AndAlso updateSources IsNot Nothing Then
+                            updateSources.TryGetValue(change.IniFile, sourcePath)
+                        End If
+
+                        If Not String.IsNullOrWhiteSpace(sourcePath) AndAlso IsLocalSource(sourcePath) Then
+                            changesToApply.Add(change)
+                        End If
+                    Next
+
+                    If changesToApply.Count > 0 Then
+                        LogIniUpdateEvent("LocalTrusted mode",
+                            $"Applying {changesToApply.Count} changes from local/network sources, " &
+                            $"skipping {changes.Count - changesToApply.Count} remote changes")
+                    Else
+                        LogIniUpdateEvent("LocalTrusted mode", "No local source changes to apply")
+                    End If
+
+                Case SilentUpdateSecurityLevel.All
+                    changesToApply = changes.ToList()
+                    LogIniUpdateEvent("All mode", $"Applying all {changesToApply.Count} changes (including suspicious and remote)")
+
+                Case Else
+                    Return False
+            End Select
+
+            If changesToApply.Count = 0 Then
+                Return False
+            End If
+
+            For Each change As IniParameterChange In changesToApply
+                change.IsSelected = True
+            Next
+
+            ApplyApprovedUpdates(changesToApply, context)
+            LogIniUpdateEvent("Updates Applied",
+                String.Join(vbCrLf, changesToApply.Select(Function(c) $"{c.ToString()}: {c.OldValue} → {c.NewValue}")),
+                alwaysLog:=True)
+
+            Return True
+        End Function
+
+        ''' <summary>
+        ''' Logs INI update events for audit purposes.
+        ''' Uses the shared WriteUpdateLog from UpdateHandler for consistent logging.
+        ''' </summary>
+        ''' <param name="eventType">Type of event (e.g., "Signature Error", "Update Applied").</param>
+        ''' <param name="details">Details about the event.</param>
+        ''' <param name="alwaysLog">If True, logs regardless of INI_UpdateIniSilentLog setting (for security events).</param>
+        Private Shared Sub LogIniUpdateEvent(eventType As String, details As String, Optional alwaysLog As Boolean = False)
+            ' For silent mode, respect the INI_UpdateIniSilentLog setting unless alwaysLog is True
+            If Not alwaysLog AndAlso Not _iniUpdateContext.INI_UpdateIniSilentLog Then Return
+
+            Try
+                Dim message As String = $"[INI Update] [{eventType}]"
+                If Not String.IsNullOrWhiteSpace(details) Then
+                    message &= vbCrLf & "  " & details.Replace(vbCrLf, vbCrLf & "  ")
+                End If
+                UpdateHandler.WriteUpdateLog(message)
+            Catch ex As Exception
+                Debug.WriteLine($"Failed to log INI update event: {ex.Message}")
+            End Try
+        End Sub
 
 #End Region
 
@@ -288,11 +563,13 @@ Namespace SharedLibrary
 
             Dim form As New Form() With {
                 .Text = $"{AN} - Signature Validation Errors",
-                .Size = New Size(750, 450),
+                .Size = New Size(850, 520),
                 .StartPosition = FormStartPosition.CenterScreen,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
-                .MinimumSize = New Size(500, 300)
+                .MinimumSize = New Size(750, 450),
+                .AutoScaleMode = AutoScaleMode.Dpi,
+                .TopMost = True
             }
 
             Try
@@ -301,13 +578,30 @@ Namespace SharedLibrary
             Catch
             End Try
 
-            ' Warning header with icon
-            Dim pnlHeader As New Panel() With {
-                .Dock = DockStyle.Top,
-                .Height = 70,
-                .BackColor = Color.FromArgb(255, 250, 230)
+            ' Use TableLayoutPanel for proper scaling and layout
+            Dim tblMain As New TableLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .Padding = New Padding(15),
+                .ColumnCount = 1,
+                .RowCount = 4,
+                .AutoSize = False
             }
-            form.Controls.Add(pnlHeader)
+            tblMain.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Warning header
+            tblMain.RowStyles.Add(New RowStyle(SizeType.Percent, 100))  ' Error list (fills remaining space)
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Info label
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Buttons
+            form.Controls.Add(tblMain)
+
+            ' Row 0: Warning header
+            Dim pnlHeader As New Panel() With {
+                .Dock = DockStyle.Fill,
+                .BackColor = Color.FromArgb(255, 250, 230),
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .MinimumSize = New Size(0, 60)
+            }
+            tblMain.Controls.Add(pnlHeader, 0, 0)
 
             Dim lblWarning As New Label() With {
                 .Text = "⚠ SECURITY WARNING: The following update sources could not be verified." & vbCrLf &
@@ -316,11 +610,12 @@ Namespace SharedLibrary
                 .Font = New Font("Segoe UI", 10.0F, FontStyle.Bold),
                 .ForeColor = Color.DarkOrange,
                 .TextAlign = ContentAlignment.MiddleLeft,
-                .Padding = New Padding(15, 10, 15, 10)
+                .Padding = New Padding(10),
+                .AutoSize = True
             }
             pnlHeader.Controls.Add(lblWarning)
 
-            ' Error list
+            ' Row 1: Error list (takes remaining space)
             Dim txtErrors As New TextBox() With {
                 .Dock = DockStyle.Fill,
                 .Multiline = True,
@@ -328,33 +623,51 @@ Namespace SharedLibrary
                 .ScrollBars = ScrollBars.Both,
                 .BackColor = SystemColors.Window,
                 .Font = New Font("Consolas", 9.0F),
-                .Text = String.Join(vbCrLf & vbCrLf, errors)
+                .Text = String.Join(vbCrLf & vbCrLf, errors),
+                .Margin = New Padding(0, 10, 0, 10)
             }
-            form.Controls.Add(txtErrors)
+            tblMain.Controls.Add(txtErrors, 0, 1)
 
-            ' Info panel
+            ' Row 2: Info label (auto-sized)
             Dim lblInfo As New Label() With {
                 .Text = "These update sources were skipped. Contact your administrator if this is unexpected." & vbCrLf &
                         "Administrators: Use the Signature Management tool to diagnose and fix signature issues.",
-                .Dock = DockStyle.Bottom,
-                .Height = 50,
-                .Padding = New Padding(10),
-                .BackColor = Color.FromArgb(240, 240, 240)
+                .Dock = DockStyle.Fill,
+                .AutoSize = True,
+                .Padding = New Padding(0, 5, 0, 5),
+                .BackColor = Color.FromArgb(240, 240, 240),
+                .Margin = New Padding(0, 0, 0, 10)
             }
-            form.Controls.Add(lblInfo)
+            tblMain.Controls.Add(lblInfo, 0, 2)
 
-            ' Buttons
+            ' Row 3: Buttons panel
             Dim pnlButtons As New FlowLayoutPanel() With {
-                .Dock = DockStyle.Bottom,
-                .FlowDirection = FlowDirection.RightToLeft,
-                .Height = 50,
-                .Padding = New Padding(10)
+                .Dock = DockStyle.Fill,
+                .FlowDirection = FlowDirection.LeftToRight,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .WrapContents = False,
+                .Margin = New Padding(0, 0, 0, 5)
             }
-            form.Controls.Add(pnlButtons)
+            tblMain.Controls.Add(pnlButtons, 0, 3)
 
-            Dim btnClose As New Button() With {.Text = "Close", .AutoSize = True}
-            Dim btnCopy As New Button() With {.Text = "Copy to Clipboard", .AutoSize = True}
-            Dim btnDiagnose As New Button() With {.Text = "Open Signature Tool...", .AutoSize = True}
+            Dim btnClose As New Button() With {
+                .Text = "Close",
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8),
+                .Margin = New Padding(0, 0, 10, 0)
+            }
+            Dim btnCopy As New Button() With {
+                .Text = "Copy to Clipboard",
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8),
+                .Margin = New Padding(0, 0, 10, 0)
+            }
+            Dim btnDiagnose As New Button() With {
+                .Text = "Open Signature Tool...",
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8)
+            }
 
             pnlButtons.Controls.Add(btnClose)
             pnlButtons.Controls.Add(btnCopy)
@@ -379,8 +692,7 @@ Namespace SharedLibrary
                                               ShowSignatureManagementDialog()
                                           End Sub
 
-            txtErrors.BringToFront()
-            form.ShowDialog()
+            form.ShowDialog(GetDialogOwner())
         End Sub
 
 #End Region
@@ -455,6 +767,11 @@ Namespace SharedLibrary
         ''' <summary>
         ''' Parses the UpdateSource parameter of a segment into its components.
         ''' Format: "path; key1,key2,key3; base64_public_key" or "path; all; base64_public_key"
+        ''' Supported key specifiers:
+        '''   - "all" = update all keys from remote (including new keys)
+        '''   - "new" = only propose new keys not in local file
+        '''   - "key1,key2" = only update specific listed keys
+        '''   - "all,new" or "key1,key2,new" = combine behaviors
         ''' </summary>
         Private Shared Sub ParseUpdateSource(segment As IniSegment)
             If segment Is Nothing Then Return
@@ -469,14 +786,10 @@ Namespace SharedLibrary
 
             If parts.Length >= 2 Then
                 Dim keysPart = parts(1).Trim()
-                If keysPart.Equals("all", StringComparison.OrdinalIgnoreCase) Then
-                    segment.UpdateKeys = New List(Of String) From {"*"} ' Special marker for "all"
-                Else
-                    segment.UpdateKeys = keysPart.Split(","c).
-                        Select(Function(k) k.Trim()).
-                        Where(Function(k) Not String.IsNullOrEmpty(k)).
-                        ToList()
-                End If
+                segment.UpdateKeys = keysPart.Split(","c).
+                    Select(Function(k) k.Trim()).
+                    Where(Function(k) Not String.IsNullOrEmpty(k)).
+                    ToList()
             End If
 
             If parts.Length >= 3 Then
@@ -503,14 +816,10 @@ Namespace SharedLibrary
 
             If parts.Length >= 2 Then
                 Dim keysPart = parts(1).Trim()
-                If keysPart.Equals("all", StringComparison.OrdinalIgnoreCase) Then
-                    segment.UpdateKeys = New List(Of String) From {"*"}
-                Else
-                    segment.UpdateKeys = keysPart.Split(","c).
-                        Select(Function(k) k.Trim()).
-                        Where(Function(k) Not String.IsNullOrEmpty(k)).
-                        ToList()
-                End If
+                segment.UpdateKeys = keysPart.Split(","c).
+                    Select(Function(k) k.Trim()).
+                    Where(Function(k) Not String.IsNullOrEmpty(k)).
+                    ToList()
             End If
 
             If parts.Length >= 3 Then
@@ -530,8 +839,10 @@ Namespace SharedLibrary
         ''' <param name="sourcePath">Path or URL to the update source.</param>
         ''' <param name="publicKey">Base64-encoded public key for signature verification.</param>
         ''' <param name="signatureErrors">List to collect signature error messages for user reporting.</param>
+        ''' <param name="failedSources">Set to track source paths that failed signature validation.</param>
         ''' <returns>Content string if successful, Nothing if failed.</returns>
-        Private Shared Function LoadUpdateSourceContent(sourcePath As String, publicKey As String, signatureErrors As List(Of String)) As String
+        Private Shared Function LoadUpdateSourceContent(sourcePath As String, publicKey As String, signatureErrors As List(Of String), Optional failedSources As HashSet(Of String) = Nothing) As String
+
             If String.IsNullOrWhiteSpace(sourcePath) Then Return Nothing
 
             Try
@@ -539,7 +850,7 @@ Namespace SharedLibrary
                                sourcePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
 
                 ' Check if remote sources are allowed
-                If isRemote AndAlso Not INI_UpdateIniAllowRemote Then
+                If isRemote AndAlso Not _iniUpdateContext.INI_UpdateIniAllowRemote Then
                     Debug.WriteLine($"Remote update source blocked by policy: {sourcePath}")
                     Return Nothing
                 End If
@@ -564,11 +875,12 @@ Namespace SharedLibrary
                             signatureErrors?.Add($"SOURCE: {sourcePath}" & vbCrLf &
                                                  $"ERROR: Failed to download update source" & vbCrLf &
                                                  $"DETAILS: {ex.Message}")
+                            failedSources?.Add(sourcePath)
                             Return Nothing
                         End Try
 
-                        ' Download signature file (.sig)
-                        If Not INI_UpdateIniNoSignature Then
+                        ' Download signature file (.sig) - only if signature verification is required AND public key exists
+                        If Not _iniUpdateContext.INI_UpdateIniNoSignature AndAlso Not String.IsNullOrWhiteSpace(publicKey) Then
                             Try
                                 Dim sigTask = client.GetStringAsync(sourcePath & ".sig")
                                 sigTask.Wait()
@@ -579,6 +891,7 @@ Namespace SharedLibrary
                                                      $"EXPECTED: {sourcePath}.sig" & vbCrLf &
                                                      $"DETAILS: {ex.Message}" & vbCrLf &
                                                      $"ACTION: Ensure the .sig file exists alongside the update file, or contact your administrator.")
+                                failedSources?.Add(sourcePath)
                             End Try
                         End If
                     End Using
@@ -596,11 +909,12 @@ Namespace SharedLibrary
                         signatureErrors?.Add($"SOURCE: {expandedPath}" & vbCrLf &
                                              $"ERROR: Failed to read update source file" & vbCrLf &
                                              $"DETAILS: {ex.Message}")
+                        failedSources?.Add(sourcePath)
                         Return Nothing
                     End Try
 
-                    ' Check for signature file
-                    If Not INI_UpdateIniNoSignature Then
+                    ' Check for signature file - only if signature verification is required AND public key exists
+                    If Not _iniUpdateContext.INI_UpdateIniNoSignature AndAlso Not String.IsNullOrWhiteSpace(publicKey) Then
                         Dim sigPath = expandedPath & ".sig"
                         If File.Exists(sigPath) Then
                             Try
@@ -610,30 +924,39 @@ Namespace SharedLibrary
                                                      $"ERROR: Failed to read signature file" & vbCrLf &
                                                      $"SIGNATURE FILE: {sigPath}" & vbCrLf &
                                                      $"DETAILS: {ex.Message}")
+                                failedSources?.Add(sourcePath)
                             End Try
                         Else
                             signatureErrors?.Add($"SOURCE: {expandedPath}" & vbCrLf &
                                                  $"ERROR: Signature file not found" & vbCrLf &
                                                  $"EXPECTED: {sigPath}" & vbCrLf &
                                                  $"ACTION: Create a .sig file using the Signature Management tool, or contact your administrator.")
+                            failedSources?.Add(sourcePath)
                         End If
                     End If
                 End If
 
                 ' Verify signature if required
-                If Not INI_UpdateIniNoSignature Then
+                If Not _iniUpdateContext.INI_UpdateIniNoSignature Then
                     Dim displayPath = If(expandedPath, sourcePath)
+
+                    ' If no public key is configured, skip signature verification but add warning
+                    If String.IsNullOrWhiteSpace(publicKey) Then
+                        ' Add warning for non-silent mode (will be shown to user)
+                        ' For silent modes (except SignedOnly), this is acceptable - just log it
+                        signatureErrors?.Add($"SOURCE: {displayPath}" & vbCrLf &
+                                             $"WARNING: No public key configured - signature verification skipped" & vbCrLf &
+                                             $"NOTE: Updates will proceed without cryptographic verification." & vbCrLf &
+                                             $"ACTION: For better security, add a public key as the third parameter in UpdateSource:" & vbCrLf &
+                                             $"        UpdateSource = path; keys; PUBLIC_KEY_HERE")
+                        ' Mark as failed for SignedOnly mode, but allow content to be returned
+                        failedSources?.Add(sourcePath)
+                        ' Return content anyway - caller will handle based on silent mode
+                        Return content
+                    End If
 
                     If String.IsNullOrWhiteSpace(signatureContent) Then
                         ' Error already added above
-                        Return Nothing
-                    End If
-
-                    If String.IsNullOrWhiteSpace(publicKey) Then
-                        signatureErrors?.Add($"SOURCE: {displayPath}" & vbCrLf &
-                                             $"ERROR: No public key configured for signature verification" & vbCrLf &
-                                             $"ACTION: Add the public key as the third parameter in UpdateSource:" & vbCrLf &
-                                             $"        UpdateSource = path; keys; PUBLIC_KEY_HERE")
                         Return Nothing
                     End If
 
@@ -646,6 +969,7 @@ Namespace SharedLibrary
                                              $"  - Wrong public key configured" & vbCrLf &
                                              $"  - Signature file corrupted or for different file" & vbCrLf &
                                              $"ACTION: Contact your administrator immediately.")
+                        failedSources?.Add(sourcePath)
                         Return Nothing
                     End If
                 End If
@@ -656,6 +980,7 @@ Namespace SharedLibrary
                 signatureErrors?.Add($"SOURCE: {sourcePath}" & vbCrLf &
                                      $"ERROR: Unexpected error during update check" & vbCrLf &
                                      $"DETAILS: {ex.Message}")
+                failedSources?.Add(sourcePath)
                 Return Nothing
             End Try
         End Function
@@ -669,7 +994,9 @@ Namespace SharedLibrary
         ''' </summary>
         Private Shared Function CheckSingleIniFile(localPath As String, fileName As String,
                                                    updateSource As String, segmentName As String,
-                                                   signatureErrors As List(Of String)) As List(Of IniParameterChange)
+                                                   signatureErrors As List(Of String),
+                                                   Optional failedSources As HashSet(Of String) = Nothing) As List(Of IniParameterChange)
+
             Dim changes As New List(Of IniParameterChange)()
 
             Try
@@ -679,20 +1006,42 @@ Namespace SharedLibrary
                 If sourceInfo.UpdateKeys Is Nothing OrElse sourceInfo.UpdateKeys.Count = 0 Then Return changes
 
                 ' Load remote content (with signature validation)
-                Dim remoteContent = LoadUpdateSourceContent(sourceInfo.UpdatePath, sourceInfo.PublicKey, signatureErrors)
+                Dim remoteContent = LoadUpdateSourceContent(sourceInfo.UpdatePath, sourceInfo.PublicKey, signatureErrors, failedSources)
                 If String.IsNullOrWhiteSpace(remoteContent) Then Return changes
 
                 ' Parse local and remote files
                 Dim localIni = ParseIniFile(localPath)
                 Dim remoteParams = ParseIniContentToDict(remoteContent)
 
+                ' Check for special key modifiers
+                Dim hasAll = sourceInfo.UpdateKeys.Any(Function(k) k.Equals("all", StringComparison.OrdinalIgnoreCase))
+                Dim hasNew = sourceInfo.UpdateKeys.Any(Function(k) k.Equals("new", StringComparison.OrdinalIgnoreCase))
+                Dim specificKeys = sourceInfo.UpdateKeys.Where(
+                    Function(k) Not k.Equals("all", StringComparison.OrdinalIgnoreCase) AndAlso
+                                Not k.Equals("new", StringComparison.OrdinalIgnoreCase)).ToList()
+
                 ' Determine which keys to check
-                Dim keysToCheck As IEnumerable(Of String)
-                If sourceInfo.UpdateKeys.Contains("*") Then
-                    ' "all" - check all keys from remote that exist locally
-                    keysToCheck = remoteParams.Keys
+                Dim keysToCheck As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+
+                If hasAll Then
+                    ' "all" - check all keys from remote
+                    For Each key In remoteParams.Keys
+                        keysToCheck.Add(key)
+                    Next
                 Else
-                    keysToCheck = sourceInfo.UpdateKeys
+                    ' Add specific keys
+                    For Each key In specificKeys
+                        keysToCheck.Add(key)
+                    Next
+                End If
+
+                ' If "new" is specified, also include keys that exist in remote but not in local
+                If hasNew Then
+                    For Each key In remoteParams.Keys
+                        If Not localIni.GlobalParameters.ContainsKey(key) Then
+                            keysToCheck.Add(key)
+                        End If
+                    Next
                 End If
 
                 ' Compare values
@@ -706,20 +1055,22 @@ Namespace SharedLibrary
                     Dim localValue As String = Nothing
                     localIni.GlobalParameters.TryGetValue(key, localValue)
 
-                    ' Check if values differ
+                    ' Check if values differ (or key is new)
                     If Not String.Equals(localValue, remoteValue, StringComparison.Ordinal) Then
+                        Dim isNewKey = localValue Is Nothing
                         Dim change As New IniParameterChange() With {
                             .IniFile = fileName,
                             .SegmentName = If(segmentName, ""),
                             .ParameterKey = key,
-                            .OldValue = If(localValue, "(not set)"),
+                            .OldValue = If(localValue, "(new key)"),
                             .NewValue = remoteValue,
                             .IsSelected = True,
                             .IsSuspicious = IsPathOrUrlChange(localValue, remoteValue)
                         }
 
-                        ' Suspicious changes are not selected by default
+                        ' Suspicious changes and new keys with URLs/paths are not selected by default
                         If change.IsSuspicious Then change.IsSelected = False
+                        If isNewKey AndAlso IsPathOrUrlChange("", remoteValue) Then change.IsSelected = False
 
                         changes.Add(change)
                     End If
@@ -736,7 +1087,10 @@ Namespace SharedLibrary
         ''' Checks a segmented INI file (user-defined filename) for updates.
         ''' </summary>
         Private Shared Function CheckSegmentedIniFile(localPath As String, fileName As String,
-                                                      signatureErrors As List(Of String)) As List(Of IniParameterChange)
+                                              signatureErrors As List(Of String),
+                                              Optional updateSources As Dictionary(Of String, String) = Nothing,
+                                              Optional failedSources As HashSet(Of String) = Nothing) As List(Of IniParameterChange)
+
             Dim changes As New List(Of IniParameterChange)()
 
             Try
@@ -747,43 +1101,75 @@ Namespace SharedLibrary
                     If String.IsNullOrWhiteSpace(segment.UpdatePath) Then Continue For
                     If segment.UpdateKeys Is Nothing OrElse segment.UpdateKeys.Count = 0 Then Continue For
 
+                    ' Track update source for LocalTrusted mode
+                    ' Use segment-specific key: "filename|segmentname" to handle multiple segments
+                    If updateSources IsNot Nothing Then
+                        Dim sourceKey As String = $"{fileName}|{segment.Name}"
+                        updateSources(sourceKey) = segment.UpdatePath
+                    End If
+
                     ' Load remote content for this segment (with signature validation)
-                    Dim remoteContent = LoadUpdateSourceContent(segment.UpdatePath, segment.PublicKey, signatureErrors)
+                    Dim remoteContent As String = LoadUpdateSourceContent(segment.UpdatePath, segment.PublicKey, signatureErrors, failedSources)
                     If String.IsNullOrWhiteSpace(remoteContent) Then Continue For
 
                     ' Parse remote content - look for matching segment
-                    Dim remoteSegment = FindSegmentInContent(remoteContent, segment.Name)
+                    Dim remoteSegment As IniSegment = FindSegmentInContent(remoteContent, segment.Name)
                     If remoteSegment Is Nothing Then Continue For
 
+                    ' Check for special key modifiers
+                    Dim hasAll As Boolean = segment.UpdateKeys.Any(Function(k) k.Equals("all", StringComparison.OrdinalIgnoreCase))
+                    Dim hasNew As Boolean = segment.UpdateKeys.Any(Function(k) k.Equals("new", StringComparison.OrdinalIgnoreCase))
+                    Dim specificKeys As List(Of String) = segment.UpdateKeys.Where(
+                        Function(k) Not k.Equals("all", StringComparison.OrdinalIgnoreCase) AndAlso
+                                    Not k.Equals("new", StringComparison.OrdinalIgnoreCase)).ToList()
+
                     ' Determine which keys to check
-                    Dim keysToCheck As IEnumerable(Of String)
-                    If segment.UpdateKeys.Contains("*") Then
-                        keysToCheck = remoteSegment.Parameters.Keys
+                    Dim keysToCheck As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+
+                    If hasAll Then
+                        ' "all" - check all keys from remote segment
+                        For Each key As String In remoteSegment.Parameters.Keys
+                            keysToCheck.Add(key)
+                        Next
                     Else
-                        keysToCheck = segment.UpdateKeys
+                        ' Add specific keys
+                        For Each key As String In specificKeys
+                            keysToCheck.Add(key)
+                        Next
+                    End If
+
+                    ' If "new" is specified, also include keys that exist in remote but not in local
+                    If hasNew Then
+                        For Each key As String In remoteSegment.Parameters.Keys
+                            If Not segment.Parameters.ContainsKey(key) Then
+                                keysToCheck.Add(key)
+                            End If
+                        Next
                     End If
 
                     ' Compare values
-                    For Each key In keysToCheck
+                    For Each key As String In keysToCheck
                         If IsProtectedKey(key) Then Continue For
                         If Not remoteSegment.Parameters.ContainsKey(key) Then Continue For
 
-                        Dim remoteValue = remoteSegment.Parameters(key)
+                        Dim remoteValue As String = remoteSegment.Parameters(key)
                         Dim localValue As String = Nothing
                         segment.Parameters.TryGetValue(key, localValue)
 
                         If Not String.Equals(localValue, remoteValue, StringComparison.Ordinal) Then
+                            Dim isNewKey As Boolean = localValue Is Nothing
                             Dim change As New IniParameterChange() With {
                                 .IniFile = fileName,
                                 .SegmentName = segment.Name,
                                 .ParameterKey = key,
-                                .OldValue = If(localValue, "(not set)"),
+                                .OldValue = If(localValue, "(new key)"),
                                 .NewValue = remoteValue,
                                 .IsSelected = True,
                                 .IsSuspicious = IsPathOrUrlChange(localValue, remoteValue)
                             }
 
                             If change.IsSuspicious Then change.IsSelected = False
+                            If isNewKey AndAlso IsPathOrUrlChange("", remoteValue) Then change.IsSelected = False
 
                             changes.Add(change)
                         End If
@@ -866,21 +1252,32 @@ Namespace SharedLibrary
 
         ''' <summary>
         ''' Determines if a value change involves URL or path changes (suspicious).
+        ''' Also returns True if newValue contains a URL/path and oldValue is empty (new key with URL/path).
         ''' </summary>
         Private Shared Function IsPathOrUrlChange(oldValue As String, newValue As String) As Boolean
-            If String.IsNullOrWhiteSpace(oldValue) OrElse String.IsNullOrWhiteSpace(newValue) Then Return False
-
             ' Check if either contains URL patterns
             Dim urlPatterns = {"http://", "https://", "ftp://", "file://"}
             Dim pathPatterns = {":\", ":\\", "/"}
 
-            Dim oldHasUrl = urlPatterns.Any(Function(p) oldValue.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0)
-            Dim newHasUrl = urlPatterns.Any(Function(p) newValue.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0)
-            Dim oldHasPath = pathPatterns.Any(Function(p) oldValue.Contains(p))
-            Dim newHasPath = pathPatterns.Any(Function(p) newValue.Contains(p))
+            Dim oldHasUrl = Not String.IsNullOrWhiteSpace(oldValue) AndAlso
+                    urlPatterns.Any(Function(p) oldValue.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0)
+            Dim newHasUrl = Not String.IsNullOrWhiteSpace(newValue) AndAlso
+                    urlPatterns.Any(Function(p) newValue.IndexOf(p, StringComparison.OrdinalIgnoreCase) >= 0)
+            Dim oldHasPath = Not String.IsNullOrWhiteSpace(oldValue) AndAlso
+                     pathPatterns.Any(Function(p) oldValue.Contains(p))
+            Dim newHasPath = Not String.IsNullOrWhiteSpace(newValue) AndAlso
+                     pathPatterns.Any(Function(p) newValue.Contains(p))
 
-            ' Suspicious if URL or path is present and values differ
-            If (oldHasUrl OrElse newHasUrl OrElse oldHasPath OrElse newHasPath) Then
+            ' Suspicious if:
+            ' 1. New key with URL/path in the value
+            ' 2. Existing key where URL/path is present and values differ
+            If String.IsNullOrWhiteSpace(oldValue) Then
+                ' New key - suspicious if new value contains URL or path
+                Return newHasUrl OrElse newHasPath
+            End If
+
+            ' Existing key - suspicious if URL or path is present and values differ
+            If oldHasUrl OrElse newHasUrl OrElse oldHasPath OrElse newHasPath Then
                 Return Not String.Equals(oldValue, newValue, StringComparison.OrdinalIgnoreCase)
             End If
 
@@ -889,18 +1286,185 @@ Namespace SharedLibrary
 
 #End Region
 
+
 #Region "Ignored Parameters Management"
 
         ''' <summary>
-        ''' Filters out parameters that are in the ignore list.
+        ''' Represents a parsed override rule for filtering ignored parameters.
+        ''' </summary>
+        Private Class IgnoreOverrideRule
+            Public Property IsForceIgnore As Boolean    ' True = +, False = -
+            Public Property FileName As String          ' "*" = any file, or specific filename
+            Public Property SegmentName As String       ' "*" = any segment, "" = global, or specific segment
+            Public Property ParameterKey As String      ' "*" = any key, "all" = special, or specific key
+
+            ''' <summary>
+            ''' Checks if this rule matches the given change.
+            ''' </summary>
+            Public Function Matches(change As IniParameterChange) As Boolean
+                ' Check filename match
+                If FileName <> "*" AndAlso Not FileName.Equals(change.IniFile, StringComparison.OrdinalIgnoreCase) Then
+                    Return False
+                End If
+
+                ' Check segment match
+                If SegmentName <> "*" Then
+                    Dim changeSegment = If(change.SegmentName, "")
+                    If Not SegmentName.Equals(changeSegment, StringComparison.OrdinalIgnoreCase) Then
+                        Return False
+                    End If
+                End If
+
+                ' Check parameter key match
+                If ParameterKey <> "*" AndAlso Not ParameterKey.Equals(change.ParameterKey, StringComparison.OrdinalIgnoreCase) Then
+                    Return False
+                End If
+
+                Return True
+            End Function
+        End Class
+
+        ''' <summary>
+        ''' Parses the INI_UpdateIniIgnoreOverride string into a list of rules.
+        ''' Supported formats:
+        '''   Simple:     "+Key" or "-Key" (matches any file/segment)
+        '''   File:       "+filename.ini|Key" or "-filename.ini|Key"
+        '''   Full:       "+filename.ini|Segment|Key" or "-filename.ini|Segment|Key"
+        '''   Wildcards:  "+*|Segment|Key" or "+filename.ini|*|Key"
+        '''   Special:    "+all" (ignore everything), "-all" (include everything)
+        ''' </summary>
+        Private Shared Function ParseIgnoreOverrideRules(overrideValue As String) As List(Of IgnoreOverrideRule)
+            Dim rules As New List(Of IgnoreOverrideRule)()
+
+            If String.IsNullOrWhiteSpace(overrideValue) Then Return rules
+
+            For Each item In overrideValue.Split(","c)
+                Dim trimmed = item.Trim()
+                If String.IsNullOrEmpty(trimmed) Then Continue For
+
+                Dim isForceIgnore As Boolean
+                Dim ruleBody As String
+
+                If trimmed.StartsWith("+") Then
+                    isForceIgnore = True
+                    ruleBody = trimmed.Substring(1).Trim()
+                ElseIf trimmed.StartsWith("-") Then
+                    isForceIgnore = False
+                    ruleBody = trimmed.Substring(1).Trim()
+                Else
+                    Continue For ' Invalid format, skip
+                End If
+
+                If String.IsNullOrEmpty(ruleBody) Then Continue For
+
+                Dim rule As New IgnoreOverrideRule() With {.IsForceIgnore = isForceIgnore}
+
+                ' Parse the rule body: can be "key", "file|key", or "file|segment|key"
+                Dim parts = ruleBody.Split("|"c)
+
+                Select Case parts.Length
+                    Case 1
+                        ' Simple format: just the key (or "all")
+                        rule.FileName = "*"
+                        rule.SegmentName = "*"
+                        rule.ParameterKey = parts(0).Trim()
+
+                    Case 2
+                        ' File|Key format
+                        rule.FileName = parts(0).Trim()
+                        rule.SegmentName = "*"
+                        rule.ParameterKey = parts(1).Trim()
+
+                    Case 3
+                        ' File|Segment|Key format
+                        rule.FileName = parts(0).Trim()
+                        rule.SegmentName = parts(1).Trim()
+                        rule.ParameterKey = parts(2).Trim()
+
+                    Case Else
+                        Continue For ' Invalid format
+                End Select
+
+                ' Validate: empty components become wildcards
+                If String.IsNullOrEmpty(rule.FileName) Then rule.FileName = "*"
+                If String.IsNullOrEmpty(rule.SegmentName) Then rule.SegmentName = "*"
+                If String.IsNullOrEmpty(rule.ParameterKey) Then Continue For ' Key is required
+
+                rules.Add(rule)
+            Next
+
+            Return rules
+        End Function
+
+        ''' <summary>
+        ''' Filters out parameters that are in the ignore list, applying any overrides.
+        ''' Supports file-specific and segment-specific override rules.
+        ''' More specific rules take precedence over less specific ones.
         ''' </summary>
         Private Shared Function FilterIgnoredParameters(changes As List(Of IniParameterChange)) As List(Of IniParameterChange)
             Dim result As New List(Of IniParameterChange)()
 
+            ' Parse override rules
+            Dim rules = ParseIgnoreOverrideRules(_iniUpdateContext.INI_UpdateIniIgnoreOverride)
+
+            ' Check for global "all" rules
+            Dim hasIgnoreAll = rules.Any(Function(r) r.IsForceIgnore AndAlso
+                                                  r.FileName = "*" AndAlso
+                                                  r.SegmentName = "*" AndAlso
+                                                  r.ParameterKey.Equals("all", StringComparison.OrdinalIgnoreCase))
+
+            Dim hasIncludeAll = rules.Any(Function(r) Not r.IsForceIgnore AndAlso
+                                                   r.FileName = "*" AndAlso
+                                                   r.SegmentName = "*" AndAlso
+                                                   r.ParameterKey.Equals("all", StringComparison.OrdinalIgnoreCase))
+
+            ' Apply filtering with overrides
             For Each change In changes
                 Dim ignoreKey = GetIgnoreKey(change)
-                Dim ignoreList = GetIgnoreListForFile(change.IniFile)
 
+                ' Find matching override rules (excluding "all" special rules)
+                Dim matchingRules = rules.Where(Function(r) r.Matches(change) AndAlso
+                                                         Not r.ParameterKey.Equals("all", StringComparison.OrdinalIgnoreCase)).ToList()
+
+                ' Find the most specific matching rule
+                ' Specificity: file match = 4, segment match = 2, key match = 1
+                Dim bestRule As IgnoreOverrideRule = Nothing
+                Dim bestSpecificity As Integer = -1
+
+                For Each rule In matchingRules
+                    Dim specificity = 0
+                    If rule.FileName <> "*" Then specificity += 4
+                    If rule.SegmentName <> "*" Then specificity += 2
+                    If rule.ParameterKey <> "*" Then specificity += 1
+
+                    ' Higher specificity wins; if equal, later rule wins
+                    If specificity >= bestSpecificity Then
+                        bestSpecificity = specificity
+                        bestRule = rule
+                    End If
+                Next
+
+                ' Apply the most specific rule if found
+                If bestRule IsNot Nothing Then
+                    If Not bestRule.IsForceIgnore Then
+                        result.Add(change) ' Force included
+                    End If
+                    ' If IsForceIgnore, skip adding (force ignored)
+                    Continue For
+                End If
+
+                ' Apply global "all" rules if no specific rule matched
+                If hasIgnoreAll Then
+                    Continue For ' Ignore all
+                End If
+
+                If hasIncludeAll Then
+                    result.Add(change)
+                    Continue For
+                End If
+
+                ' Fall back to local ignore list
+                Dim ignoreList = GetIgnoreListForFile(change.IniFile)
                 If Not ignoreList.Contains(ignoreKey) Then
                     result.Add(change)
                 End If
@@ -1010,10 +1574,13 @@ Namespace SharedLibrary
         Public Shared Sub ShowIgnoredParametersDialog()
             Dim form As New Form() With {
                 .Text = $"{AN} - Manage Ignored Update Parameters",
-                .Size = New Size(700, 500),
+                .Size = New Size(750, 520),
                 .StartPosition = FormStartPosition.CenterScreen,
                 .FormBorderStyle = FormBorderStyle.Sizable,
-                .Font = New Font("Segoe UI", 9.0F)
+                .Font = New Font("Segoe UI", 9.0F),
+                .MinimumSize = New Size(550, 400),
+                .AutoScaleMode = AutoScaleMode.Dpi,
+                .TopMost = True
             }
 
             Try
@@ -1022,72 +1589,135 @@ Namespace SharedLibrary
             Catch
             End Try
 
-            Dim lblInfo As New Label() With {
-                .Text = "The following parameters are ignored during automatic updates. Uncheck items to remove them from the ignore list:",
-                .Dock = DockStyle.Top,
-                .Height = 40,
-                .Padding = New Padding(10)
+            ' Use TableLayoutPanel for proper scaling and layout
+            Dim tblMain As New TableLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .Padding = New Padding(15),
+                .ColumnCount = 1,
+                .RowCount = 3,
+                .AutoSize = False
             }
-            form.Controls.Add(lblInfo)
+            tblMain.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Info label
+            tblMain.RowStyles.Add(New RowStyle(SizeType.Percent, 100))  ' CheckedListBox
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Buttons
+            form.Controls.Add(tblMain)
 
+            ' Row 0: Info label
+            Dim lblInfo As New Label() With {
+                .Text = $"The following parameters are ignored during automatic updates. Uncheck items to remove them from the ignore list:",
+                .Dock = DockStyle.Fill,
+                .AutoSize = True,
+                .Padding = New Padding(0, 0, 0, 5),
+                .Margin = New Padding(0, 0, 0, 10)
+            }
+            tblMain.Controls.Add(lblInfo, 0, 0)
+
+            ' Row 1: CheckedListBox
             Dim clb As New CheckedListBox() With {
                 .Dock = DockStyle.Fill,
-                .CheckOnClick = True
+                .CheckOnClick = True,
+                .Margin = New Padding(0, 5, 0, 10)
             }
-            form.Controls.Add(clb)
+            tblMain.Controls.Add(clb, 0, 1)
 
-            ' Load all ignored items
-            Dim allIgnored As New List(Of Tuple(Of String, String))() ' (file, key)
+            ' Load all ignored items from both settings keys
+            ' Items are stored as "filename|key" or "filename|segment|key"
+            Dim allIgnored As New List(Of String)()
 
-            For Each fileName In {"redink.ini", "allmodels.ini", "specialservices.ini"}
-                Dim ignoreList = GetIgnoreListForFile(fileName)
-                For Each key In ignoreList
-                    allIgnored.Add(Tuple.Create(fileName, key))
-                    clb.Items.Add($"[{fileName}] {key}", True)
-                Next
-            Next
+            ' Load from IgnoredUpdates_RedInk (main INI file)
+            Try
+                Dim redInkValue = CStr(My.Settings.Item("IgnoredUpdates_RedInk"))
+                If Not String.IsNullOrWhiteSpace(redInkValue) Then
+                    For Each item In redInkValue.Split(";"c)
+                        If Not String.IsNullOrWhiteSpace(item) Then
+                            allIgnored.Add(item.Trim())
+                            clb.Items.Add(item.Trim(), True)
+                        End If
+                    Next
+                End If
+            Catch
+            End Try
 
+            ' Load from IgnoredUpdates_Custom (user-defined INI files)
+            Try
+                Dim customValue = CStr(My.Settings.Item("IgnoredUpdates_Custom"))
+                If Not String.IsNullOrWhiteSpace(customValue) Then
+                    For Each item In customValue.Split(";"c)
+                        If Not String.IsNullOrWhiteSpace(item) Then
+                            allIgnored.Add(item.Trim())
+                            clb.Items.Add(item.Trim(), True)
+                        End If
+                    Next
+                End If
+            Catch
+            End Try
+
+            ' Row 2: Buttons panel
             Dim pnlButtons As New FlowLayoutPanel() With {
-                .Dock = DockStyle.Bottom,
-                .FlowDirection = FlowDirection.RightToLeft,
-                .Height = 50,
-                .Padding = New Padding(10)
+                .Dock = DockStyle.Fill,
+                .FlowDirection = FlowDirection.LeftToRight,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .WrapContents = False,
+                .Margin = New Padding(0, 5, 0, 5)
             }
-            form.Controls.Add(pnlButtons)
+            tblMain.Controls.Add(pnlButtons, 0, 2)
 
-            Dim btnCancel As New Button() With {.Text = "Cancel", .AutoSize = True}
-            Dim btnSave As New Button() With {.Text = "Save Changes", .AutoSize = True}
+            Dim btnSave As New Button() With {
+                .Text = "Save Changes",
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8),
+                .Margin = New Padding(0, 0, 10, 0)
+            }
+            Dim btnCancel As New Button() With {
+                .Text = "Cancel",
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8)
+            }
 
-            pnlButtons.Controls.Add(btnCancel)
             pnlButtons.Controls.Add(btnSave)
+            pnlButtons.Controls.Add(btnCancel)
 
             AddHandler btnCancel.Click, Sub() form.Close()
 
             AddHandler btnSave.Click, Sub()
                                           ' Rebuild ignore lists based on checked items
-                                          Dim newIgnoreLists As New Dictionary(Of String, HashSet(Of String))(StringComparer.OrdinalIgnoreCase) From {
-                                              {"redink.ini", New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)},
-                                              {"allmodels.ini", New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)},
-                                              {"specialservices.ini", New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)}
-                                          }
+                                          ' Group by settings key based on filename in the ignore key
+                                          Dim redInkItems As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+                                          Dim customItems As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
 
                                           For i As Integer = 0 To clb.Items.Count - 1
                                               If clb.GetItemChecked(i) Then
                                                   Dim item = allIgnored(i)
-                                                  newIgnoreLists(item.Item1).Add(item.Item2)
+                                                  ' Parse the filename from the ignore key (format: "filename|key" or "filename|segment|key")
+                                                  Dim parts = item.Split("|"c)
+                                                  If parts.Length >= 2 Then
+                                                      Dim fileName = parts(0).ToLowerInvariant()
+                                                      ' Determine which settings key this belongs to
+                                                      If fileName.EndsWith("redink.ini") OrElse fileName.EndsWith($"{AN2.ToLowerInvariant()}.ini") Then
+                                                          redInkItems.Add(item)
+                                                      Else
+                                                          customItems.Add(item)
+                                                      End If
+                                                  End If
                                               End If
                                           Next
 
-                                          For Each kvp In newIgnoreLists
-                                              SaveIgnoreListForFile(kvp.Key, kvp.Value)
-                                          Next
+                                          ' Save to settings
+                                          Try
+                                              My.Settings.Item("IgnoredUpdates_RedInk") = String.Join(";", redInkItems)
+                                              My.Settings.Item("IgnoredUpdates_Custom") = String.Join(";", customItems)
+                                              My.Settings.Save()
+                                          Catch ex As Exception
+                                              Debug.WriteLine($"Error saving ignore lists: {ex.Message}")
+                                          End Try
 
-                                          ShowCustomMessageBox("Ignore list updated successfully.")
+                                          ShowCustomMessageBox($"Ignore list updated successfully.")
                                           form.Close()
                                       End Sub
 
-            clb.BringToFront()
-            form.ShowDialog()
+            form.ShowDialog(GetDialogOwner())
         End Sub
 
 #End Region
@@ -1102,11 +1732,13 @@ Namespace SharedLibrary
 
             Dim form As New Form() With {
                 .Text = $"{AN} - Configuration Updates Available",
-                .Size = New Size(900, 600),
+                .Size = New Size(950, 600),
                 .StartPosition = FormStartPosition.CenterScreen,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
-                .MinimumSize = New Size(700, 400)
+                .MinimumSize = New Size(800, 450),
+                .AutoScaleMode = AutoScaleMode.Dpi,
+                .TopMost = True
             }
 
             Try
@@ -1115,84 +1747,142 @@ Namespace SharedLibrary
             Catch
             End Try
 
-            ' Header
+            ' Use TableLayoutPanel for proper scaling and layout
+            Dim tblMain As New TableLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .Padding = New Padding(15),
+                .ColumnCount = 1,
+                .RowCount = 3,
+                .AutoSize = False
+            }
+            tblMain.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Header
+            tblMain.RowStyles.Add(New RowStyle(SizeType.Percent, 100))  ' DataGridView
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Buttons
+            form.Controls.Add(tblMain)
+
+            ' Row 0: Header
             Dim lblHeader As New Label() With {
                 .Text = "The following configuration updates are available. Review and select which changes to apply:" & vbCrLf &
                         "(Items shown in red contain URL or path changes and are not selected by default for security reasons)",
-                .Dock = DockStyle.Top,
-                .Height = 50,
-                .Padding = New Padding(10)
-            }
-            form.Controls.Add(lblHeader)
-
-            ' DataGridView for changes
-            Dim dgv As New DataGridView() With {
                 .Dock = DockStyle.Fill,
-                .AllowUserToAddRows = False,
-                .AllowUserToDeleteRows = False,
-                .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                .MultiSelect = False,
-                .RowHeadersVisible = False
+                .AutoSize = True,
+                .Padding = New Padding(0, 0, 0, 10),
+                .Margin = New Padding(0, 0, 0, 5)
             }
+            tblMain.Controls.Add(lblHeader, 0, 0)
 
-            ' Columns
+            ' Row 1: DataGridView for changes
+            Dim dgv As New DataGridView() With {
+    .Dock = DockStyle.Fill,
+    .AllowUserToAddRows = False,
+    .AllowUserToDeleteRows = False,
+    .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+    .SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+    .MultiSelect = False,
+    .RowHeadersVisible = False,
+    .Margin = New Padding(0, 5, 0, 10),
+    .ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize,
+    .EnableHeadersVisualStyles = True
+}
+
+            ' Columns with proper minimum widths to show full header text
             Dim colApply As New DataGridViewCheckBoxColumn() With {
-                .HeaderText = "Apply",
-                .Name = "colApply",
-                .Width = 50,
-                .AutoSizeMode = DataGridViewAutoSizeColumnMode.None
-            }
+    .HeaderText = "Apply",
+    .Name = "colApply",
+    .Width = 50,
+    .MinimumWidth = 50,
+    .AutoSizeMode = DataGridViewAutoSizeColumnMode.ColumnHeader
+}
             Dim colFile As New DataGridViewTextBoxColumn() With {
-                .HeaderText = "File",
-                .Name = "colFile",
-                .ReadOnly = True,
-                .Width = 100,
-                .AutoSizeMode = DataGridViewAutoSizeColumnMode.None
-            }
+    .HeaderText = "File",
+    .Name = "colFile",
+    .ReadOnly = True,
+    .Width = 120,
+    .MinimumWidth = 60,
+    .AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+}
             Dim colSegment As New DataGridViewTextBoxColumn() With {
-                .HeaderText = "Segment",
-                .Name = "colSegment",
-                .ReadOnly = True,
-                .Width = 100,
-                .AutoSizeMode = DataGridViewAutoSizeColumnMode.None
-            }
+    .HeaderText = "Segment",
+    .Name = "colSegment",
+    .ReadOnly = True,
+    .Width = 120,
+    .MinimumWidth = 70,
+    .AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+}
             Dim colKey As New DataGridViewTextBoxColumn() With {
-                .HeaderText = "Parameter",
-                .Name = "colKey",
-                .ReadOnly = True,
-                .Width = 120,
-                .AutoSizeMode = DataGridViewAutoSizeColumnMode.None
-            }
+    .HeaderText = "Parameter",
+    .Name = "colKey",
+    .ReadOnly = True,
+    .Width = 130,
+    .MinimumWidth = 80,
+    .AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+}
             Dim colOld As New DataGridViewTextBoxColumn() With {
-                .HeaderText = "Current Value",
-                .Name = "colOld",
-                .ReadOnly = True
-            }
+    .HeaderText = "Current Value",
+    .Name = "colOld",
+    .ReadOnly = True,
+    .MinimumWidth = 100
+}
             Dim colNew As New DataGridViewTextBoxColumn() With {
-                .HeaderText = "New Value",
-                .Name = "colNew",
-                .ReadOnly = True
-            }
+    .HeaderText = "New Value",
+    .Name = "colNew",
+    .ReadOnly = True,
+    .MinimumWidth = 100
+}
 
             dgv.Columns.AddRange(colApply, colFile, colSegment, colKey, colOld, colNew)
+
+            ' Set column header height after columns are added to ensure headers fit
+            AddHandler dgv.DataBindingComplete, Sub(sender, e)
+                                                    dgv.AutoResizeColumnHeadersHeight()
+                                                End Sub
 
             ' Add rows
             For Each change In changes
                 Dim rowIndex = dgv.Rows.Add(
-                    change.IsSelected,
-                    change.IniFile,
-                    If(change.SegmentName, ""),
-                    change.ParameterKey,
-                    TruncateValue(change.OldValue, 100),
-                    TruncateValue(change.NewValue, 100)
-                )
+                change.IsSelected,
+                change.IniFile,
+                If(change.SegmentName, ""),
+                change.ParameterKey,
+                TruncateValue(change.OldValue, 100),
+                TruncateValue(change.NewValue, 100)
+            )
 
-                ' Color suspicious rows red
+                ' Store the suspicious flag in the row's Tag for use in CellFormatting
+                dgv.Rows(rowIndex).Tag = change.IsSuspicious
+
+                ' Set default cell style for suspicious rows (will be overridden when selected)
                 If change.IsSuspicious Then
-                    dgv.Rows(rowIndex).DefaultCellStyle.ForeColor = Color.Red
+                    dgv.Rows(rowIndex).DefaultCellStyle.ForeColor = Color.DarkRed
+                    dgv.Rows(rowIndex).DefaultCellStyle.BackColor = Color.FromArgb(255, 230, 230)
                 End If
             Next
+
+            ' Handle CellFormatting to maintain suspicious highlighting even when row is selected
+            AddHandler dgv.CellFormatting, Sub(sender, e)
+                                               If e.RowIndex < 0 OrElse e.RowIndex >= dgv.Rows.Count Then Return
+
+                                               Dim row = dgv.Rows(e.RowIndex)
+                                               Dim isSuspicious = TypeOf row.Tag Is Boolean AndAlso CBool(row.Tag)
+
+                                               If isSuspicious Then
+                                                   If row.Selected Then
+                                                       ' Use darker red colors when selected
+                                                       e.CellStyle.BackColor = Color.FromArgb(220, 150, 150)
+                                                       e.CellStyle.ForeColor = Color.DarkRed
+                                                       e.CellStyle.SelectionBackColor = Color.FromArgb(220, 150, 150)
+                                                       e.CellStyle.SelectionForeColor = Color.DarkRed
+                                                   Else
+                                                       ' Use light red colors when not selected
+                                                       e.CellStyle.BackColor = Color.FromArgb(255, 230, 230)
+                                                       e.CellStyle.ForeColor = Color.DarkRed
+                                                   End If
+                                               End If
+                                           End Sub
+
+            ' Ensure column headers are sized after rows are added
+            dgv.AutoResizeColumnHeadersHeight()
 
             ' Handle checkbox changes
             AddHandler dgv.CellValueChanged, Sub(sender, e)
@@ -1207,22 +1897,33 @@ Namespace SharedLibrary
                                                              End If
                                                          End Sub
 
-            form.Controls.Add(dgv)
+            tblMain.Controls.Add(dgv, 0, 1)
 
-            ' Buttons panel
+            ' Row 2: Buttons panel
             Dim pnlButtons As New FlowLayoutPanel() With {
-                .Dock = DockStyle.Bottom,
-                .FlowDirection = FlowDirection.RightToLeft,
-                .Height = 50,
-                .Padding = New Padding(10)
+                .Dock = DockStyle.Fill,
+                .FlowDirection = FlowDirection.LeftToRight,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .WrapContents = False,
+                .Margin = New Padding(0, 5, 0, 5)
             }
-            form.Controls.Add(pnlButtons)
+            tblMain.Controls.Add(pnlButtons, 0, 2)
 
-            Dim btnReject As New Button() With {.Text = "Reject All", .AutoSize = True}
-            Dim btnApprove As New Button() With {.Text = "Approve Selected", .AutoSize = True}
+            Dim btnApprove As New Button() With {
+                .Text = "Approve Selected",
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8),
+                .Margin = New Padding(0, 0, 10, 0)
+            }
+            Dim btnReject As New Button() With {
+                .Text = "Reject All",
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8)
+            }
 
-            pnlButtons.Controls.Add(btnReject)
             pnlButtons.Controls.Add(btnApprove)
+            pnlButtons.Controls.Add(btnReject)
 
             AddHandler btnApprove.Click, Sub()
                                              result = UpdateApprovalResult.Approve
@@ -1238,11 +1939,11 @@ Namespace SharedLibrary
                                             form.Close()
                                         End Sub
 
-            dgv.BringToFront()
-            form.ShowDialog()
+            form.ShowDialog(GetDialogOwner())
 
             Return result
         End Function
+
 
         ''' <summary>
         ''' Shows confirmation dialog for adding rejected items to ignore list.
@@ -1251,12 +1952,15 @@ Namespace SharedLibrary
             If rejectedChanges Is Nothing OrElse rejectedChanges.Count = 0 Then Return
 
             Dim form As New Form() With {
-                .Text = $"{AN} - Ignore Future Updates?",
-                .Size = New Size(700, 450),
-                .StartPosition = FormStartPosition.CenterScreen,
-                .FormBorderStyle = FormBorderStyle.Sizable,
-                .Font = New Font("Segoe UI", 9.0F)
-            }
+        .Text = $"{AN} - Ignore Future Updates?",
+        .Size = New Size(750, 480),
+        .StartPosition = FormStartPosition.CenterScreen,
+        .FormBorderStyle = FormBorderStyle.Sizable,
+        .Font = New Font("Segoe UI", 9.0F),
+        .MinimumSize = New Size(550, 350),
+        .AutoScaleMode = AutoScaleMode.Dpi,
+        .TopMost = True
+    }
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -1264,39 +1968,83 @@ Namespace SharedLibrary
             Catch
             End Try
 
-            Dim lblInfo As New Label() With {
-                .Text = "The following parameters were not approved. Select which ones to ignore in future update checks:",
-                .Dock = DockStyle.Top,
-                .Height = 40,
-                .Padding = New Padding(10)
-            }
-            form.Controls.Add(lblInfo)
+            ' Use TableLayoutPanel for proper scaling and layout
+            Dim tblMain As New TableLayoutPanel() With {
+        .Dock = DockStyle.Fill,
+        .Padding = New Padding(15),
+        .ColumnCount = 1,
+        .RowCount = 3,
+        .AutoSize = False
+    }
+            tblMain.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Info label
+            tblMain.RowStyles.Add(New RowStyle(SizeType.Percent, 100))  ' CheckedListBox
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Buttons
+            form.Controls.Add(tblMain)
 
+            ' Row 0: Info label
+            Dim lblInfo As New Label() With {
+        .Text = $"The following parameters were not approved. Select which ones to ignore in future update checks (this will only result in additions to the Ignore list, not any removal from it; use the Freestyle command '{IniUpdateIgnored}' to manage it):",
+        .Dock = DockStyle.Fill,
+        .AutoSize = True,
+        .Padding = New Padding(0, 0, 0, 5),
+        .Margin = New Padding(0, 0, 0, 10)
+    }
+            tblMain.Controls.Add(lblInfo, 0, 0)
+
+            ' Row 1: CheckedListBox
             Dim clb As New CheckedListBox() With {
-                .Dock = DockStyle.Fill,
-                .CheckOnClick = True
-            }
-            form.Controls.Add(clb)
+        .Dock = DockStyle.Fill,
+        .CheckOnClick = True,
+        .Margin = New Padding(0, 5, 0, 10)
+    }
+            tblMain.Controls.Add(clb, 0, 1)
 
             For Each change In rejectedChanges
                 clb.Items.Add($"[{change.IniFile}]{If(String.IsNullOrEmpty(change.SegmentName), "", $"[{change.SegmentName}]")}.{change.ParameterKey}", False)
             Next
 
+            ' Row 2: Buttons panel
             Dim pnlButtons As New FlowLayoutPanel() With {
-                .Dock = DockStyle.Bottom,
-                .FlowDirection = FlowDirection.RightToLeft,
-                .Height = 50,
-                .Padding = New Padding(10)
-            }
-            form.Controls.Add(pnlButtons)
+        .Dock = DockStyle.Fill,
+        .FlowDirection = FlowDirection.LeftToRight,
+        .AutoSize = True,
+        .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        .WrapContents = False,
+        .Margin = New Padding(0, 5, 0, 5)
+    }
+            tblMain.Controls.Add(pnlButtons, 0, 2)
 
-            Dim btnAbort As New Button() With {.Text = "Don't Ignore Any", .AutoSize = True}
-            Dim btnIgnore As New Button() With {.Text = "Ignore Selected", .AutoSize = True}
+            Dim btnIgnore As New Button() With {
+        .Text = "Ignore Selected",
+        .AutoSize = True,
+        .Padding = New Padding(15, 8, 15, 8),
+        .Margin = New Padding(0, 0, 10, 0)
+    }
+            Dim btnIgnoreAll As New Button() With {
+        .Text = "Ignore All",
+        .AutoSize = True,
+        .Padding = New Padding(15, 8, 15, 8),
+        .Margin = New Padding(0, 0, 10, 0)
+    }
+            Dim btnAbort As New Button() With {
+        .Text = "Don't Ignore Any",
+        .AutoSize = True,
+        .Padding = New Padding(15, 8, 15, 8)
+    }
 
-            pnlButtons.Controls.Add(btnAbort)
             pnlButtons.Controls.Add(btnIgnore)
+            pnlButtons.Controls.Add(btnIgnoreAll)
+            pnlButtons.Controls.Add(btnAbort)
 
             AddHandler btnAbort.Click, Sub() form.Close()
+
+            AddHandler btnIgnoreAll.Click, Sub()
+                                               ' Add all rejected changes to ignore list
+                                               AddToIgnoreList(rejectedChanges)
+                                               ShowCustomMessageBox($"{rejectedChanges.Count} parameter(s) will be ignored in future update checks (use the Freestyle command '{IniUpdateIgnored}' to manage).")
+                                               form.Close()
+                                           End Sub
 
             AddHandler btnIgnore.Click, Sub()
                                             Dim toIgnore As New List(Of IniParameterChange)()
@@ -1308,15 +2056,15 @@ Namespace SharedLibrary
 
                                             If toIgnore.Count > 0 Then
                                                 AddToIgnoreList(toIgnore)
-                                                ShowCustomMessageBox($"{toIgnore.Count} parameter(s) will be ignored in future update checks.")
+                                                ShowCustomMessageBox($"{toIgnore.Count} parameter(s) will be ignored in future update checks (use the Freestyle command '{IniUpdateIgnored}' to manage).")
                                             End If
 
                                             form.Close()
                                         End Sub
 
-            clb.BringToFront()
-            form.ShowDialog()
+            form.ShowDialog(GetDialogOwner())
         End Sub
+
 
         ''' <summary>
         ''' Truncates a value for display purposes.
@@ -1343,7 +2091,6 @@ Namespace SharedLibrary
                 Dim fileName = fileGroup.Key
 
                 ' Determine the actual file path based on the filename
-                ' Check if it's the main config or one of the user-defined paths
                 Dim mainIniPath = GetDefaultINIPath(context.RDV)
                 Dim mainIniName = Path.GetFileName(mainIniPath)
 
@@ -1375,17 +2122,24 @@ Namespace SharedLibrary
 
                     ' Build lookup of changes by segment
                     Dim changesBySegment = fileGroup.GroupBy(Function(c) If(c.SegmentName, "")).
-                        ToDictionary(Function(g) g.Key,
-                                     Function(g) g.ToDictionary(Function(c) c.ParameterKey, StringComparer.OrdinalIgnoreCase))
+                ToDictionary(Function(g) g.Key,
+                             Function(g) g.ToDictionary(Function(c) c.ParameterKey, StringComparer.OrdinalIgnoreCase))
 
                     Dim currentSegment As String = ""
                     Dim usedKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+                    Dim segmentInsertionPoints As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase)
 
-                    For Each line In lines
+                    For i As Integer = 0 To lines.Count - 1
+                        Dim line = lines(i)
                         Dim trimmed = line.Trim()
 
                         ' Track segment changes
                         If trimmed.StartsWith("[") AndAlso trimmed.EndsWith("]") Then
+                            ' Before leaving current segment, record insertion point for new keys
+                            If Not String.IsNullOrEmpty(currentSegment) OrElse i > 0 Then
+                                segmentInsertionPoints(currentSegment) = updatedLines.Count
+                            End If
+
                             currentSegment = trimmed.Substring(1, trimmed.Length - 2).Trim()
                             usedKeys.Clear()
                             updatedLines.Add(line)
@@ -1399,7 +2153,7 @@ Namespace SharedLibrary
 
                             ' Check if this key needs updating
                             If changesBySegment.ContainsKey(currentSegment) AndAlso
-                               changesBySegment(currentSegment).ContainsKey(key) Then
+                       changesBySegment(currentSegment).ContainsKey(key) Then
                                 Dim change = changesBySegment(currentSegment)(key)
                                 updatedLines.Add($"{key} = {change.NewValue}")
                                 usedKeys.Add(key)
@@ -1408,6 +2162,74 @@ Namespace SharedLibrary
                         End If
 
                         updatedLines.Add(line)
+                    Next
+
+                    ' Record final segment insertion point
+                    segmentInsertionPoints(currentSegment) = updatedLines.Count
+
+                    ' Now add NEW keys that were not found in the file
+                    For Each segmentGroup In changesBySegment
+                        Dim segName As String = segmentGroup.Key
+                        Dim segChanges As Dictionary(Of String, IniParameterChange) = segmentGroup.Value
+
+                        ' Find keys that are new (OldValue = "(new key)")
+                        Dim newKeysList As New List(Of KeyValuePair(Of String, IniParameterChange))()
+                        For Each kvp In segChanges
+                            ' Find the original change to check OldValue
+                            Dim originalChange As IniParameterChange = Nothing
+                            For Each chg In fileGroup
+                                If (If(chg.SegmentName, "") = segName) AndAlso
+                           chg.ParameterKey.Equals(kvp.Key, StringComparison.OrdinalIgnoreCase) Then
+                                    originalChange = chg
+                                    Exit For
+                                End If
+                            Next
+                            If originalChange IsNot Nothing AndAlso originalChange.OldValue = "(new key)" Then
+                                newKeysList.Add(kvp)
+                            End If
+                        Next
+
+                        If newKeysList.Count > 0 Then
+                            ' Determine insertion point for this segment
+                            Dim insertAt As Integer = updatedLines.Count ' Default: end of file
+                            If segmentInsertionPoints.ContainsKey(segName) Then
+                                insertAt = segmentInsertionPoints(segName)
+                            End If
+
+                            ' Add a blank line before new keys if the previous line is not already blank
+                            If insertAt > 0 AndAlso Not String.IsNullOrWhiteSpace(updatedLines(insertAt - 1)) Then
+                                updatedLines.Insert(insertAt, "")
+                                insertAt += 1
+                                ' Adjust all insertion points since we added a line
+                                For Each key In segmentInsertionPoints.Keys.ToList()
+                                    If segmentInsertionPoints(key) >= insertAt - 1 Then
+                                        segmentInsertionPoints(key) += 1
+                                    End If
+                                Next
+                            End If
+
+                            ' Insert new keys
+                            Dim offset As Integer = 0
+                            For Each kvp In newKeysList
+                                Dim newLine = $"{kvp.Key} = {kvp.Value.NewValue}"
+                                updatedLines.Insert(insertAt + offset, newLine)
+                                offset += 1
+                            Next
+
+                            ' Add a blank line after new keys if the next line exists and is not already blank
+                            Dim afterInsertPos = insertAt + offset
+                            If afterInsertPos < updatedLines.Count AndAlso Not String.IsNullOrWhiteSpace(updatedLines(afterInsertPos)) Then
+                                updatedLines.Insert(afterInsertPos, "")
+                                offset += 1
+                            End If
+
+                            ' Adjust subsequent insertion points
+                            For Each key In segmentInsertionPoints.Keys.ToList()
+                                If segmentInsertionPoints(key) >= insertAt Then
+                                    segmentInsertionPoints(key) += offset
+                                End If
+                            Next
+                        End If
                     Next
 
                     ' Write updated content
@@ -1551,11 +2373,12 @@ Namespace SharedLibrary
         Public Shared Sub ShowSignatureManagementDialog()
             Dim form As New Form() With {
                 .Text = $"{AN} - Update Signature Management",
-                .Size = New Size(750, 550),
+                .Size = New Size(750, 380),
                 .StartPosition = FormStartPosition.CenterScreen,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
-                .MinimumSize = New Size(600, 450)
+                .MinimumSize = New Size(700, 350),
+                .TopMost = True
             }
 
             Try
@@ -1577,10 +2400,16 @@ Namespace SharedLibrary
                 .Dock = DockStyle.Fill,
                 .Padding = New Padding(15),
                 .ColumnCount = 2,
-                .RowCount = 6
+                .RowCount = 5
             }
-            pnlGenerate.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 200))
+            pnlGenerate.ColumnStyles.Add(New ColumnStyle(SizeType.AutoSize))
             pnlGenerate.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+            ' Set row heights to prevent excess space
+            pnlGenerate.RowStyles.Add(New RowStyle(SizeType.Absolute, 50))  ' Info
+            pnlGenerate.RowStyles.Add(New RowStyle(SizeType.Absolute, 35))  ' Generate button
+            pnlGenerate.RowStyles.Add(New RowStyle(SizeType.Absolute, 30))  ' Public key
+            pnlGenerate.RowStyles.Add(New RowStyle(SizeType.Absolute, 30))  ' Private key
+            pnlGenerate.RowStyles.Add(New RowStyle(SizeType.Absolute, 40))  ' Copy buttons
             tabGenerate.Controls.Add(pnlGenerate)
 
             ' Row 0: Info label
@@ -1588,8 +2417,7 @@ Namespace SharedLibrary
                 .Text = "Generate a new Ed25519 keypair for signing update files." & vbCrLf &
                         "The public key goes into UpdateSource. Keep the private key secure!",
                 .Dock = DockStyle.Fill,
-                .AutoSize = False,
-                .Height = 50
+                .AutoSize = False
             }
             pnlGenerate.Controls.Add(lblGenInfo, 0, 0)
             pnlGenerate.SetColumnSpan(lblGenInfo, 2)
@@ -1597,17 +2425,16 @@ Namespace SharedLibrary
             ' Row 1: Generate button
             Dim btnGenerate As New Button() With {
                 .Text = "Generate New Keypair",
-                .Dock = DockStyle.Left,
-                .Width = 180,
-                .Height = 30
+                .AutoSize = True
             }
             pnlGenerate.Controls.Add(btnGenerate, 0, 1)
 
             ' Row 2: Public Key label and textbox
             Dim lblPubKey As New Label() With {
                 .Text = "Public Key (for UpdateSource):",
-                .Dock = DockStyle.Fill,
-                .TextAlign = ContentAlignment.MiddleLeft
+                .AutoSize = True,
+                .Anchor = AnchorStyles.Left,
+                .Padding = New Padding(0, 0, 10, 0)
             }
             pnlGenerate.Controls.Add(lblPubKey, 0, 2)
 
@@ -1621,9 +2448,10 @@ Namespace SharedLibrary
             ' Row 3: Private Key label and textbox
             Dim lblPrivKey As New Label() With {
                 .Text = "Private Key (KEEP SECRET!):",
-                .Dock = DockStyle.Fill,
-                .TextAlign = ContentAlignment.MiddleLeft,
-                .ForeColor = Color.DarkRed
+                .AutoSize = True,
+                .Anchor = AnchorStyles.Left,
+                .ForeColor = Color.DarkRed,
+                .Padding = New Padding(0, 0, 10, 0)
             }
             pnlGenerate.Controls.Add(lblPrivKey, 0, 3)
 
@@ -1646,7 +2474,6 @@ Namespace SharedLibrary
             Dim btnCopyPriv As New Button() With {.Text = "Copy Private Key", .AutoSize = True}
             Dim btnCopyBoth As New Button() With {.Text = "Copy Both to Clipboard", .AutoSize = True}
             pnlCopyButtons.Controls.AddRange({btnCopyPub, btnCopyPriv, btnCopyBoth})
-
             AddHandler btnGenerate.Click, Sub()
                                               Dim keys = GenerateEd25519KeyPair()
                                               If keys.PublicKey IsNot Nothing Then
@@ -1836,11 +2663,17 @@ Namespace SharedLibrary
                 .Dock = DockStyle.Fill,
                 .Padding = New Padding(15),
                 .ColumnCount = 3,
-                .RowCount = 6
+                .RowCount = 5
             }
-            pnlVerify.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 120))
+            pnlVerify.ColumnStyles.Add(New ColumnStyle(SizeType.AutoSize))
             pnlVerify.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
             pnlVerify.ColumnStyles.Add(New ColumnStyle(SizeType.Absolute, 40))
+            ' Set row heights to prevent excess space
+            pnlVerify.RowStyles.Add(New RowStyle(SizeType.Absolute, 50))  ' Info
+            pnlVerify.RowStyles.Add(New RowStyle(SizeType.Absolute, 30))  ' File to verify
+            pnlVerify.RowStyles.Add(New RowStyle(SizeType.Absolute, 30))  ' Public key
+            pnlVerify.RowStyles.Add(New RowStyle(SizeType.Absolute, 40))  ' Verify button
+            pnlVerify.RowStyles.Add(New RowStyle(SizeType.Absolute, 50))  ' Result
             tabVerify.Controls.Add(pnlVerify)
 
             ' Row 0: Info
@@ -1848,7 +2681,7 @@ Namespace SharedLibrary
                 .Text = "Verify that a file's signature is valid using the public key." & vbCrLf &
                         "The .sig file must exist alongside the file being verified.",
                 .Dock = DockStyle.Fill,
-                .Height = 50
+                .AutoSize = False
             }
             pnlVerify.Controls.Add(lblVerifyInfo, 0, 0)
             pnlVerify.SetColumnSpan(lblVerifyInfo, 3)
@@ -1856,8 +2689,9 @@ Namespace SharedLibrary
             ' Row 1: File to verify
             Dim lblVerifyFile As New Label() With {
                 .Text = "File to Verify:",
-                .Dock = DockStyle.Fill,
-                .TextAlign = ContentAlignment.MiddleLeft
+                .AutoSize = True,
+                .Anchor = AnchorStyles.Left,
+                .Padding = New Padding(0, 0, 10, 0)
             }
             pnlVerify.Controls.Add(lblVerifyFile, 0, 1)
 
@@ -1870,8 +2704,9 @@ Namespace SharedLibrary
             ' Row 2: Public key
             Dim lblVerifyPubKey As New Label() With {
                 .Text = "Public Key:",
-                .Dock = DockStyle.Fill,
-                .TextAlign = ContentAlignment.MiddleLeft
+                .AutoSize = True,
+                .Anchor = AnchorStyles.Left,
+                .Padding = New Padding(0, 0, 10, 0)
             }
             pnlVerify.Controls.Add(lblVerifyPubKey, 0, 2)
 
@@ -1882,9 +2717,7 @@ Namespace SharedLibrary
             ' Row 3: Verify button
             Dim btnVerify As New Button() With {
                 .Text = "Verify Signature",
-                .Width = 120,
-                .Height = 35,
-                .Dock = DockStyle.Left
+                .AutoSize = True
             }
             pnlVerify.Controls.Add(btnVerify, 1, 3)
 
@@ -1892,7 +2725,8 @@ Namespace SharedLibrary
             Dim lblVerifyResult As New Label() With {
                 .Text = "",
                 .Dock = DockStyle.Fill,
-                .Font = New Font("Segoe UI", 11.0F, FontStyle.Bold)
+                .Font = New Font("Segoe UI", 11.0F, FontStyle.Bold),
+                .AutoSize = False
             }
             pnlVerify.Controls.Add(lblVerifyResult, 0, 4)
             pnlVerify.SetColumnSpan(lblVerifyResult, 3)
@@ -1963,7 +2797,7 @@ Namespace SharedLibrary
             }
             tabHelp.Controls.Add(txtHelp)
 
-            form.ShowDialog()
+            form.ShowDialog(GetDialogOwner())
         End Sub
 
         ''' <summary>
@@ -2051,10 +2885,13 @@ Namespace SharedLibrary
         Public Shared Sub ShowBatchSigningDialog()
             Dim form As New Form() With {
                 .Text = $"{AN} - Batch Sign Files",
-                .Size = New Size(700, 500),
+                .Size = New Size(750, 520),
                 .StartPosition = FormStartPosition.CenterScreen,
                 .FormBorderStyle = FormBorderStyle.Sizable,
-                .Font = New Font("Segoe UI", 9.0F)
+                .Font = New Font("Segoe UI", 9.0F),
+                .MinimumSize = New Size(600, 400),
+                .AutoScaleMode = AutoScaleMode.Dpi,
+                .TopMost = True
             }
 
             Try
@@ -2063,71 +2900,120 @@ Namespace SharedLibrary
             Catch
             End Try
 
-            Dim pnlTop As New Panel() With {
-                .Dock = DockStyle.Top,
-                .Height = 80,
-                .Padding = New Padding(10)
+            ' Use TableLayoutPanel for proper scaling and layout
+            Dim tblMain As New TableLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .Padding = New Padding(15),
+                .ColumnCount = 1,
+                .RowCount = 4,
+                .AutoSize = False
             }
-            form.Controls.Add(pnlTop)
+            tblMain.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Private key row
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Add/Clear buttons row
+            tblMain.RowStyles.Add(New RowStyle(SizeType.Percent, 100))  ' ListBox
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))  ' Action buttons
+            form.Controls.Add(tblMain)
+
+            ' Row 0: Private key input
+            Dim pnlPrivKey As New TableLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .ColumnCount = 3,
+                .RowCount = 1,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .Margin = New Padding(0, 0, 0, 10)
+            }
+            pnlPrivKey.ColumnStyles.Add(New ColumnStyle(SizeType.AutoSize))
+            pnlPrivKey.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+            pnlPrivKey.ColumnStyles.Add(New ColumnStyle(SizeType.AutoSize))
+            tblMain.Controls.Add(pnlPrivKey, 0, 0)
 
             Dim lblPrivKey As New Label() With {
                 .Text = "Private Key:",
-                .Location = New Point(10, 10),
-                .AutoSize = True
+                .AutoSize = True,
+                .Anchor = AnchorStyles.Left,
+                .Padding = New Padding(0, 0, 10, 0)
             }
-            pnlTop.Controls.Add(lblPrivKey)
+            pnlPrivKey.Controls.Add(lblPrivKey, 0, 0)
 
             Dim txtPrivKey As New TextBox() With {
-                .Location = New Point(100, 7),
-                .Width = 450,
+                .Dock = DockStyle.Fill,
                 .UseSystemPasswordChar = True
             }
-            pnlTop.Controls.Add(txtPrivKey)
+            pnlPrivKey.Controls.Add(txtPrivKey, 1, 0)
 
             Dim chkShowKey As New CheckBox() With {
                 .Text = "Show",
-                .Location = New Point(560, 9),
-                .AutoSize = True
+                .AutoSize = True,
+                .Anchor = AnchorStyles.Left,
+                .Margin = New Padding(10, 0, 0, 0)
             }
-            pnlTop.Controls.Add(chkShowKey)
+            pnlPrivKey.Controls.Add(chkShowKey, 2, 0)
 
             AddHandler chkShowKey.CheckedChanged, Sub()
                                                       txtPrivKey.UseSystemPasswordChar = Not chkShowKey.Checked
                                                   End Sub
 
+            ' Row 1: Add/Clear buttons
+            Dim pnlFileButtons As New FlowLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .FlowDirection = FlowDirection.LeftToRight,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .WrapContents = False,
+                .Margin = New Padding(0, 0, 0, 10)
+            }
+            tblMain.Controls.Add(pnlFileButtons, 0, 1)
+
             Dim btnAddFiles As New Button() With {
                 .Text = "Add Files...",
-                .Location = New Point(10, 40),
-                .AutoSize = True
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8),
+                .Margin = New Padding(0, 0, 10, 0)
             }
-            pnlTop.Controls.Add(btnAddFiles)
-
             Dim btnClear As New Button() With {
                 .Text = "Clear List",
-                .Location = New Point(100, 40),
-                .AutoSize = True
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8)
             }
-            pnlTop.Controls.Add(btnClear)
 
+            pnlFileButtons.Controls.Add(btnAddFiles)
+            pnlFileButtons.Controls.Add(btnClear)
+
+            ' Row 2: ListBox
             Dim lbFiles As New ListBox() With {
                 .Dock = DockStyle.Fill,
-                .SelectionMode = System.Windows.Forms.SelectionMode.MultiExtended
+                .SelectionMode = System.Windows.Forms.SelectionMode.MultiExtended,
+                .Margin = New Padding(0, 5, 0, 10)
             }
-            form.Controls.Add(lbFiles)
+            tblMain.Controls.Add(lbFiles, 0, 2)
 
-            Dim pnlBottom As New FlowLayoutPanel() With {
-                .Dock = DockStyle.Bottom,
-                .FlowDirection = FlowDirection.RightToLeft,
-                .Height = 50,
-                .Padding = New Padding(10)
+            ' Row 3: Action buttons
+            Dim pnlButtons As New FlowLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .FlowDirection = FlowDirection.LeftToRight,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .WrapContents = False,
+                .Margin = New Padding(0, 5, 0, 5)
             }
-            form.Controls.Add(pnlBottom)
+            tblMain.Controls.Add(pnlButtons, 0, 3)
 
-            Dim btnClose As New Button() With {.Text = "Close", .AutoSize = True}
-            Dim btnSignAll As New Button() With {.Text = "Sign All Files", .AutoSize = True}
+            Dim btnSignAll As New Button() With {
+                .Text = "Sign All Files",
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8),
+                .Margin = New Padding(0, 0, 10, 0)
+            }
+            Dim btnClose As New Button() With {
+                .Text = "Close",
+                .AutoSize = True,
+                .Padding = New Padding(15, 8, 15, 8)
+            }
 
-            pnlBottom.Controls.Add(btnClose)
-            pnlBottom.Controls.Add(btnSignAll)
+            pnlButtons.Controls.Add(btnSignAll)
+            pnlButtons.Controls.Add(btnClose)
 
             AddHandler btnAddFiles.Click, Sub()
                                               Using ofd As New OpenFileDialog()
@@ -2183,9 +3069,210 @@ Namespace SharedLibrary
                                              ShowCustomMessageBox(sb.ToString())
                                          End Sub
 
-            lbFiles.BringToFront()
-            form.ShowDialog()
+            form.ShowDialog(GetDialogOwner())
         End Sub
+
+#End Region
+
+#Region "Developer Instructions: Creating Signature Files"
+
+        ' =============================================================================
+        ' DEVELOPER INSTRUCTIONS: Creating .sig Signature Files
+        ' =============================================================================
+        '
+        ' This system uses Ed25519 digital signatures (via BouncyCastle) to verify
+        ' the authenticity of remote INI configuration files. Each update source
+        ' file must have a corresponding .sig file containing a Base64-encoded signature.
+        '
+        ' -----------------------------------------------------------------------------
+        ' TECHNICAL SPECIFICATIONS
+        ' -----------------------------------------------------------------------------
+        '
+        ' Algorithm:        Ed25519 (EdDSA with Curve25519)
+        ' Key Format:       Raw 32-byte keys, Base64-encoded for storage
+        ' Signature Format: Raw 64-byte signature, Base64-encoded in .sig file
+        ' Content Encoding: UTF-8 (file content must be read as UTF-8 bytes before signing)
+        '
+        ' Key Sizes:
+        '   - Public Key:  32 bytes raw → ~44 characters Base64
+        '   - Private Key: 32 bytes raw → ~44 characters Base64
+        '   - Signature:   64 bytes raw → ~88 characters Base64
+        '
+        ' -----------------------------------------------------------------------------
+        ' OPTION 1: Using the Built-in Signature Management Tool
+        ' -----------------------------------------------------------------------------
+        '
+        ' 1. Call SharedMethods.ShowSignatureManagementDialog() from the application
+        ' 2. "Generate Keypair" tab → Click "Generate New Keypair"
+        ' 3. Save both keys securely:
+        '    - Public Key:  Add to UpdateSource parameter in INI files
+        '    - Private Key: Store securely (password manager, secure vault)
+        ' 4. "Sign File" tab → Select INI file, enter private key, click "Sign File"
+        ' 5. Upload BOTH the INI file and its .sig file to the update location
+        '
+        ' -----------------------------------------------------------------------------
+        ' OPTION 2: External Implementation (Python)
+        ' -----------------------------------------------------------------------------
+        '
+        ' Required: pip install cryptography
+        '
+        ' # Generate keypair
+        ' from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        ' import base64
+        '
+        ' private_key = Ed25519PrivateKey.generate()
+        ' public_key = private_key.public_key()
+        '
+        ' private_key_b64 = base64.b64encode(private_key.private_bytes_raw()).decode('ascii')
+        ' public_key_b64 = base64.b64encode(public_key.public_bytes_raw()).decode('ascii')
+        '
+        ' # Sign a file
+        ' def sign_file(file_path: str, private_key_b64: str) -> None:
+        '     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        '     priv_bytes = base64.b64decode(private_key_b64)
+        '     private_key = Ed25519PrivateKey.from_private_bytes(priv_bytes)
+        '
+        '     with open(file_path, 'rb') as f:
+        '         content = f.read()
+        '
+        '     signature = private_key.sign(content)
+        '     sig_b64 = base64.b64encode(signature).decode('ascii')
+        '
+        '     with open(file_path + '.sig', 'w') as f:
+        '         f.write(sig_b64)
+        '
+        ' -----------------------------------------------------------------------------
+        ' OPTION 3: External Implementation (C# / .NET with BouncyCastle)
+        ' -----------------------------------------------------------------------------
+        '
+        ' Required NuGet: Install-Package BouncyCastle.Cryptography
+        '
+        ' using Org.BouncyCastle.Crypto.Generators;
+        ' using Org.BouncyCastle.Crypto.Parameters;
+        ' using Org.BouncyCastle.Crypto.Signers;
+        ' using Org.BouncyCastle.Security;
+        '
+        ' // Generate keypair
+        ' var keyGen = new Ed25519KeyPairGenerator();
+        ' keyGen.Init(new Ed25519KeyGenerationParameters(new SecureRandom()));
+        ' var keyPair = keyGen.GenerateKeyPair();
+        '
+        ' var publicKey = (Ed25519PublicKeyParameters)keyPair.Public;
+        ' var privateKey = (Ed25519PrivateKeyParameters)keyPair.Private;
+        '
+        ' string pubKeyB64 = Convert.ToBase64String(publicKey.GetEncoded());
+        ' string privKeyB64 = Convert.ToBase64String(privateKey.GetEncoded());
+        '
+        ' // Sign a file
+        ' void SignFile(string filePath, string privateKeyB64)
+        ' {
+        '     var privKeyBytes = Convert.FromBase64String(privateKeyB64);
+        '     var privateKey = new Ed25519PrivateKeyParameters(privKeyBytes, 0);
+        '
+        '     var content = File.ReadAllBytes(filePath);
+        '
+        '     var signer = new Ed25519Signer();
+        '     signer.Init(true, privateKey);
+        '     signer.BlockUpdate(content, 0, content.Length);
+        '     var signature = signer.GenerateSignature();
+        '
+        '     File.WriteAllText(filePath + ".sig", Convert.ToBase64String(signature));
+        ' }
+        '
+        ' -----------------------------------------------------------------------------
+        ' OPTION 4: External Implementation (Node.js)
+        ' -----------------------------------------------------------------------------
+        '
+        ' // Node.js 16+ has built-in Ed25519 support
+        ' const crypto = require('crypto');
+        ' const fs = require('fs');
+        '
+        ' // Generate keypair
+        ' const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+        '
+        ' // Export as raw bytes then Base64
+        ' const pubKeyB64 = publicKey.export({ type: 'raw', format: 'der' }).toString('base64');
+        ' const privKeyB64 = privateKey.export({ type: 'raw', format: 'der' }).toString('base64');
+        '
+        ' // Sign a file (requires reconstructing key in PKCS8 format)
+        ' function signFile(filePath, privateKeyB64) {
+        '     const privKeyBytes = Buffer.from(privateKeyB64, 'base64');
+        '     const privateKey = crypto.createPrivateKey({
+        '         key: Buffer.concat([
+        '             Buffer.from('302e020100300506032b657004220420', 'hex'),
+        '             privKeyBytes
+        '         ]),
+        '         format: 'der',
+        '         type: 'pkcs8'
+        '     });
+        '
+        '     const content = fs.readFileSync(filePath);
+        '     const signature = crypto.sign(null, content, privateKey);
+        '     fs.writeFileSync(filePath + '.sig', signature.toString('base64'));
+        ' }
+        '
+        ' -----------------------------------------------------------------------------
+        ' OPTION 5: External Implementation (OpenSSL Command Line)
+        ' -----------------------------------------------------------------------------
+        '
+        ' # Generate keypair
+        ' openssl genpkey -algorithm Ed25519 -out private.pem
+        ' openssl pkey -in private.pem -pubout -out public.pem
+        '
+        ' # Extract raw keys as Base64 (for UpdateSource configuration)
+        ' openssl pkey -in private.pem -outform DER | tail -c 32 | base64
+        ' openssl pkey -in public.pem -pubin -outform DER | tail -c 32 | base64
+        '
+        ' # Sign a file
+        ' openssl pkeyutl -sign -inkey private.pem -in models.ini -out models.ini.sig.raw
+        ' base64 models.ini.sig.raw > models.ini.sig
+        '
+        ' # Verify (for testing)
+        ' openssl pkeyutl -verify -pubin -inkey public.pem -in models.ini -sigfile models.ini.sig.raw
+        '
+        ' -----------------------------------------------------------------------------
+        ' UPDATESOURCE CONFIGURATION FORMAT
+        ' -----------------------------------------------------------------------------
+        '
+        ' Add the public key to your INI file's UpdateSource parameter:
+        '
+        '   [ModelName]
+        '   Model = gpt-4
+        '   Endpoint = https://api.example.com
+        '   UpdateSource = https://updates.example.com/models.ini; all; MCowBQYDK2VwAyEA...
+        '
+        ' Format: path; keys; public_key
+        '
+        '   path       - URL or file path to the update INI file
+        '   keys       - "all", "new", or comma-separated key names
+        '   public_key - Base64-encoded Ed25519 public key (32 bytes → ~44 chars)
+        '
+        ' -----------------------------------------------------------------------------
+        ' DEPLOYMENT CHECKLIST
+        ' -----------------------------------------------------------------------------
+        '
+        ' [ ] Generate Ed25519 keypair
+        ' [ ] Store private key securely (NEVER commit to source control)
+        ' [ ] Add public key to UpdateSource in distributed INI files
+        ' [ ] Create/update the remote INI file
+        ' [ ] Sign the INI file to create .sig file
+        ' [ ] Upload BOTH files to the same location:
+        '       https://example.com/updates/models.ini
+        '       https://example.com/updates/models.ini.sig
+        ' [ ] Test verification before deployment
+        '
+        ' -----------------------------------------------------------------------------
+        ' SECURITY NOTES
+        ' -----------------------------------------------------------------------------
+        '
+        ' • NEVER share or commit private keys to source control
+        ' • Store private keys in a secure vault or password manager
+        ' • If a private key is compromised, generate a new keypair and update
+        '   all UpdateSource entries with the new public key
+        ' • The .sig file must be re-created whenever the INI file content changes
+        ' • Signature verification ensures file has not been tampered with
+        '
+        ' =============================================================================
 
 #End Region
 
