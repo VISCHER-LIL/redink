@@ -209,7 +209,7 @@ Namespace SharedLibrary
 
                 ' Other parameters
 
-                context.INI_UpdateCheckInterval = If(configDict.ContainsKey("UpdateCheckInterval"), CInt(configDict("UpdateCheckInterval")), 7)
+                context.INI_UpdateCheckInterval = If(configDict.ContainsKey("UpdateCheckInterval"), CInt(configDict("UpdateCheckInterval")), DefaultUpdateIntervalDays)
                 context.INI_UpdatePath = If(configDict.ContainsKey("UpdatePath"), configDict("UpdatePath"), "")
                 context.INI_HelpMeInkyPath = If(configDict.ContainsKey("HelpMeInkyPath"), configDict("HelpMeInkyPath"), Default_HelpMeInkyPath)
                 context.INI_DiscussInkyPath = If(configDict.ContainsKey("DiscussInkyPath"), configDict("DiscussInkyPath"), "")

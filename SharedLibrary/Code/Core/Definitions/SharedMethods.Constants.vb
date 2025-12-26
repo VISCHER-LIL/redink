@@ -70,12 +70,14 @@ Namespace SharedLibrary
         Public Shared ReadOnly Property AppsUrl As String = "https://redink.ai"
         Public Shared ReadOnly Property AppsUrlDir As String = "/apps/preview/"
         Public Shared ReadOnly Property VersionQualifier As String = " Preview"
+        Public Shared Readonly DefaultUpdateIntervalDays As Integer = 3
 
 #ElseIf Not DEVELOP Then    ' This is for General Audience (GA)
 
         Public Shared ReadOnly Property AppsUrl As String = "https://redink.ai"
         Public Shared ReadOnly Property AppsUrlDir As String = "/apps/ga/"
         Public Shared ReadOnly Property VersionQualifier As String = ""
+        Public Shared Readonly DefaultUpdateIntervalDays As Integer = 3
 
 #End If
 
