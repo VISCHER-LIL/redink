@@ -27,6 +27,7 @@
 Option Strict On
 Option Explicit On
 
+Imports System.Windows.Forms
 Imports Markdig
 Imports SharedLibrary.SharedLibrary.SharedContext
 
@@ -46,7 +47,7 @@ Namespace SharedLibrary
         ''' Optional shared context. If provided and JSON mode is active, an additional button "Check JSON with AI"
         ''' is shown to run an LLM check and display the result.
         ''' </param>
-        Public Shared Sub ShowTextFileEditor(ByVal filePath As System.String, ByVal headerText As System.String, Optional ForceJson As Boolean = False, Optional _context As ISharedContext = Nothing)
+        Public Shared Sub ShowTextFileEditor(ByVal filePath As System.String, ByVal headerText As System.String, Optional ForceJson As Boolean = False, Optional _context As ISharedContext = Nothing, Optional ByRef wasSaved As System.Boolean? = Nothing)
             ' --- Guard & Input Validation ---
             Try
                 If filePath Is Nothing OrElse filePath.Trim().Length = 0 Then
@@ -57,6 +58,8 @@ Namespace SharedLibrary
                 ShowCustomMessageBox("Unexpected error while validating input: " & ex.Message)
                 Return
             End Try
+
+            Dim localWasSaved As Boolean? = Nothing
 
             ' --- Create Form & Controls ---
             Dim editorForm As New System.Windows.Forms.Form()
@@ -419,6 +422,7 @@ Namespace SharedLibrary
                     Return
                 End Try
 
+                localWasSaved = True
                 editorForm.DialogResult = System.Windows.Forms.DialogResult.OK
                 editorForm.Close()
 
@@ -433,8 +437,16 @@ Namespace SharedLibrary
                                       End Sub
 
             AddHandler btnCancel.Click, Sub(sender As System.Object, e As System.EventArgs)
+                                            localWasSaved = False
                                             editorForm.DialogResult = System.Windows.Forms.DialogResult.Cancel
                                             editorForm.Close()
+                                        End Sub
+
+            AddHandler editorForm.FormClosing,
+                                        Sub(sender As Object, e As System.Windows.Forms.FormClosingEventArgs)
+                                            If Not localWasSaved.HasValue Then
+                                                localWasSaved = False
+                                            End If
                                         End Sub
 
             ' Keyboard shortcuts: Ctrl+S (save), Ctrl+Shift+F (toggle JSON formatting)
@@ -456,13 +468,13 @@ Namespace SharedLibrary
 
             ' Sets the initial cursor/selection when the form is shown.
             AddHandler editorForm.Shown,
-    Sub(sender As System.Object, e As System.EventArgs)
-        Try
-            textEditor.SelectionStart = 0
-            textEditor.SelectionLength = 0
-        Catch ex As System.Exception
-        End Try
-    End Sub
+                Sub(sender As System.Object, e As System.EventArgs)
+                    Try
+                        textEditor.SelectionStart = 0
+                        textEditor.SelectionLength = 0
+                    Catch ex As System.Exception
+                    End Try
+                End Sub
 
             ' Show modal window
             Try
@@ -479,6 +491,9 @@ Namespace SharedLibrary
                     ShowCustomMessageBox("Failed to display editor window:" & System.Environment.NewLine & exShow.Message)
                 End Try
             End Try
+
+            wasSaved = localWasSaved
+
         End Sub
 
         ' Keep the segment type non-public

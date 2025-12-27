@@ -59,7 +59,6 @@
 Option Strict On
 Option Explicit On
 
-Imports System.ComponentModel
 Imports System.Deployment.Application
 Imports System.Drawing
 Imports System.IO
@@ -71,7 +70,6 @@ Imports System.Threading
 Imports System.Windows.Forms
 Imports Markdig.Extensions
 Imports Microsoft.Office.Interop
-Imports Microsoft.Office.Interop.Word
 Imports Microsoft.Office.Tools
 Imports SharedLibrary.SharedLibrary.SharedContext
 
@@ -2004,9 +2002,11 @@ Namespace SharedLibrary
                                                              If dgv.IsCurrentCellDirty Then dgv.CommitEdit(DataGridViewDataErrorContexts.Commit)
                                                          End Sub
 
-            Dim btnSaveClose As New Button() With {.Text = "Save && Close", .AutoSize = True, .Margin = New Padding(10)}
-            Dim btnEditIni As New Button() With {.Text = "Edit .ini Files", .AutoSize = True, .Margin = New Padding(10)}
-            Dim btnCancel As New Button() With {.Text = "Cancel", .AutoSize = True, .Margin = New Padding(10)}
+            Dim btnSaveClose As New System.Windows.Forms.Button() With {.Text = "Save && Close", .AutoSize = True, .Margin = New Padding(10)}
+            Dim btnEditIni As New System.Windows.Forms.Button() With {.Text = "Edit .ini Files", .AutoSize = True, .Margin = New Padding(10)}
+            Dim btnCancel As New System.Windows.Forms.Button() With {.Text = "Cancel", .AutoSize = True, .Margin = New Padding(10)}
+            Dim btnImportIni As New System.Windows.Forms.Button() With {.Text = "Import Settings", .AutoSize = True, .Margin = New Padding(10)}
+
 
             Dim pnlButtons As New FlowLayoutPanel() With {
         .Dock = DockStyle.Bottom,
@@ -2015,25 +2015,74 @@ Namespace SharedLibrary
         .Padding = New Padding(16, 12, 16, 14),
         .WrapContents = False
     }
-            pnlButtons.Controls.AddRange({btnCancel, btnSaveClose, btnEditIni})
+            pnlButtons.Controls.AddRange({btnCancel, btnSaveClose, btnEditIni, btnImportIni})
 
             form.Controls.Add(dgv)
             form.Controls.Add(pnlButtons)
+
+            ' Enable / disable Import Settings button using same eligibility rules
+            Try
+                Dim activeIniPath As String = Nothing
+                Try
+                    activeIniPath = GetActiveConfigFilePath(context)
+                Catch
+                End Try
+
+                Dim disableReason As String = Nothing
+                Dim canImport As Boolean = True
+
+                ' Registry-controlled INI => disable
+                Try
+                    If RegPath_IniPrio Then
+                        canImport = False
+                    End If
+                Catch
+                End Try
+
+                ' Excel / Outlook using Word INI => disable
+                If canImport Then
+                    Dim rdv As String = Nothing
+                    Try
+                        rdv = context.RDV
+                    Catch
+                    End Try
+
+                    If String.Equals(rdv, "Excel", StringComparison.OrdinalIgnoreCase) OrElse
+           String.Equals(rdv, "Outlook", StringComparison.OrdinalIgnoreCase) Then
+
+                        Dim wordPath As String = Nothing
+                        Try
+                            wordPath = GetDefaultINIPath("Word")
+                        Catch
+                        End Try
+
+                        If Not String.IsNullOrWhiteSpace(wordPath) AndAlso
+               String.Equals(activeIniPath, wordPath, StringComparison.OrdinalIgnoreCase) Then
+                            canImport = False
+                        End If
+                    End If
+                End If
+
+                btnImportIni.Enabled = canImport
+            Catch
+                btnImportIni.Enabled = False
+            End Try
+
 
             ''' <summary>
             ''' Copies the current grid values into <c>variableValues</c> as strings by variable name.
             ''' </summary>
             Dim syncGridToDictionary As Action =
-        Sub()
-            For Each row As DataGridViewRow In dgv.Rows
-                If row.IsNewRow Then Continue For
-                Dim name = CStr(row.Cells("colVar").Value)
-                Dim valueStr = CStr(If(row.Cells("colVal").Value, ""))
-                If Not String.IsNullOrWhiteSpace(name) Then
-                    variableValues(name) = valueStr
-                End If
-            Next
-        End Sub
+                            Sub()
+                                For Each row As DataGridViewRow In dgv.Rows
+                                    If row.IsNewRow Then Continue For
+                                    Dim name = CStr(row.Cells("colVar").Value)
+                                    Dim valueStr = CStr(If(row.Cells("colVal").Value, ""))
+                                    If Not String.IsNullOrWhiteSpace(name) Then
+                                        variableValues(name) = valueStr
+                                    End If
+                                Next
+                            End Sub
 
             AddHandler btnEditIni.Click,
         Sub()
@@ -2124,10 +2173,48 @@ Namespace SharedLibrary
                     "Yes, close and reload", "No, stay here")
                 If answer = 1 Then
                     abortAndReload = True
+                    form.DialogResult = DialogResult.OK
                     form.Close()
                 End If
             End If
         End Sub
+
+            AddHandler btnImportIni.Click,
+                Sub()
+                    ' Same Z-order handling as Edit .ini Files
+                    Dim wasTopMost As Boolean = form.TopMost
+                    form.TopMost = False
+                    form.Enabled = False
+                    System.Windows.Forms.Application.DoEvents()
+
+                    Dim ChangesToMainConfig = False
+
+                    Try
+                        ChangesToMainConfig = IniImportManager.RunImportFromVariableConfigurationWindow(context, form)
+                    Catch ex As System.Exception
+                        ShowCustomMessageBox("Import failed: " & ex.Message)
+                    Finally
+                        form.Enabled = True
+                        form.TopMost = wasTopMost
+                        form.Activate()
+                    End Try
+
+                    If ChangesToMainConfig Then
+                        Dim NextStep = ShowCustomYesNoBox("Your import of settings changed the main configuration file. They are not yet reflected in this table. You should close this window and reload the configuration to avoid conflicts (if you cancel, this Expert Configuration window closes without reloading). Proceed?", $"{AN} Expert Configuration", "Yes, close and reload", "No, stay here")
+                        Select Case NextStep
+                            Case 1
+                                abortAndReload = True
+                                form.DialogResult = DialogResult.OK
+                                form.Close()
+                            Case 0
+                                abortAndReload = False
+                                form.DialogResult = DialogResult.Cancel
+                                form.Close()
+                        End Select
+                    End If
+
+                End Sub
+
 
             AddHandler btnSaveClose.Click,
         Sub()

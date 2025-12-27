@@ -329,6 +329,7 @@
     <Compile Include="Code\Core\Clipboard\SharedMethods.ClipboardSnapshot.vb" />
     <Compile Include="Code\Core\Clipboard\SharedMethods.PutInClipboard.vb" />
     <Compile Include="Code\Core\Clipboard\SharedMethods.StoreAndRestoreClipboard.vb" />
+    <Compile Include="Code\Core\Config\IniImportManager.vb" />
     <Compile Include="Code\Core\Config\SharedMethods.UpdateIni.vb" />
     <Compile Include="Code\Core\Config\SharedMethods.License.vb" />
     <Compile Include="Code\Core\Config\SharedMethods.LoadConfig.vb" />
