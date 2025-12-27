@@ -354,6 +354,7 @@
     </Compile>
     <Compile Include="Code\Core\Texthandling\SharedMethods.TextHandling.vb" />
     <Compile Include="Code\Core\Texthandling\SharedMethods.TextHandlingExcel.vb" />
+    <Compile Include="Code\Core\UI\LogWindow.vb" />
     <Compile Include="Code\Core\UI\SharedMethods.Infobox.vb" />
     <Compile Include="Code\Core\UI\SharedMethods.Pane.vb" />
     <Compile Include="Code\Core\UI\SharedMethods.SelectionFormSmall.vb" />

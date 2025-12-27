@@ -3,32 +3,35 @@
 '
 ' =============================================================================
 ' File: WebAgentInterpreter.vb
-' Purpose: Executes a JSON-defined "web agent" script using a cookie-aware HTTP client,
-'          extracting data from HTML responses and optionally using an LLM step to
-'          analyze content and produce JSON output.
+' Purpose:
+'   Executes WebAgent JSON scripts in an HTTP-only model and returns a Markdown
+'   report (or execution log) to the caller.
 '
-' Architecture:
-'  - Runtime State:
-'     - `_vars` holds variables created/assigned during execution and used for templating.
-'     - `_secrets` holds resolved secrets and is used for log masking.
-'     - `_headersDefault`, `_cookieContainer` and `_userAgent` control HTTP behavior.
-'     - `_lastResponseBody`, `_lastResponseUrl`, `_lastDoc` hold the last HTTP response and parsed HTML.
-'  - Script Execution:
-'     - `RunAsync(scriptJson, ...)` parses `meta`, `env` and iterates `steps`.
-'     - Each step runs a command (`open_url`, `extract_text`, `foreach`, `llm_analyze`, etc.)
-'       with optional retry/on_error/guard/wait_for behavior.
-'     - Step results can be stored via `assign` (var/path).
-'  - HTTP:
-'     - Uses `HttpClientHandler` with cookies and decompression.
-'     - TLS is restricted via `ServerCertificateCustomValidationCallback` (logs details on errors).
-'  - HTML/Selectors:
-'     - Responses are parsed using HtmlAgilityPack; selectors support XPath, CSS, text and regex.
-'  - Templating:
-'     - `ExpandTemplates` resolves `{{var}}` placeholders from `_vars`, secrets and environment variables.
-'     - A small Mustache-like renderer supports `{{#section}}`/`{{^section}}` and variables.
-'  - Debugging:
-'     - Optional file-based debug log on the user's Desktop (`RI_Debug_Webagent.txt`) controlled via flags.
-'     - Includes step/substep timing, snapshots, variable change tracking and optional script overview.
+' Scope (this file):
+'   - Parses script JSON (`meta`, `env`, `steps`) and runs step commands sequentially.
+'   - Maintains per-run runtime state:
+'       * `_vars` for variables and implicit runtime values
+'       * `_secrets` for secret masking and `secret://` resolution
+'       * `_headersDefault`, `_cookieContainer`, `_userAgent` for HTTP behavior
+'       * `_lastResponseUrl`, `_lastResponseBody`, `_lastDoc` for last-response state
+'   - Provides:
+'       * command dispatcher (`open_url`, `http_request`, extraction, file ops, control flow, LLM, report)
+'       * template expansion (`{{...}}`) against `_vars`/env variables
+'       * selector resolution against the current HTML document (XPath + limited CSS + text/regex)
+'       * optional debug logging (file + optional LogWindow mirroring)
+'       * cooperative cancellation through `CancellationToken`
+'
+' Threading / UI notes:
+'   - This interpreter is not tied to a UI thread, but may emit progress messages to `LogWindow`
+'     when `_silent=False` and `_useLogWindow=True`.
+'   - Cancellation is cooperative: call sites should cancel the provided `CancellationToken`.
+'
+' External dependencies used here:
+'   - `Newtonsoft.Json` (`JObject`/`JArray`/`JToken`)
+'   - `System.Net.Http` (`HttpClient`, cookies, TLS settings)
+'   - `HtmlAgilityPack` (HTML parsing and XPath)
+'   - `Markdig` (Markdown-to-HTML for `send_email_report`)
+'   - `SharedLibrary.SharedMethods` (LLM call + UI helpers + defaults)
 ' =============================================================================
 
 Option Strict On
@@ -47,10 +50,10 @@ Imports SharedLibrary.SharedLibrary.SharedMethods
 
 Namespace SharedLibrary
 
-    ''' <summary>
-    ''' Interprets and executes a JSON "web agent" script using an HTTP-only execution model.
-    ''' Maintains per-run variable state, last-response state and an execution log.
-    ''' </summary>
+    ''' <remarks>
+    ''' The interpreter maintains per-run mutable state (variables, headers, cookies and last-response data).
+    ''' Instances are not thread-safe and are intended to be used for a single run at a time.
+''' </remarks>
     Public NotInheritable Class WebAgentInterpreter
         Implements System.IDisposable
 
@@ -68,6 +71,12 @@ Namespace SharedLibrary
         Private _lastDoc As HtmlAgilityPack.HtmlDocument = Nothing
         Private _defaultTimeoutMs As System.Int32 = 30000
 
+        Private _silent As Boolean = False
+        Private _useLogWindow As Boolean = True
+
+        ' Controlled by script: env.variables.debug_to_logwindow = true
+        Private _debugToLogWindow As Boolean = False
+
         Private _log As New System.Text.StringBuilder()
         Private _finalMarkdown As System.String = System.String.Empty
 
@@ -77,6 +86,12 @@ Namespace SharedLibrary
 
         Private _dynamicExpand As Boolean = False
         Private Const MAX_DYNAMIC_FETCH As Integer = 10
+
+        ''' <summary>
+        ''' Action to invoke when the user requests cancellation via the LogWindow close button.
+        ''' Set by the caller to trigger the CancellationTokenSource.Cancel().
+        ''' </summary>
+        Public Property OnCancelRequested As Action
 
         ''' <summary>
         ''' If True, aborts on unhandled HTTP failures; if False, some non-successs HTTP responses can be tolerated.
@@ -451,12 +466,30 @@ Namespace SharedLibrary
         ''' </summary>
         Private Sub WriteDebug(lines As String)
             If Not _debugInitialized Then Return
+
             Try
                 System.IO.File.AppendAllText(_debugLogPath, lines & Environment.NewLine)
             Catch
             End Try
-        End Sub
 
+            ' optional mirror to LogWindow (script-controlled)
+            If _debugToLogWindow AndAlso _useLogWindow AndAlso Not _silent Then
+                Try
+                    Dim txt = MaskSecrets(If(lines, String.Empty))
+
+                    ' Avoid flooding with huge blocks (script JSON dumps etc.)
+                    Const maxUiChars As Integer = 1500
+                    If txt.Length > maxUiChars Then
+                        txt = txt.Substring(0, maxUiChars) & "…"
+                    End If
+
+                    For Each ln In txt.Replace(vbCrLf, vbLf).Split({vbLf}, StringSplitOptions.RemoveEmptyEntries)
+                        LogWindow.AppendLog("[debug] " & ln, "warn")
+                    Next
+                Catch
+                End Try
+            End If
+        End Sub
         ''' <summary>
         ''' Writes a snapshot of state (step info, last URL/body preview, selected vars, exception details) to the debug log.
         ''' Controlled by `debug` / `debug_allAttempts`.
@@ -615,6 +648,8 @@ Namespace SharedLibrary
                 End If
             End If
 
+            _debugToLogWindow = GetDebugFlag("debug_to_logwindow", False)
+
             _http.DefaultRequestHeaders.UserAgent.Clear()
             _http.DefaultRequestHeaders.UserAgent.ParseAdd(_userAgent)
             For Each kv In _headersDefault
@@ -639,6 +674,43 @@ Namespace SharedLibrary
             Next
 
             Dim stepIndex As System.Int32 = 0
+
+
+            _silent = silent
+            If Not silent Then
+                LogWindow.ShowLogWindow(clearOnShow:=True)
+                LogWindow.SetTitle("WebAgent: Executing Script")
+                LogWindow.AppendLog("Script execution started", "info")
+
+                If _debugToLogWindow Then
+                    LogWindow.AppendLog("Debug: enabled (debug output will be mirrored to this window)", "warn")
+                End If
+
+                ' Register close handler to prompt user about aborting the run
+                Dim cancelAction = OnCancelRequested
+                LogWindow.OnCloseRequested = Function() As Boolean
+                                                 Dim result = SharedMethods.ShowCustomYesNoBox(
+                                                     "Do you want to abort the WebAgent run?",
+                                                     "Yes, abort",
+                                                     "No, continue",
+                                                     SharedMethods.AN & " WebAgent")
+                                                 If result = 1 Then
+                                                     ' User chose to abort - trigger cancellation
+                                                     If cancelAction IsNot Nothing Then
+                                                         Try
+                                                             cancelAction.Invoke()
+                                                         Catch
+                                                         End Try
+                                                     End If
+                                                     ' Return True to allow the window to close/hide
+                                                     Return True
+                                                 Else
+                                                     ' User chose to continue - don't close
+                                                     Return False
+                                                 End If
+                                             End Function
+            End If
+
 
             Try
                 While stepIndex < steps.Count
@@ -708,32 +780,44 @@ Namespace SharedLibrary
                             Try
                                 Dim parmsPreview = TryCast(stepObj("params"), Newtonsoft.Json.Linq.JObject)
                                 Dim progressMsg As String = Nothing
+                                Dim logLevel As String = "step"
+
                                 Select Case command.ToLowerInvariant()
                                     Case "open_url", "http_request"
                                         Dim u = ""
                                         If parmsPreview IsNot Nothing Then u = ExpandTemplates(parmsPreview.Value(Of System.String)("url"))
-                                        progressMsg = If(System.String.IsNullOrWhiteSpace(u), "Loading the library ...", "Loading the library from " & u)
+                                        progressMsg = If(System.String.IsNullOrWhiteSpace(u), "Loading the library ...", "Loading: " & TruncateUrl(u, 60))
                                     Case "download_url"
                                         Dim u = ""
                                         If parmsPreview IsNot Nothing Then u = ExpandTemplates(parmsPreview.Value(Of System.String)("url"))
-                                        progressMsg = If(System.String.IsNullOrWhiteSpace(u), "Downloading resource ...", "Downloading resource from " & u)
+                                        progressMsg = If(System.String.IsNullOrWhiteSpace(u), "Downloading resource ...", "Downloading: " & TruncateUrl(u, 60))
                                     Case "extract_text", "extract_html", "extract_attribute", "find"
-                                        progressMsg = "Extracting data (" & command & ") ..."
+                                        progressMsg = "Extracting data (" & command & ")"
                                     Case "llm_analyze", "llm", "llmanalyze"
+                                        logLevel = "llm"
                                         Dim urlDisplay As System.String = System.String.Empty
                                         If Not System.String.IsNullOrWhiteSpace(_lastResponseUrl) Then
-                                            Dim shortUrl As System.String = _lastResponseUrl
-                                            If shortUrl.Length > 120 Then shortUrl = shortUrl.Substring(0, 117) & "..."
-                                            urlDisplay = " [" & shortUrl & "]"
+                                            urlDisplay = " → " & TruncateUrl(_lastResponseUrl, 50)
                                         End If
-                                        progressMsg = "Analyzing content (LLM) ..." & urlDisplay
+                                        progressMsg = "Analyzing content (LLM)" & urlDisplay
                                     Case "render_report"
-                                        progressMsg = "Rendering report ..."
+                                        logLevel = "success"
+                                        progressMsg = "Rendering report"
+                                    Case "foreach"
+                                        progressMsg = "Iterating collection"
+                                    Case "if"
+                                        progressMsg = "Evaluating condition"
+                                    Case "set_var"
+                                        progressMsg = "Setting variable"
                                     Case Else
-                                        progressMsg = "Executing step '" & command & "' ..."
+                                        progressMsg = "Executing: " & command
                                 End Select
-                                If Not System.String.IsNullOrWhiteSpace(sid) Then progressMsg = "[" & sid & "] " & progressMsg
-                                InfoBox.ShowInfoBox(progressMsg)
+
+                                If Not System.String.IsNullOrWhiteSpace(sid) Then
+                                    progressMsg = "[" & sid & "] " & progressMsg
+                                End If
+
+                                LogWindow.AppendLog(progressMsg, logLevel)
                             Catch
                             End Try
                         End If
@@ -774,6 +858,9 @@ Namespace SharedLibrary
                                     Case "delete_file" : resultValue = CmdDeleteFile(parms)
                                     Case "send_email_report" : resultValue = CmdSendEmailReport(parms)
                                     Case "log" : resultValue = CmdLog(parms)
+                                    Case "increment" : resultValue = CmdIncrement(parms)
+                                    Case "while" : resultValue = Await CmdWhileAsync(parms, cancel)
+                                    Case "range" : resultValue = CmdRange(parms)
                                     Case "enable_dynamic" : CmdEnableDynamic(DirectCast(stepObj, JObject))
                                     Case "array_push" : resultValue = CmdArrayPush(parms)
                                     Case "llm_analyze", "llm", "llmanalyze" : resultValue = Await CmdLlmAnalyzeAsync(parms, timeoutMs, cancel)
@@ -889,15 +976,23 @@ Namespace SharedLibrary
                 globalSw.Stop()
                 DebugFinalSummary(totalStepsCount, executedSteps, Nothing, globalSw.ElapsedMilliseconds)
 
-            Catch
+            Catch ex As Exception
                 globalSw.Stop()
                 DebugFinalSummary(totalStepsCount, executedSteps, _currentStepId, globalSw.ElapsedMilliseconds)
+                If Not _silent Then
+                    LogWindow.AppendLog("Execution failed: " & ex.Message, "error")
+                    ' Clear the close handler when execution fails
+                    LogWindow.OnCloseRequested = Nothing
+                End If
                 Throw
             End Try
 
             If Not silent Then
                 Try
-                    InfoBox.ShowInfoBox("", 1)
+                    LogWindow.AppendLog("Execution completed successfully", "success")
+                    ' Clear the close handler when execution completes
+                    LogWindow.OnCloseRequested = Nothing
+                    ' LogWindow.HideLogWindow()
                 Catch
                 End Try
             End If
@@ -1650,6 +1745,160 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
+        ''' Executes steps repeatedly while a condition is true.
+        ''' </summary>
+        ''' <param name="parms">
+        ''' Parameters:
+        ''' - `condition`: expression evaluated by <see cref="EvalCondition"/>
+        ''' - `steps`: array of sub-steps to execute each iteration
+        ''' - `max_iterations`: optional safety limit (default 100)
+        ''' - `break_if_var_true`: optional variable name; if truthy, breaks the loop
+        ''' </param>
+        Private Async Function CmdWhileAsync(parms As JObject, cancel As CancellationToken) As Task(Of Object)
+            If parms Is Nothing Then Return Nothing
+
+            Dim conditionExpr = parms.Value(Of String)("condition")
+            Dim steps = TryCast(parms("steps"), JArray)
+            Dim maxIterations = parms.Value(Of Integer?)("max_iterations").GetValueOrDefault(100)
+            Dim breakVar = parms.Value(Of String)("break_if_var_true")
+
+            If String.IsNullOrWhiteSpace(conditionExpr) OrElse steps Is Nothing Then
+                Throw New Exception("while: missing condition or steps")
+            End If
+
+            Dim iteration As Integer = 0
+            Dim executed As Integer = 0
+
+            While iteration < maxIterations
+                cancel.ThrowIfCancellationRequested()
+
+                ' Evaluate condition
+                If Not EvalCondition(conditionExpr) Then
+                    Log($"[while] Condition false at iteration {iteration}, exiting.")
+                    Exit While
+                End If
+
+                ' Check break variable
+                If Not String.IsNullOrWhiteSpace(breakVar) Then
+                    If _vars.ContainsKey(breakVar) AndAlso _IsTruthy(_vars(breakVar)) Then
+                        Log($"[while] break_if_var_true '{breakVar}' = true, exiting.")
+                        Exit While
+                    End If
+                End If
+
+                Try
+                    Await RunSubStepsAsync(steps, cancel)
+                    executed += 1
+                Catch ex As OperationCanceledException
+                    If cancel.IsCancellationRequested Then Throw
+                    Log($"[while] Cancellation at iteration {iteration}: {ex.Message}")
+                    Exit While
+                Catch ex As Exception
+                    Log($"[while] Error at iteration {iteration}: {ex.Message}")
+                    Exit While
+                End Try
+
+                iteration += 1
+            End While
+
+            If iteration >= maxIterations Then
+                Log($"[while] max_iterations {maxIterations} reached.")
+            End If
+
+            Return New With {.iterations = iteration, .executed = executed}
+        End Function
+
+        ''' <summary>
+        ''' Generates a range of integers and stores them in a variable.
+        ''' </summary>
+        ''' <param name="parms">
+        ''' Parameters:
+        ''' - `var`: target variable name
+        ''' - `from`: start value (default 0)
+        ''' - `to`: end value (exclusive)
+        ''' - `step`: increment (default 1)
+        ''' </param>
+        Private Function CmdRange(parms As JObject) As Object
+            If parms Is Nothing Then Throw New Exception("range: params missing")
+
+            Dim varName = parms.Value(Of String)("var")
+            If String.IsNullOrWhiteSpace(varName) Then
+                Throw New Exception("range: 'var' missing")
+            End If
+
+            Dim fromVal = parms.Value(Of Integer?)("from").GetValueOrDefault(0)
+            Dim toVal = parms.Value(Of Integer?)("to").GetValueOrDefault(10)
+            Dim stepVal = parms.Value(Of Integer?)("step").GetValueOrDefault(1)
+
+            If stepVal = 0 Then stepVal = 1
+
+            Dim arr As New JArray()
+            Dim current = fromVal
+
+            If stepVal > 0 Then
+                While current < toVal
+                    arr.Add(current)
+                    current += stepVal
+                End While
+            Else
+                While current > toVal
+                    arr.Add(current)
+                    current += stepVal
+                End While
+            End If
+
+            _vars(varName) = arr
+
+            Return New With {.var = varName, .count = arr.Count}
+        End Function
+
+        ''' <summary>
+        ''' Increments or decrements a numeric variable.
+        ''' </summary>
+        ''' <param name="parms">
+        ''' Parameters:
+        ''' - `var`: variable name to modify
+        ''' - `by`: amount to add (negative to subtract), default 1
+        ''' - `set_to`: optional absolute value to set instead of incrementing
+        ''' </param>
+        Private Function CmdIncrement(parms As JObject) As Object
+            If parms Is Nothing Then Throw New Exception("increment: params missing")
+
+            Dim varName = parms.Value(Of String)("var")
+            If String.IsNullOrWhiteSpace(varName) Then
+                Throw New Exception("increment: 'var' missing")
+            End If
+
+            ' Check for absolute set
+            Dim setTo = parms("set_to")
+            If setTo IsNot Nothing Then
+                Dim setVal As Double = 0
+                If Double.TryParse(ExpandTemplates(setTo.ToString()), setVal) Then
+                    _vars(varName) = CInt(setVal)
+                    Return New With {.var = varName, .value = CInt(setVal)}
+                End If
+            End If
+
+            ' Get current value
+            Dim current As Double = 0
+            If _vars.ContainsKey(varName) Then
+                Double.TryParse(_vars(varName)?.ToString(), current)
+            End If
+
+            ' Get increment amount
+            Dim byAmount As Double = 1
+            Dim byToken = parms("by")
+            If byToken IsNot Nothing Then
+                Double.TryParse(ExpandTemplates(byToken.ToString()), byAmount)
+            End If
+
+            Dim newValue = CInt(current + byAmount)
+            _vars(varName) = newValue
+
+            Return New With {.var = varName, .old_value = CInt(current), .new_value = newValue}
+        End Function
+
+        ''' <summary>
         ''' Renders a template using a Mustache-like renderer against `params.context`, then expands global placeholders from <see cref="_vars"/>.
         ''' </summary>
         ''' <param name="parms">
@@ -2094,7 +2343,17 @@ Namespace SharedLibrary
             If stopOnError Then continueOnError = False
 
             Dim src As Object = Nothing
+
             If Not _vars.TryGetValue(listVar, src) OrElse src Is Nothing Then
+                ' Support dotted paths like "page_data.results"
+                Try
+                    src = ResolveValue("{{" & listVar & "}}")
+                Catch
+                    src = Nothing
+                End Try
+            End If
+
+            If src Is Nothing Then
                 Log($"[foreach] list '{listVar}' not found or null → skipping.")
                 Return New With {.count = 0, .executed = 0}
             End If
@@ -2241,6 +2500,12 @@ Namespace SharedLibrary
                                     resultValue = CmdArrayPush(parms)
                                 Case "extract_text"
                                     resultValue = CmdExtractText(parms)
+                                Case "increment"
+                                    resultValue = CmdIncrement(parms)
+                                Case "while"
+                                    resultValue = Await CmdWhileAsync(parms, cancel)
+                                Case "range"
+                                    resultValue = CmdRange(parms)
                                 Case "extract_html"
                                     resultValue = CmdExtractHtml(parms)
                                 Case "extract_attribute"
@@ -2304,6 +2569,9 @@ Namespace SharedLibrary
                     Loop While Not success AndAlso attempt <= maxRetry
 
                     If Not success Then
+                        If Not _silent Then
+                            LogWindow.AppendLog($"Substep '{sid}' failed after {attempt} attempt(s): {lastEx?.Message}", "error")
+                        End If
                         Throw New Exception($"Substep '{sid}' failed after {attempt} attempt(s).", lastEx)
                     End If
 
@@ -2671,8 +2939,10 @@ Namespace SharedLibrary
 
                 If Not String.IsNullOrWhiteSpace(sanitized) Then
                     Dim preview = "[step:" & _currentStepId & "] [url:" & currentUrl & "] " &
-                              If(sanitized.Length > maxPreview, sanitized.Substring(0, maxPreview) & "...", sanitized)
-                    Try : InfoBox.ShowInfoBox(preview, 1) : Catch : End Try
+                         If(sanitized.Length > maxPreview, sanitized.Substring(0, maxPreview) & "...", sanitized)
+                    If Not _silent Then
+                        LogWindow.AppendLog(preview, "llm")
+                    End If
                 End If
 
                 If logRaw AndAlso (GetDebugFlag("debug") OrElse GetDebugFlag("debug_allAttempts")) Then
@@ -3307,6 +3577,15 @@ Namespace SharedLibrary
 #Region "Templating / Helpers"
 
         ''' <summary>
+        ''' Truncates a URL to a maximum length for display purposes.
+        ''' </summary>
+        Private Function TruncateUrl(url As String, maxLength As Integer) As String
+            If String.IsNullOrEmpty(url) Then Return ""
+            If url.Length <= maxLength Then Return url
+            Return url.Substring(0, maxLength - 3) & "..."
+        End Function
+
+        ''' <summary>
         ''' Resolves a secret reference of the form `secret://key` using the current <see cref="_secrets"/> dictionary.
         ''' Returns an empty string when the key is not found; returns the input when not a secret reference.
         ''' </summary>
@@ -3793,6 +4072,7 @@ Namespace SharedLibrary
         ''' - OR: `a || b`
         ''' - `exists {{var}}`
         ''' - Equality: `{{var}} == "value"` and `{{var}} == []`
+        ''' - Numeric comparisons: `{{var}} < 10`, `{{var}} >= {{other}}`
         ''' - Contains: `{{var}} contains "text"`
         ''' - Regex: `{{var}} ~= "pattern"`
         ''' </summary>
@@ -3806,6 +4086,14 @@ Namespace SharedLibrary
                     If EvalCondition(part.Trim()) Then Return True
                 Next
                 Return False
+            End If
+
+            ' AND support
+            If c.Contains("&&") Then
+                For Each part In c.Split(New String() {"&&"}, StringSplitOptions.RemoveEmptyEntries)
+                    If Not EvalCondition(part.Trim()) Then Return False
+                Next
+                Return True
             End If
 
             ' Empty array equality: {{var}} == []
@@ -3823,33 +4111,97 @@ Namespace SharedLibrary
                 Return False
             End If
 
-            Dim ex = System.Text.RegularExpressions.Regex.Match(c, "^\s*exists\s+({{.*}})\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
-            If ex.Success Then
-                Dim v = ResolveValue(ex.Groups(1).Value)
-                Return v IsNot Nothing AndAlso Not System.String.IsNullOrEmpty(v.ToString())
+            ' Numeric comparisons: {{var}} >= {{other}}, {{var}} < 10, etc.
+            Dim numericCompare = Regex.Match(c, "^\s*({{[^}]+}})\s*(>=|<=|>|<)\s*({{[^}]+}}|\d+)\s*$")
+            If numericCompare.Success Then
+                Dim leftVal = ResolveValue(numericCompare.Groups(1).Value)
+                Dim op = numericCompare.Groups(2).Value
+                Dim rightRaw = numericCompare.Groups(3).Value
+                Dim rightVal As Object
+                If rightRaw.StartsWith("{{") Then
+                    rightVal = ResolveValue(rightRaw)
+                Else
+                    rightVal = rightRaw
+                End If
+
+                Dim leftNum As Double = 0
+                Dim rightNum As Double = 0
+                If Not Double.TryParse(leftVal?.ToString(), leftNum) Then Return False
+                If Not Double.TryParse(rightVal?.ToString(), rightNum) Then Return False
+
+                Select Case op
+                    Case ">=" : Return leftNum >= rightNum
+                    Case "<=" : Return leftNum <= rightNum
+                    Case ">" : Return leftNum > rightNum
+                    Case "<" : Return leftNum < rightNum
+                End Select
+                Return False
             End If
 
-            Dim eq = System.Text.RegularExpressions.Regex.Match(c, "^\s*({{.*}})\s*==\s*""?(.*?)""?\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            ' Boolean literal equality: {{var}} == true / {{var}} == false
+            Dim boolLiteral = Regex.Match(c, "^\s*({{[^}]+}})\s*==\s*(true|false)\s*$", RegexOptions.IgnoreCase)
+            If boolLiteral.Success Then
+                Dim leftVal = ResolveValue(boolLiteral.Groups(1).Value)
+                Dim rightBool = boolLiteral.Groups(2).Value.Equals("true", StringComparison.OrdinalIgnoreCase)
+
+                ' Handle actual boolean
+                If TypeOf leftVal Is Boolean Then
+                    Return DirectCast(leftVal, Boolean) = rightBool
+                End If
+
+                ' Handle string representation
+                If leftVal IsNot Nothing Then
+                    Dim leftStr = leftVal.ToString().Trim()
+                    Dim leftBool As Boolean
+                    If Boolean.TryParse(leftStr, leftBool) Then
+                        Return leftBool = rightBool
+                    End If
+                    ' Also handle "1"/"0"
+                    If leftStr = "1" Then Return rightBool
+                    If leftStr = "0" Then Return Not rightBool
+                End If
+
+                Return Not rightBool ' null/nothing is falsy
+            End If
+
+            Dim ex = Regex.Match(c, "^\s*exists\s+({{.*}})\s*$", RegexOptions.IgnoreCase)
+            If ex.Success Then
+                Dim v = ResolveValue(ex.Groups(1).Value)
+                Return v IsNot Nothing AndAlso Not String.IsNullOrEmpty(v.ToString())
+            End If
+
+            Dim eq = Regex.Match(c, "^\s*({{.*}})\s*==\s*""?(.*?)""?\s*$", RegexOptions.IgnoreCase)
             If eq.Success Then
                 Dim left = ResolveValue(eq.Groups(1).Value)
                 Dim right = eq.Groups(2).Value
-                Return System.String.Equals(If(left?.ToString(), System.String.Empty), right, System.StringComparison.OrdinalIgnoreCase)
+
+                ' Treat quoted boolean tokens as boolean literals for convenience.
+                If String.Equals(right, "true", StringComparison.OrdinalIgnoreCase) OrElse
+                    String.Equals(right, "false", StringComparison.OrdinalIgnoreCase) Then
+
+                    Dim rightBool = String.Equals(right, "true", StringComparison.OrdinalIgnoreCase)
+                    If TypeOf left Is Boolean Then
+                        Return DirectCast(left, Boolean) = rightBool
+                    End If
+                End If
+
+                Return String.Equals(If(left?.ToString(), String.Empty), right, StringComparison.OrdinalIgnoreCase)
             End If
 
-            Dim co = System.Text.RegularExpressions.Regex.Match(c, "^\s*({{.*}})\s*contains\s*""(.*?)""\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            Dim co = Regex.Match(c, "^\s*({{.*}})\s*contains\s*""(.*?)""\s*$", RegexOptions.IgnoreCase)
             If co.Success Then
                 Dim left = ResolveValue(co.Groups(1).Value)?.ToString()
                 Dim subStr = co.Groups(2).Value
                 If left Is Nothing Then Return False
-                Return left.IndexOf(subStr, System.StringComparison.OrdinalIgnoreCase) >= 0
+                Return left.IndexOf(subStr, StringComparison.OrdinalIgnoreCase) >= 0
             End If
 
-            Dim rx = System.Text.RegularExpressions.Regex.Match(c, "^\s*({{.*}})\s*~=\s*""(.*?)""\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase Or System.Text.RegularExpressions.RegexOptions.Singleline)
+            Dim rx = Regex.Match(c, "^\s*({{.*}})\s*~=\s*""(.*?)""\s*$", RegexOptions.IgnoreCase Or RegexOptions.Singleline)
             If rx.Success Then
                 Dim left = ResolveValue(rx.Groups(1).Value)?.ToString()
                 Dim pat = rx.Groups(2).Value
                 If left Is Nothing Then Return False
-                Return System.Text.RegularExpressions.Regex.IsMatch(left, pat, System.Text.RegularExpressions.RegexOptions.IgnoreCase Or System.Text.RegularExpressions.RegexOptions.Singleline)
+                Return Regex.IsMatch(left, pat, RegexOptions.IgnoreCase Or RegexOptions.Singleline)
             End If
 
             Return False
