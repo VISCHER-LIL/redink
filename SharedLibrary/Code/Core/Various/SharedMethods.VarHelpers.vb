@@ -1,5 +1,36 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
+' =============================================================================
+' File: SharedMethods.VarHelpers.vb
+' Purpose: Provides small shared helper functions for common tasks used across the
+'          library, including default INI path selection, file backup rename,
+'          registry read/write, whitespace/newline normalization, environment
+'          variable expansion for file paths, simple Base64/XOR encoding helpers,
+'          and domain/workgroup checks.
+'
+' Architecture:
+'  - INI path resolution: Selects a default INI path from `DefaultINIPaths` based
+'    on substring matching of the provided key, then expands environment variables.
+'  - File backup: Renames an existing file to the same path with a `.bak` suffix,
+'    overwriting an existing `.bak` by deleting it first.
+'  - Registry helpers: Writes and reads string values under a registry path,
+'    selecting the hive by the path prefix.
+'  - Text normalization: Removes CR/LF characters via `RemoveCR`.
+'  - Path normalization: Expands environment variables and some additional
+'    placeholder tokens, normalizes backslashes, and returns a full path.
+'  - Encoding helpers: Decodes Base64 with URL-safe normalization; provides a
+'    simple XOR encode/decode helper using a caller-provided term.
+'  - Domain checks: Uses WMI (`Win32_ComputerSystem`) to read `Domain` and checks
+'    it against the configured `alloweddomains` list.
+'
+' External Dependencies:
+'  - Microsoft.Win32.Registry (registry access)
+'  - System.Management (WMI query for domain/workgroup)
+'  - System.Windows.Forms.MessageBox (error display)
+'  - Internal helpers used here: `ShowCustomMessageBox`, `DefaultINIPaths`, `AN`,
+'    and `alloweddomains`.
+' =============================================================================
 
 Option Strict On
 Option Explicit On
@@ -15,6 +46,12 @@ Namespace SharedLibrary
     Partial Public Class SharedMethods
 
 
+        ''' <summary>
+        ''' Returns the default INI path for a given key by selecting the first matching entry from <c>DefaultINIPaths</c>
+        ''' and expanding environment variables in the resulting path.
+        ''' </summary>
+        ''' <param name="key">A key string used to select the default INI path (substring match).</param>
+        ''' <returns>The expanded default INI path.</returns>
         Public Shared Function GetDefaultINIPath(ByVal key As String) As String
 
             For Each entry In DefaultINIPaths
@@ -26,6 +63,12 @@ Namespace SharedLibrary
         End Function
 
 
+        ''' <summary>
+        ''' Renames the file at <paramref name="filePath"/> to <c>filePath + ".bak"</c>, deleting an existing
+        ''' <c>.bak</c> file first if present.
+        ''' </summary>
+        ''' <param name="filePath">The path of the file to rename.</param>
+        ''' <returns><c>True</c> on success; otherwise <c>False</c>.</returns>
         Public Shared Function RenameFileToBak(filePath As String) As Boolean
             Try
                 ' Rename the file to a .bak file
@@ -43,6 +86,11 @@ Namespace SharedLibrary
         End Function
 
 
+        ''' <summary>
+        ''' Writes a string value to the Windows registry at <paramref name="regPath"/> using the default (unnamed) value.
+        ''' </summary>
+        ''' <param name="regPath">Registry path including hive name (e.g., <c>HKEY_CURRENT_USER\...</c>).</param>
+        ''' <param name="regValue">Value to write; CR/LF is removed via <see cref="RemoveCR"/>.</param>
         Public Shared Sub WriteToRegistry(ByVal regPath As String, ByVal regValue As String)
             Try
                 ' Remove carriage returns from the value
@@ -60,6 +108,12 @@ Namespace SharedLibrary
                         registryHive = Registry.CurrentUser
                     Case "HKEY_LOCAL_MACHINE"
                         registryHive = Registry.LocalMachine
+                    Case "HKEY_CLASSES_ROOT"
+                        registryHive = Registry.ClassesRoot
+                    Case "HKEY_USERS"
+                        registryHive = Registry.Users
+                    Case "HKEY_CURRENT_CONFIG"
+                        registryHive = Registry.CurrentConfig
                     Case Else
                         Throw New ArgumentException("Unsupported registry hive: " & hiveName)
                 End Select
@@ -79,6 +133,14 @@ Namespace SharedLibrary
             End Try
         End Sub
 
+
+        ''' <summary>
+        ''' Reads a value from the Windows registry.
+        ''' </summary>
+        ''' <param name="registryPath">Registry path including hive name (e.g., <c>HKEY_CURRENT_USER\...</c>).</param>
+        ''' <param name="valueName">Name of the value to read.</param>
+        ''' <param name="suppressErrors">If <c>True</c>, suppresses error message boxes and returns an empty string on failure.</param>
+        ''' <returns>The registry value as a string with CR/LF removed, or an empty string on failure/not found.</returns>
         Public Shared Function GetFromRegistry(registryPath As String, valueName As String, Optional suppressErrors As Boolean = False) As String
             Try
                 ' Split the registry path into hive and subkey
@@ -125,6 +187,11 @@ Namespace SharedLibrary
             End Try
         End Function
 
+        ''' <summary>
+        ''' Removes CR/LF characters from a string and trims leading/trailing whitespace.
+        ''' </summary>
+        ''' <param name="inputtext">Input text.</param>
+        ''' <returns>Text with CR/LF removed, or an empty string if <paramref name="inputtext"/> is <c>Nothing</c>.</returns>
         Public Shared Function RemoveCR(ByVal inputtext As String) As String
             If inputtext IsNot Nothing Then
                 inputtext = inputtext.Trim()
@@ -138,11 +205,22 @@ Namespace SharedLibrary
             Return inputtext
         End Function
 
+        ''' <summary>
+        ''' Returns <c>True</c> if <paramref name="str"/> is <c>Nothing</c>, empty, or consists only of whitespace.
+        ''' </summary>
+        ''' <param name="str">Input string.</param>
+        ''' <returns><c>True</c> if the string is <c>Nothing</c>, empty, or whitespace; otherwise <c>False</c>.</returns>
         Public Shared Function IsEmptyOrBlank(ByVal str As String) As Boolean
             ' Check if the string is empty or consists only of whitespace
             Return String.IsNullOrWhiteSpace(str)
         End Function
 
+        ''' <summary>
+        ''' Expands environment variables and selected placeholder tokens in <paramref name="filePath"/>,
+        ''' normalizes the resulting path, and returns its full path.
+        ''' </summary>
+        ''' <param name="filePath">Path that may contain environment variables (e.g., <c>%APPDATA%</c>).</param>
+        ''' <returns>The expanded full path, or an empty string on failure.</returns>
         Public Shared Function ExpandEnvironmentVariables(ByVal filePath As String) As String
             ' Start with the input path
             Dim expandedPath As String = Environment.ExpandEnvironmentVariables(filePath)
@@ -176,6 +254,11 @@ Namespace SharedLibrary
 
 
 
+        ''' <summary>
+        ''' Decodes a Base64 string to bytes, normalizing whitespace and URL-safe Base64 variants.
+        ''' </summary>
+        ''' <param name="base64String">Input Base64 (may contain whitespace/newlines and may be URL-safe).</param>
+        ''' <returns>Decoded bytes, or <c>Nothing</c> on failure.</returns>
         Public Shared Function DecodeBase64(ByVal base64String As String) As Byte()
             Try
                 ' Normalize the input: remove whitespaces and line breaks
@@ -197,6 +280,12 @@ Namespace SharedLibrary
             End Try
         End Function
 
+        ''' <summary>
+        ''' Decodes an XOR-encoded and Base64-encoded string using <paramref name="pTerm"/> as the XOR key material.
+        ''' </summary>
+        ''' <param name="encodedText">The Base64 input text (whitespace/newlines are removed before decoding).</param>
+        ''' <param name="pTerm">XOR key term used for decoding.</param>
+        ''' <returns>Decoded text, or the literal string <c>"Error: Invalid Base64 input"</c> if Base64 decoding fails.</returns>
         Public Shared Function DecodeString(ByVal encodedText As String, ByVal pTerm As String) As String
             ' Remove literal "\n" if present
             encodedText = encodedText.Replace("\n", "")
@@ -226,6 +315,14 @@ Namespace SharedLibrary
             End Try
         End Function
 
+
+
+        ''' <summary>
+        ''' XOR-encodes <paramref name="inputText"/> using <paramref name="pTerm"/> and returns the result as Base64.
+        ''' </summary>
+        ''' <param name="inputText">Plain text to encode.</param>
+        ''' <param name="pTerm">XOR key term used for encoding.</param>
+        ''' <returns>Base64-encoded XOR output.</returns>
         Public Shared Function CodeString(ByVal inputText As String, ByVal pTerm As String) As String
             Dim inputBytes() As Byte = System.Text.Encoding.UTF8.GetBytes(inputText)
             Dim pTermBytes() As Byte = System.Text.Encoding.UTF8.GetBytes(pTerm)
@@ -243,6 +340,10 @@ Namespace SharedLibrary
             Return System.Convert.ToBase64String(encryptedBytes)
         End Function
 
+        ''' <summary>
+        ''' Retrieves the computer's domain/workgroup name via WMI (<c>Win32_ComputerSystem.Domain</c>).
+        ''' </summary>
+        ''' <returns>The domain/workgroup name, or an empty string on failure.</returns>
         Public Shared Function GetDomain() As String
             Try
                 ' Initialize a WMI query to get the Domain property from Win32_ComputerSystem
@@ -269,6 +370,11 @@ Namespace SharedLibrary
             End Try
         End Function
 
+        ''' <summary>
+        ''' Returns <c>True</c> when <c>alloweddomains</c> is configured and the current domain/workgroup name
+        ''' (from <see cref="GetDomain"/>) is not contained in that list.
+        ''' </summary>
+        ''' <returns><c>True</c> if the current domain/workgroup is not allowed; otherwise <c>False</c>.</returns>
         Public Shared Function WrongDomain() As Boolean
 
             Dim strDomain As String = GetDomain() ' Current domain of the computer

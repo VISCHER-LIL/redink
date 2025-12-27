@@ -1,5 +1,28 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
+' =============================================================================
+' File: MultiModelSelectorForm.vb
+' Purpose: Implements a modal Windows Forms dialog that lets the user select
+'          multiple alternative model configurations from a provided list, with
+'          optional filtering and a persisted check state across filter changes.
+'
+' Architecture:
+'  - UI Layout: Uses a single-column `TableLayoutPanel` (`outer`):
+'      Row 1: Title label
+'      Row 2: Filter textbox (`txtFilter`) with a Win32 cue-banner placeholder
+'      Row 3: Checked list of models (`CheckedListBox`) supporting multi-selection
+'      Row 4: Optional reset checkbox (`chkReset`) (currently hidden via `.Visible = False`)
+'      Row 5: OK/Cancel buttons in a right-aligned `FlowLayoutPanel` (`pnlButtons`)
+'  - Model Source: Receives a list of `ModelConfig` (`models`) from the caller and maps each
+'    display label to its `ModelConfig` via `displayToModel`.
+'  - Display Labels: Uses `ModelDescription` when available; otherwise uses `Model`. Ensures a
+'    unique display label via `MakeUniqueDisplay` to prevent collisions in `displayToModel`.
+'  - Filtering: `txtFilter` filters the visible items in the checked list without losing
+'    selections by persisting selected labels in `selectedLabels`.
+'  - Selection Output: `SelectedModels` returns all selected (`checked`) `ModelConfig` items
+'    based on the persisted label set (not only the currently visible items).
+' =============================================================================
 
 Option Strict On
 Option Explicit On
@@ -9,34 +32,77 @@ Imports System.Windows.Forms
 
 Namespace SharedLibrary
 
+    ''' <summary>
+    ''' Modal dialog that supports selecting multiple alternate models, with filtering and
+    ''' persisted selection state across filter changes.
+    ''' </summary>
     Partial Class MultiModelSelectorForm
         Inherits System.Windows.Forms.Form
 
+        ''' <summary>Title label displayed above the filter input.</summary>
         Private lblTitle As System.Windows.Forms.Label
+
+        ''' <summary>Filter textbox used to restrict visible model entries.</summary>
         Private txtFilter As System.Windows.Forms.TextBox
+
+        ''' <summary>Checked list box holding model display labels with multi-check selection.</summary>
         Private chkList As System.Windows.Forms.CheckedListBox
+
+        ''' <summary>Optional checkbox to control whether the selection should reset to the default model after use.</summary>
         Private chkReset As System.Windows.Forms.CheckBox
+
+        ''' <summary>OK button closing the dialog with <see cref="DialogResult.OK"/>.</summary>
         Private btnOK As Button
+
+        ''' <summary>Cancel button closing the dialog with <see cref="DialogResult.Cancel"/>.</summary>
         Private btnCancel As Button
+
+        ''' <summary>Panel containing the OK/Cancel buttons.</summary>
         Private pnlButtons As System.Windows.Forms.FlowLayoutPanel
+
+        ''' <summary>Root layout container.</summary>
         Private outer As System.Windows.Forms.TableLayoutPanel
 
+        ''' <summary>Maps unique display labels to their corresponding <see cref="ModelConfig"/> instance.</summary>
         Private displayToModel As New System.Collections.Generic.Dictionary(Of String, ModelConfig)(System.StringComparer.OrdinalIgnoreCase)
+
+        ''' <summary>Tracks already-used display labels to avoid collisions.</summary>
         Private seenDisplays As New System.Collections.Generic.HashSet(Of String)(System.StringComparer.OrdinalIgnoreCase)
+
+        ''' <summary>All model display labels (unfiltered master list).</summary>
         Private allDisplayItems As New System.Collections.Generic.List(Of String)
+
+        ''' <summary>Optional label or model key to preselect when the dialog opens.</summary>
         Private preselectKey As String = Nothing
+
+        ''' <summary>Original list of alternative models provided by the caller.</summary>
         Private ReadOnly altModels As System.Collections.Generic.List(Of ModelConfig)
 
-        ' Persist checked selections across filtering
+        ''' <summary>
+        ''' Persists checked selections across filtering by storing selected display labels.
+        ''' </summary>
         Private ReadOnly selectedLabels As New System.Collections.Generic.HashSet(Of String)(System.StringComparer.OrdinalIgnoreCase)
+
+        ''' <summary>
+        ''' Guards against re-entrancy and event-driven updates while programmatically rebuilding list items.
+        ''' </summary>
         Private isUpdating As Boolean = False
 
-        ' EM_SETCUEBANNER to show a cue banner ("placeholder") on Win32 edit controls
+        ''' <summary>
+        ''' Win32 message ID for setting a cue banner (placeholder) on an Edit control.
+        ''' </summary>
         Private Const EM_SETCUEBANNER As Integer = &H1501
+
+        ''' <summary>
+        ''' Sends a Win32 message to a window handle (used for setting the cue banner on <see cref="txtFilter"/>).
+        ''' </summary>
         <System.Runtime.InteropServices.DllImport("user32.dll", CharSet:=System.Runtime.InteropServices.CharSet.Unicode)>
         Private Shared Function SendMessage(hWnd As IntPtr, msg As Integer, wParam As IntPtr, lParam As String) As IntPtr
         End Function
 
+        ''' <summary>
+        ''' Gets the selected model configurations based on the persisted set of checked display labels.
+        ''' </summary>
         Public ReadOnly Property SelectedModels As System.Collections.Generic.List(Of ModelConfig)
             Get
                 ' Return models based on the persisted selectedLabels (not only the currently visible items)
@@ -50,12 +116,22 @@ Namespace SharedLibrary
             End Get
         End Property
 
+        ''' <summary>
+        ''' Gets whether the default model should be restored after use (based on the reset checkbox state).
+        ''' </summary>
         Public ReadOnly Property UseDefault As Boolean
             Get
                 Return chkReset.Checked
             End Get
         End Property
 
+        ''' <summary>
+        ''' Initializes a new instance of the multi-model selector dialog.
+        ''' </summary>
+        ''' <param name="models">Alternative model configurations to display.</param>
+        ''' <param name="preselect">Optional preselection key (label, <see cref="ModelConfig.ModelDescription"/>, or <see cref="ModelConfig.Model"/>).</param>
+        ''' <param name="title">Optional window title.</param>
+        ''' <param name="resetChecked">Initial value for the reset checkbox.</param>
         Public Sub New(models As System.Collections.Generic.List(Of ModelConfig),
                    preselect As System.String,
                    Optional title As System.String = Nothing,
@@ -67,6 +143,9 @@ Namespace SharedLibrary
             ApplyPreselection()
         End Sub
 
+        ''' <summary>
+        ''' Creates and configures all UI controls and event handlers for the dialog.
+        ''' </summary>
         Private Sub InitializeComponent(Optional title As System.String = Nothing, Optional resetChecked As System.Boolean = True)
             Me.Text = If(String.IsNullOrWhiteSpace(title), SharedMethods.AN & " - Select Alternate Models", title)
             Me.Icon = Icon.FromHandle((New System.Drawing.Bitmap(My.Resources.Red_Ink_Logo)).GetHicon())
@@ -160,6 +239,11 @@ Namespace SharedLibrary
             Me.CancelButton = Me.btnCancel
         End Sub
 
+        ''' <summary>
+        ''' Returns a display label that is unique within this dialog instance.
+        ''' </summary>
+        ''' <param name="baseText">Proposed display text.</param>
+        ''' <returns>A unique display label (with numeric suffix if needed).</returns>
         Private Function MakeUniqueDisplay(baseText As System.String) As System.String
             Dim s As System.String = If(String.IsNullOrWhiteSpace(baseText), "(Unnamed model)", baseText.Trim())
             Dim unique As System.String = s
@@ -172,6 +256,9 @@ Namespace SharedLibrary
             Return unique
         End Function
 
+        ''' <summary>
+        ''' Populates the master list of display labels and builds the initial checked list contents.
+        ''' </summary>
         Private Sub PopulateList()
             displayToModel.Clear()
             seenDisplays.Clear()
@@ -196,6 +283,10 @@ Namespace SharedLibrary
             End Try
         End Sub
 
+        ''' <summary>
+        ''' Rebuilds the visible checked list based on the current filter text.
+        ''' Check-state is restored from <see cref="selectedLabels"/>.
+        ''' </summary>
         Private Sub OnFilterChanged(sender As System.Object, e As System.EventArgs)
             Dim filter As System.String = If(Me.txtFilter.Text, String.Empty).Trim().ToLowerInvariant()
 
@@ -216,6 +307,9 @@ Namespace SharedLibrary
             End Try
         End Sub
 
+        ''' <summary>
+        ''' Updates <see cref="selectedLabels"/> when a list item check state changes.
+        ''' </summary>
         Private Sub OnItemCheck(sender As Object, e As System.Windows.Forms.ItemCheckEventArgs)
             If isUpdating Then Return
             Dim label As String = Me.chkList.Items(e.Index).ToString()
@@ -226,6 +320,9 @@ Namespace SharedLibrary
             End If
         End Sub
 
+        ''' <summary>
+        ''' Toggles the checked state of the currently selected list item on double-click.
+        ''' </summary>
         Private Sub OnListDoubleClick(sender As System.Object, e As System.EventArgs)
             Dim idx As Integer = Me.chkList.SelectedIndex
             If idx >= 0 Then
@@ -234,6 +331,10 @@ Namespace SharedLibrary
             End If
         End Sub
 
+        ''' <summary>
+        ''' Applies an initial preselection by matching the provided preselect key against
+        ''' the display label or underlying model values.
+        ''' </summary>
         Private Sub ApplyPreselection()
             If String.IsNullOrWhiteSpace(preselectKey) Then Return
 

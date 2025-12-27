@@ -1,6 +1,37 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 
+' =============================================================================
+' File: SharedMethods.LoadConfig.vb
+' Purpose: Loads and validates runtime configuration from an `.ini` file and `My.Settings`,
+'          then initializes the shared execution context used by the add-in.
+'
+' Architecture:
+'  - Configuration Source Resolution:
+'     - Determines the `.ini` location based on registry settings and default locations
+'       returned by `GetDefaultINIPath(...)`.
+'     - On first start, can invoke `InitialConfig` to guide creation of an `.ini` file.
+'  - INI Parsing:
+'     - Reads the `.ini` file as text, ignores empty lines and lines starting with `;`,
+'       parses `key=value` pairs into a case-insensitive dictionary.
+'  - Context Population:
+'     - Copies values from the dictionary into `context.INI_*` properties, applying defaults
+'       for selected prompt templates and optional settings.
+'     - Loads some per-user overrides from `My.Settings`.
+'  - Optional Feature Blocks:
+'     - Internet search (`INI_ISearch`), RAG/library (`INI_Lib`), Second API (`INI_SecondAPI`),
+'       OAuth2 (`INI_OAuth2` and `INI_OAuth2_2`).
+'  - License Gate:
+'     - Calls `LicenseOK(context, configDict)` and aborts initialization when it returns `False`.
+'  - Key Handling:
+'     - If API key encryption is enabled, uses `Codebasis` and `DecodeString` via `RealAPIKey(...)`
+'       to derive usable secrets for runtime.
+'  - Missing Mandatory Values:
+'     - `INIValuesMissing` checks required settings and can use `MissingSettingsWindow` to allow
+'       interactive completion and saving via `UpdateAppConfig(context)`.
+' =============================================================================
+
+
 Option Strict On
 Option Explicit On
 
@@ -10,6 +41,13 @@ Imports SharedLibrary.SharedLibrary.SharedContext
 Namespace SharedLibrary
     Partial Public Class SharedMethods
 
+        ''' <summary>
+        ''' Initializes configuration and populates <paramref name="context"/> with values from the `.ini` file
+        ''' and selected values from <c>My.Settings</c>.
+        ''' </summary>
+        ''' <param name="context">Shared context to populate and mark as loaded.</param>
+        ''' <param name="FirstTime">If <c>True</c>, allows showing the initial setup wizard when no `.ini` is found.</param>
+        ''' <param name="Reload">If <c>True</c>, forces reload even when <c>context.INIloaded</c> is already set.</param>
         Public Shared Sub InitializeConfig(ByRef context As ISharedContext, FirstTime As Boolean, Reload As Boolean)
 
             If context.INIloaded AndAlso Not Reload Then Return
@@ -25,7 +63,7 @@ Namespace SharedLibrary
 
             Try
 
-                ' Determine the configuration file path
+                ' Determine the configuration file path.
 
                 RegFilePath = GetFromRegistry(RegPath_Base, RegPath_IniPath, True)
                 DefaultPath = GetDefaultINIPath(context.RDV)
@@ -45,7 +83,7 @@ Namespace SharedLibrary
 
                 IniFilePath = RemoveCR(IniFilePath)
 
-                ' Check if the configuration file exists
+                ' Check if the configuration file exists.
 
                 If Not System.IO.File.Exists(IniFilePath) Then
                     If FirstTime Then
@@ -70,12 +108,12 @@ Namespace SharedLibrary
                 Dim iniContent As String = ""
                 Dim configDict As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
 
-                ' Read and parse the .ini file
+                ' Read and parse the .ini file.
                 iniContent = System.IO.File.ReadAllText(IniFilePath)
                 Dim iniLines As String() = iniContent.Split({vbCrLf}, StringSplitOptions.RemoveEmptyEntries)
                 For Each line As String In iniLines
                     Dim trimmedLine = line.Trim()
-                    If Not String.IsNullOrEmpty(trimmedLine) AndAlso Not trimmedLine.StartsWith(";") Then ' Skip comments and empty lines
+                    If Not String.IsNullOrEmpty(trimmedLine) AndAlso Not trimmedLine.StartsWith(";") Then ' Skip comments and empty lines.
                         Dim keyValue = trimmedLine.Split(New Char() {"="c}, 2)
                         If keyValue.Length = 2 Then
                             configDict(keyValue(0).Trim()) = keyValue(1).Trim()
@@ -83,7 +121,7 @@ Namespace SharedLibrary
                     End If
                 Next
 
-                ' Assign and validate configuration values
+                ' Assign and validate configuration values.
                 context.INI_APIKey = If(configDict.ContainsKey("APIKey"), configDict("APIKey"), "")
                 context.INI_Endpoint = If(configDict.ContainsKey("Endpoint"), configDict("Endpoint"), "")
                 context.INI_HeaderA = If(configDict.ContainsKey("HeaderA"), configDict("HeaderA"), "")
@@ -167,10 +205,10 @@ Namespace SharedLibrary
                 context.SP_FindPrompts = If(configDict.ContainsKey("SP_FindPrompts"), configDict("SP_FindPrompts"), Default_SP_FindPrompts)
                 context.SP_Ignore = If(configDict.ContainsKey("SP_Ignore"), configDict("SP_Ignore"), Default_SP_Ignore)
 
-                ' Required For Excel Helper
-                context.INI_OpenSSLPath = If(configDict.ContainsKey("OpenSSLPath"), configDict("OpenSSLPath"), "%APPDATA%\Microsoft\OpenSSL_Runtime\openssl.exe")
+                ' Legacy; was required For Excel Helper.
+                ' context.INI_OpenSSLPath = If(configDict.ContainsKey("OpenSSLPath"), configDict("OpenSSLPath"), "%APPDATA%\Microsoft\OpenSSL_Runtime\openssl.exe")
 
-                ' Optional values
+                ' Optional values.
                 context.INI_PreCorrection = If(configDict.ContainsKey("PreCorrection"), configDict("PreCorrection"), "")
                 context.INI_PostCorrection = If(configDict.ContainsKey("PostCorrection"), configDict("PostCorrection"), "")
                 context.INI_APIKeyPrefix = If(configDict.ContainsKey("APIKeyPrefix"), configDict("APIKeyPrefix"), "")
@@ -185,12 +223,13 @@ Namespace SharedLibrary
                 context.INI_MarkupRegexCap = If(configDict.ContainsKey("MarkupRegexCap"), CInt(configDict("MarkupRegexCap")), 30000)
                 context.INI_ChatCap = If(configDict.ContainsKey("ChatCap"), CInt(configDict("ChatCap")), 50000)
 
+                ' Load per-user overrides from My.Settings.
                 context.INI_DefaultPrefix = My.Settings.DefaultPrefix
                 context.INI_ReplaceText2Override = My.Settings.ReplaceText2Override
                 context.INI_MarkupMethodWordOverride = My.Settings.MarkupMethodWordOverride
                 context.INI_MarkupMethodOutlookOverride = My.Settings.MarkupMethodOutlookOverride
 
-                ' Boolean parameters
+                ' Boolean parameters.
                 context.INI_DoubleS = ParseBoolean(configDict, "DoubleS")
                 context.INI_Clean = ParseBoolean(configDict, "Clean")
                 context.INI_Ignore = ParseBoolean(configDict, "Ignore")
@@ -210,9 +249,10 @@ Namespace SharedLibrary
                 context.INI_ShortcutsWordExcel = If(configDict.ContainsKey("ShortcutsWordExcel"), configDict("ShortcutsWordExcel"), "")
                 context.INI_ContextMenu = ParseBoolean(configDict, "ContextMenu", True)
 
+                ' Set runtime ignore prompt based on INI_Ignore.
                 If context.INI_Ignore Then context.Ignore = context.SP_Ignore Else context.Ignore = ""
 
-                ' Other parameters
+                ' Other parameters.
 
                 context.INI_UpdateCheckInterval = If(configDict.ContainsKey("UpdateCheckInterval"), CInt(configDict("UpdateCheckInterval")), DefaultUpdateIntervalDays)
                 context.INI_UpdatePath = If(configDict.ContainsKey("UpdatePath"), configDict("UpdatePath"), "")
@@ -253,7 +293,7 @@ Namespace SharedLibrary
                 context.INI_DocStylePathLocal = If(configDict.ContainsKey("DocStylePathLocal"), configDict("DocStylePathLocal"), "")
                 context.INI_PromptLibPath_Transcript = If(configDict.ContainsKey("PromptLib_Transcript"), configDict("PromptLib_Transcript"), "")
 
-                ' Process Internet search if enabled
+                ' Process Internet search if enabled.
                 context.INI_ISearch = ParseBoolean(configDict, "ISearch", True)
                 If context.INI_ISearch Then
                     context.INI_ISearch_Approve = ParseBoolean(configDict, "ISearch_Approve", False)
@@ -275,7 +315,7 @@ Namespace SharedLibrary
                     If context.INI_ISearch_Results > ISearch_MaxResults Then context.INI_ISearch_Results = ISearch_MaxResults
                 End If
 
-                ' Process RAG if enabled
+                ' Process RAG if enabled.
                 context.INI_Lib = ParseBoolean(configDict, "Lib")
                 If context.INI_Lib Then
                     context.INI_Lib_File = If(configDict.ContainsKey("Lib_File"), configDict("Lib_File"), "")
@@ -286,8 +326,8 @@ Namespace SharedLibrary
 
                 End If
 
-                ' Process SecondAPI configuration if enabled
-                context.INI_Endpoint_2 = "" ' necessary for googleapi check (should not be null)
+                ' Process SecondAPI configuration if enabled.
+                context.INI_Endpoint_2 = "" ' Necessary for googleapi check (should not be null).
                 context.INI_SecondAPI = ParseBoolean(configDict, "SecondAPI")
                 If context.INI_SecondAPI Then
                     context.INI_APIKey_2 = If(configDict.ContainsKey("APIKey_2"), configDict("APIKey_2"), "")
@@ -307,7 +347,7 @@ Namespace SharedLibrary
                     context.INI_APIKeyPrefix_2 = If(configDict.ContainsKey("APIKeyPrefix_2"), configDict("APIKeyPrefix_2"), "")
                 End If
 
-                ' Process OAuth2 configuration if enabled
+                ' Process OAuth2 configuration if enabled.
                 context.INI_OAuth2 = ParseBoolean(configDict, "OAuth2")
                 If context.INI_OAuth2 Then
                     context.INI_OAuth2ClientMail = If(configDict.ContainsKey("OAuth2ClientMail"), configDict("OAuth2ClientMail"), "")
@@ -327,6 +367,7 @@ Namespace SharedLibrary
                     End If
                 End If
 
+                ' Resolve Codebasis (used to decode encrypted API keys) if required.
                 If context.INI_APIEncrypted OrElse context.INI_APIEncrypted_2 Then
                     If IsEmptyOrBlank(Int_CodeBasis) Then
                         context.Codebasis = GetFromRegistry(RegPath_Base, RegPath_CodeBasis, False)
@@ -335,19 +376,22 @@ Namespace SharedLibrary
                     End If
                 End If
 
+                ' Keep backups of configured API keys (as loaded from INI) before decoding.
                 context.INI_APIKeyBack = context.INI_APIKey
                 context.INI_APIKeyBack_2 = context.INI_APIKey_2
 
+                ' Enforce licensing before continuing setup.
                 If Not LicenseOK(context, configDict) Then
                     ShowCustomMessageBox($"{AN} disabled due to invalid or expired license.")
                     Return
                 End If
 
+                ' Abort if required INI values are missing and not supplied by the user.
                 If INIValuesMissing(context) Then
                     Return
                 End If
 
-                ' Additional configurations for OAuth2
+                ' Additional configurations for OAuth2.
                 context.TokenExpiry = Microsoft.VisualBasic.DateAndTime.DateAdd(Microsoft.VisualBasic.DateInterval.Year, -1, DateTime.Now)
                 context.DecodedAPI = ""
                 context.INI_APIKeyBack = context.INI_APIKey
@@ -356,10 +400,10 @@ Namespace SharedLibrary
                 context.DecodedAPI_2 = ""
                 context.INI_APIKeyBack_2 = context.INI_APIKey_2
 
-                ' Set PromptLib if Path is configured
+                ' Set PromptLib if a path is configured.
                 If context.INI_PromptLibPath = "" And context.INI_PromptLibPathLocal = "" Then context.INI_PromptLib = False Else context.INI_PromptLib = True
 
-                ' Check and decrypt API keys
+                ' Check and decrypt API keys for the primary model.
                 If context.INI_OAuth2 Then
                     context.INI_APIKey = Trim(Replace(RealAPIKey(context.INI_APIKey, False, True, context), "\n", ""))
                     If String.IsNullOrWhiteSpace(context.INI_APIKey) Then
@@ -374,7 +418,7 @@ Namespace SharedLibrary
                     End If
                 End If
 
-                ' Decrypt second API keys
+                ' Check and decrypt API keys for the secondary model (if configured).
                 If context.INI_SecondAPI Then
                     If context.INI_OAuth2_2 Then
                         context.INI_APIKey_2 = Trim(Replace(RealAPIKey(context.INI_APIKey_2, True, True, context), "\n", ""))
@@ -399,7 +443,14 @@ Namespace SharedLibrary
             End Try
         End Sub
 
-        ' Helper function to parse boolean values
+        ''' <summary>
+        ''' Parses a boolean INI value from <paramref name="configDict"/>.
+        ''' Accepts "yes"/"true" and the German equivalents "ja"/"wahr" (case-insensitive).
+        ''' </summary>
+        ''' <param name="configDict">Configuration dictionary containing INI values.</param>
+        ''' <param name="key">Key to read.</param>
+        ''' <param name="defaultvalue">Value to return when the key does not exist.</param>
+        ''' <returns>The parsed boolean value, or <paramref name="defaultvalue"/> when missing.</returns>
         Public Shared Function ParseBoolean(configDict As Dictionary(Of String, String), key As String, Optional defaultvalue As Boolean = False) As Boolean
             If configDict.ContainsKey(key) Then
                 Dim value = configDict(key).Trim().ToLower()
@@ -409,6 +460,13 @@ Namespace SharedLibrary
         End Function
 
 
+        ''' <summary>
+        ''' Checks whether mandatory INI values are missing and optionally prompts the user to provide them.
+        ''' </summary>
+        ''' <param name="context">Shared context containing current configuration values.</param>
+        ''' <returns>
+        ''' <c>True</c> if required values are missing and were not provided; otherwise <c>False</c>.
+        ''' </returns>
         Public Shared Function INIValuesMissing(ByVal context As ISharedContext) As Boolean
             Dim missingSettings As New Dictionary(Of String, String)
             Dim usercompleted As Boolean = False
@@ -417,7 +475,7 @@ Namespace SharedLibrary
 
                 missingSettings.Clear()
 
-                ' Check for missing values
+                ' Check for missing values.
                 If String.IsNullOrEmpty(context.INI_APIKey) Then missingSettings.Add("APIKey", "APIKey (Model 1)")
                 If String.IsNullOrEmpty(context.INI_Temperature) Then missingSettings.Add("Temperature", "Temperature (Model 1)")
                 If context.INI_Timeout = 0 Then missingSettings.Add("Timeout", "Timeout (Model 1)")
@@ -470,7 +528,7 @@ Namespace SharedLibrary
                     If String.IsNullOrEmpty(context.Codebasis) Then missingSettings.Add("Codebasis", "CodeBasis (for decryption)")
                 End If
 
-                ' If there are missing settings, prompt user to complete them
+                ' If there are missing settings, prompt user to complete them.
                 If missingSettings.Count > 0 Then
                     usercompleted = MissingSettingsWindow(missingSettings, context)
                     If Not usercompleted Then
@@ -487,9 +545,15 @@ Namespace SharedLibrary
         End Function
 
 
+        ''' <summary>
+        ''' Shows a modal dialog to collect missing configuration values and persists them via <c>UpdateAppConfig</c>.
+        ''' </summary>
+        ''' <param name="Settings">Dictionary mapping INI keys to user-facing label texts.</param>
+        ''' <param name="context">Shared context to read/write values from.</param>
+        ''' <returns><c>True</c> if the user saved values; otherwise <c>False</c>.</returns>
         Public Shared Function MissingSettingsWindow(Settings As Dictionary(Of String, String), context As ISharedContext) As Boolean
 
-            ' Create the form
+            ' Create the form.
             Dim settingsForm As New System.Windows.Forms.Form()
             settingsForm.Text = $"{AN} Settings"
             settingsForm.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog
@@ -499,29 +563,29 @@ Namespace SharedLibrary
             settingsForm.ShowInTaskbar = False
             settingsForm.TopMost = True
 
-            ' Set the icon
+            ' Set the icon.
             Dim bmp As New System.Drawing.Bitmap(My.Resources.Red_Ink_Logo)
             settingsForm.Icon = System.Drawing.Icon.FromHandle(bmp.GetHicon())
 
-            ' Set a predefined font for consistent layout
+            ' Set a predefined font for consistent layout.
             Dim standardFont As New System.Drawing.Font("Segoe UI", 9.0F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point)
             settingsForm.Font = standardFont
 
-            ' Add description label
+            ' Add description label.
             Dim descriptionLabel As New System.Windows.Forms.Label()
             descriptionLabel.Text = "Complete missing mandatory values:"
             descriptionLabel.AutoSize = True
             descriptionLabel.Location = New System.Drawing.Point(10, 20)
             settingsForm.Controls.Add(descriptionLabel)
 
-            ' Define controls for labels and inputs
+            ' Define controls for labels and inputs.
             Dim labelControls As New Dictionary(Of String, System.Windows.Forms.Label)
             Dim settingControls As New Dictionary(Of String, System.Windows.Forms.Control)
 
-            ' Dynamically calculate label width
+            ' Dynamically calculate label width.
             Dim maxLabelWidth As Integer = 0
 
-            ' Calculate maximum label width
+            ' Calculate maximum label width.
             For Each setting In Settings
                 Dim textSize As System.Drawing.Size = TextRenderer.MeasureText(setting.Value & ":", standardFont)
                 maxLabelWidth = Math.Max(maxLabelWidth, textSize.Width)
@@ -532,7 +596,7 @@ Namespace SharedLibrary
             Dim lineSpacing As Integer = CInt(TextRenderer.MeasureText("Sample", standardFont).Height * 1.5)
             Dim yPos As Integer = descriptionLabel.Bottom + 20
 
-            ' Add labels and input controls
+            ' Add labels and input controls.
             For Each setting In Settings
                 Dim label As New System.Windows.Forms.Label()
                 If context.INI_SecondAPI Then
@@ -564,7 +628,7 @@ Namespace SharedLibrary
                 yPos += lineSpacing
             Next
 
-            ' Add buttons
+            ' Add buttons.
             Dim buttonYPos As Integer = yPos + 20
             Dim buttonSpacing As Integer = 10
 
@@ -588,26 +652,26 @@ Namespace SharedLibrary
             Dim cancelButtonToolTip As New System.Windows.Forms.ToolTip()
             cancelButtonToolTip.SetToolTip(cancelButton, $"{AN} will not operate properly until you have provided the necessary configuration parameters. You can retry later.")
 
-            ' Flag to track whether the user completed the form
+            ' Flag to track whether the user completed the form.
             Dim userCompleted As Boolean = False
 
-            ' Attach handlers to buttons
+            ' Attach handlers to buttons.
             AddHandler okButton.Click, Sub(sender, e)
                                            For Each settingKey In settingControls.Keys
                                                Dim control = settingControls(settingKey)
                                                If TypeOf control Is System.Windows.Forms.TextBox Then
-                                                   ' Handle TextBox settings
+                                                   ' Handle TextBox settings.
                                                    Dim textValue As String = DirectCast(control, System.Windows.Forms.TextBox).Text
                                                    SetSettingValue(settingKey, textValue, context)
                                                ElseIf TypeOf control Is System.Windows.Forms.CheckBox Then
-                                                   ' Handle CheckBox settings
+                                                   ' Handle CheckBox settings.
                                                    Dim boolValue As Boolean = DirectCast(control, System.Windows.Forms.CheckBox).Checked
                                                    SetSettingValue(settingKey, boolValue.ToString(), context)
                                                Else
                                                    MessageBox.Show($"Error in MissingSettingsWindow - unsupported control type for setting '{settingKey}' in MissingSettingsWindow.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
                                                End If
                                            Next
-                                           UpdateAppConfig(context) ' Save the configuration
+                                           UpdateAppConfig(context) ' Save the configuration.
                                            userCompleted = True
                                            settingsForm.Close()
                                        End Sub
@@ -616,17 +680,26 @@ Namespace SharedLibrary
                                                settingsForm.Close()
                                            End Sub
 
-            ' Adjust form size dynamically
+            ' Adjust form size dynamically.
             settingsForm.ClientSize = New System.Drawing.Size(controlXOffset + defaultControlWidth + 40, cancelButton.Bottom + 20)
 
-            ' Show the form and wait for user input
+            ' Show the form and wait for user input.
             settingsForm.ShowDialog()
 
-            ' Return whether the user completed the form
+            ' Return whether the user completed the form.
             Return userCompleted
         End Function
 
 
+        ''' <summary>
+        ''' Returns the runtime API key value derived from INI input by optionally removing a configured prefix
+        ''' and decoding encrypted values using <c>DecodeString</c>.
+        ''' </summary>
+        ''' <param name="APIInput">Input value (as stored in the INI file or UI).</param>
+        ''' <param name="SecondAPI"><c>True</c> to use second-API settings; otherwise primary settings.</param>
+        ''' <param name="IgnorePrefix"><c>True</c> to skip prefix removal/addition; otherwise applies configured prefix.</param>
+        ''' <param name="context">Shared context providing encryption flags, prefixes, and codebasis.</param>
+        ''' <returns>The final API key value (with prefix applied) after optional decoding.</returns>
         Public Shared Function RealAPIKey(ByVal APIInput As String, ByVal SecondAPI As Boolean, ByVal IgnorePrefix As Boolean, ByVal context As ISharedContext) As String
 
             APIInput = Trim(RemoveCR(APIInput))
@@ -634,13 +707,13 @@ Namespace SharedLibrary
             Dim Prefix As String = ""
             Dim Result As String = APIInput
 
-            ' Determine the prefix based on whether it's the second API and IgnorePrefix is false
+            ' Determine the prefix based on whether it's the second API and IgnorePrefix is false.
             If Not SecondAPI Then
                 If Not IgnorePrefix Then
                     Prefix = context.INI_APIKeyPrefix
 
                     If Not String.IsNullOrWhiteSpace(Prefix) Then
-                        ' Remove the prefix if present
+                        ' Remove the prefix if present.
                         If APIInput.StartsWith(Prefix) Then
                             APIInput = APIInput.Substring(Prefix.Length)
                         End If
@@ -649,7 +722,7 @@ Namespace SharedLibrary
 
                 Result = APIInput
 
-                ' Decode the API key if encryption is enabled for the main API
+                ' Decode the API key if encryption is enabled for the main API.
                 If context.INI_APIEncrypted Then
                     Result = DecodeString(APIInput, context.Codebasis)
                 End If
@@ -658,7 +731,7 @@ Namespace SharedLibrary
                     Prefix = context.INI_APIKeyPrefix_2
 
                     If Not String.IsNullOrWhiteSpace(Prefix) Then
-                        ' Remove the prefix if present
+                        ' Remove the prefix if present.
                         If APIInput.StartsWith(Prefix) Then
                             APIInput = APIInput.Substring(Prefix.Length)
                         End If
@@ -667,22 +740,30 @@ Namespace SharedLibrary
 
                 Result = APIInput
 
-                ' Decode the API key if encryption is enabled for the second API
+                ' Decode the API key if encryption is enabled for the second API.
                 If context.INI_APIEncrypted_2 Then
                     Result = DecodeString(APIInput, context.Codebasis)
                 End If
             End If
 
-            ' Remove any carriage return characters
+            ' Remove any carriage return characters.
             Result = RemoveCR(Result)
 
-            ' Add the prefix back and return the final result
-
+            ' Add the prefix back and return the final result.
             Result = Prefix & Result
 
             Return Result
         End Function
 
+        ''' <summary>
+        ''' Equivalent of <see cref="RealAPIKey(String, Boolean, Boolean, ISharedContext)"/> for a <see cref="ModelConfig"/>.
+        ''' Optionally removes/applies the model prefix and decodes an encrypted key using <paramref name="context2"/>.Codebasis.
+        ''' </summary>
+        ''' <param name="APIInput">Input value (as stored in configuration).</param>
+        ''' <param name="IgnorePrefix"><c>True</c> to skip prefix removal/addition; otherwise applies configured prefix.</param>
+        ''' <param name="context">Model configuration providing encryption flags and prefix.</param>
+        ''' <param name="context2">Shared context providing <c>Codebasis</c> for decoding.</param>
+        ''' <returns>The final API key value (with prefix applied) after optional decoding.</returns>
         Public Shared Function RealAPIKeyMC(ByVal APIInput As String, ByVal IgnorePrefix As Boolean, ByVal context As ModelConfig, context2 As ISharedContext) As String
 
             APIInput = Trim(RemoveCR(APIInput))
@@ -690,13 +771,13 @@ Namespace SharedLibrary
             Dim Prefix As String = ""
             Dim Result As String = APIInput
 
-            ' Determine the prefix based on whether it's the second API and IgnorePrefix is false
+            ' Determine the prefix based on whether it's the second API and IgnorePrefix is false.
 
             If Not IgnorePrefix Then
                 Prefix = context.APIKeyPrefix
 
                 If Not String.IsNullOrWhiteSpace(Prefix) Then
-                    ' Remove the prefix if present
+                    ' Remove the prefix if present.
                     If APIInput.StartsWith(Prefix) Then
                         APIInput = APIInput.Substring(Prefix.Length)
                     End If
@@ -705,16 +786,15 @@ Namespace SharedLibrary
 
             Result = APIInput
 
-            ' Decode the API key if encryption is enabled for the main API
+            ' Decode the API key if encryption is enabled for the main API.
             If context.APIEncrypted Then
                 Result = DecodeString(APIInput, context2.Codebasis)
             End If
 
-            ' Remove any carriage return characters
+            ' Remove any carriage return characters.
             Result = RemoveCR(Result)
 
-            ' Add the prefix back and return the final result
-
+            ' Add the prefix back and return the final result.
             Result = Prefix & Result
 
             Return Result

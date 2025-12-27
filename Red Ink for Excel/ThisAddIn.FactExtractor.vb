@@ -432,8 +432,7 @@ Partial Public Class ThisAddIn
 
             ' AI schema generation (only if still no schema)
             If (fixedSchema Is Nothing OrElse fixedSchema.Count = 0) AndAlso (manualOverrides Or preparedMissingInstruction) AndAlso String.IsNullOrWhiteSpace(manualSchemaText) Then
-                Dim aiSchema = Await GenerateSchemaFromAiAsync(effectiveInstruction,
-                                                               AddressOf InterpolateAtRuntime,
+                Dim aiSchema = Await GenerateSchemaFromAiAsync(AddressOf InterpolateAtRuntime,
                                                                AddressOf LLM,
                                                                useSecondApi, _context)
                 If aiSchema Is Nothing OrElse aiSchema.Count = 0 Then

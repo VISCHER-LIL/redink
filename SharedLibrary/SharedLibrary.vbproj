@@ -17,17 +17,15 @@
     </NuGetPackageImportStamp>
     <TargetFrameworkProfile />
   </PropertyGroup>
-	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
-		<DefineConstants>$(DefineConstants),DEVELOP</DefineConstants>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
-		<DefineConstants>$(DefineConstants),PREVIEW</DefineConstants>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(RedInkEnvironment)' != 'Develop' and '$(RedInkEnvironment)' != 'Preview'">
-		<DefineConstants>$(DefineConstants),GA</DefineConstants>
-	</PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
+    <DefineConstants>$(DefineConstants),DEVELOP</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
+    <DefineConstants>$(DefineConstants),PREVIEW</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' != 'Develop' and '$(RedInkEnvironment)' != 'Preview'">
+    <DefineConstants>$(DefineConstants),GA</DefineConstants>
+  </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
@@ -433,7 +431,8 @@
     </COMReference>
   </ItemGroup>
   <ItemGroup>
-    <Content Include="Code\Overview.txt" />
+    <Content Include="Code\Source Code Overview.txt" />
+    <Content Include="Code\Build Environment.txt" />
     <Content Include="license.txt" />
     <None Include="Resources\Red_Ink_Logo_Medium.png" />
     <None Include="Resources\Red_Ink_Logo_Large.png" />

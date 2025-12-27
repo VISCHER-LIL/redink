@@ -1,6 +1,29 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 
+' =============================================================================
+' File: SharedMethods.Constants.vb
+' Purpose: Defines shared constants, shared state, and simple definitions used by
+'          `SharedMethods` across the SharedLibrary.
+'
+' Architecture / How it works:
+'  - Product/application identity constants (`AN`, `AN2`, `AN3`, etc.) and URLs used in
+'    multiple components.
+'  - Registry path constants used for configuration storage under `HKEY_CURRENT_USER`.
+'  - Interpolation/trigger tokens used in prompt strings and processing flows
+'    (e.g., `NoThinkTrigger`, `RKModeTrigger*`).
+'  - Update channel configuration compiled via conditional compilation symbols
+'    (`DEVELOP`, `PREVIEW`, else GA) exposing `AppsUrl`, `AppsUrlDir`, and related
+'    update parameters.
+'  - Default prompt strings and separators used by LLM-related features.
+'  - Licensing constants, licensing state shared across add-ins, and the small
+'    `LicenseTypeInfo` type plus `GetLicenseTypes` factory.
+'
+' Notes:
+'  - This file intentionally contains both constants and shared mutable values; review
+'    consumers before changing names or defaults.
+' =============================================================================
+
 Option Strict On
 Option Explicit On
 

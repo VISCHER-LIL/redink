@@ -1,5 +1,60 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
+' =============================================================================
+' File: SharedMethods.Settings.vb
+' Purpose:
+'   Provides Windows Forms UI and helper methods to view and modify runtime configuration values stored
+'   on `ISharedContext` and to persist configuration changes to disk and/or `My.Settings`.
+'
+' Architecture / Responsibilities:
+'   - Settings UI (curated subset):
+'       `ShowSettingsWindow` builds a modal settings dialog dynamically from two dictionaries:
+'         - `Settings`:     settingKey -> label template (may contain "{model}" and "{model2}")
+'         - `SettingsTips`: settingKey -> tooltip text
+'       The UI creates a control per key (TextBox or CheckBox) based on `IsBooleanSetting`.
+'
+'   - Expert configuration UI (arbitrary variables):
+'       `ShowExpertConfiguration` materializes a variable name/value dictionary from the current `ISharedContext`,
+'       shows it via `ShowVariableConfigurationWindow`, then maps edited values back into `ISharedContext`.
+'       `ShowVariableConfigurationWindow` displays an editable two-column grid (variable/value) and can open
+'       selected `.ini` files via `ShowTextFileEditor`.
+'
+'   - In-memory configuration access:
+'       `GetSettingValue` and `SetSettingValue` provide string-based mapping between UI setting keys and
+'       concrete properties on `ISharedContext`. `SetSettingValue` performs parsing for numeric/Boolean keys
+'       and updates derived context flags (`INI_PromptLib`, `Ignore`).
+'
+'   - Model switching:
+'       `SwitchModels` swaps primary and secondary ("_2") configuration values directly on `ISharedContext`.
+'
+'   - Persisting configuration:
+'       `UpdateAppConfig` rewrites configuration content using a read/transform/write approach:
+'         1) Resolves the active `.ini` input file path using:
+'              - Registry setting (`RegPath_IniPath`) and precedence (`RegPath_IniPrio`)
+'              - Per-application default path (`GetDefaultINIPath(context.RDV)`)
+'              - Word default path fallback (`GetDefaultINIPath("Word")`)
+'         2) Reads the resolved `IniFilePath` and updates known keys from an `expectedKeys` dictionary.
+'         3) Skips selected keys when their values equal defaults (`KeysToSkipWhenDefault`).
+'         4) Persists a small, explicit subset of keys to `My.Settings` instead of the `.ini`
+'            (`SaveToMySettings` / `pendingMySettings`).
+'         5) Writes the updated configuration to a temporary file and replaces the local default `.ini`
+'            (`DefaultPath`) by moving the temporary file into place.
+'
+'       `ResetLocalAppConfig` rewrites the per-application default `.ini` file to contain only a defined
+'       set of keys, preserving comment/empty lines where encountered.
+'
+'       `GetActiveConfigFilePath` exposes the resolved active configuration file path using the same path
+'       precedence rules used by `UpdateAppConfig`.
+'
+' External dependencies (within `SharedMethods` / SharedLibrary):
+'   - Configuration bootstrap and persistence helpers: `InitializeConfig`, `GetDefaultINIPath`, `RemoveCR`,
+'     registry helpers (`GetFromRegistry`, `RegPath_Base`, `RegPath_IniPath`, `RegPath_IniPrio`).
+'   - UI helpers: `ShowCustomMessageBox`, `ShowCustomYesNoBox`, `ShowSelectionForm`, `ShowTextFileEditor`,
+'     and related forms/modules.
+'   - Update workflow integration: `UpdateHandler` (invoked from the settings UI when applicable).
+' =============================================================================
+
 
 Option Strict On
 Option Explicit On
@@ -24,6 +79,16 @@ Namespace SharedLibrary
 
     Partial Public Class SharedMethods
 
+        ''' <summary>
+        ''' Shows a modal settings dialog that allows temporarily editing a subset of configuration values.
+        ''' Values are read from and written to <paramref name="context"/> via <see cref="GetSettingValue"/> and
+        ''' <see cref="SetSettingValue"/>.
+        ''' </summary>
+        ''' <param name="Settings">
+        ''' Map of setting key to label text template. Templates may contain "{model}" and "{model2}" placeholders.
+        ''' </param>
+        ''' <param name="SettingsTips">Map of setting key to tooltip text.</param>
+        ''' <param name="context">Shared context containing the current in-memory configuration values.</param>
         Public Shared Sub ShowSettingsWindow(Settings As Dictionary(Of String, String), SettingsTips As Dictionary(Of String, String), ByRef context As ISharedContext)
 
             InitializeConfig(context, False, False)
@@ -68,7 +133,7 @@ Namespace SharedLibrary
             Dim controlXOffset As Integer = maxLabelWidth + 20
 
             ' (1) Widen input fields a bit more
-            Dim defaultControlWidth As Integer = 400   ' CHANGED (was 380 / earlier 350)
+            Dim defaultControlWidth As Integer = 400
 
             Dim lineSpacing As Integer = CInt(TextRenderer.MeasureText("Sample", standardFont).Height * 1.5)
 
@@ -76,7 +141,7 @@ Namespace SharedLibrary
             Dim scrollPanel As New Panel() With {
                 .AutoScroll = True,
                 .Location = New System.Drawing.Point(10, descriptionLabel.Bottom + 20),
-                .Width = controlXOffset + defaultControlWidth + 10 + SystemInformation.VerticalScrollBarWidth + 8 ' CHANGED (+ scrollbar allowance)
+                .Width = controlXOffset + defaultControlWidth + 10 + SystemInformation.VerticalScrollBarWidth + 8
             }
             settingsForm.Controls.Add(scrollPanel)
 
@@ -127,7 +192,7 @@ Namespace SharedLibrary
             Dim workArea = Screen.FromPoint(Cursor.Position).WorkingArea
             Dim reservedBelow As Integer = 180   ' space for buttons + margins
             Dim dynamicCap As Integer = Math.Max(450, CInt(workArea.Height * 0.7) - reservedBelow) ' ensure at least a bit taller than old 400
-            Dim maxPanelHeight As Integer = dynamicCap   ' CHANGED (replaces fixed 400)
+            Dim maxPanelHeight As Integer = dynamicCap
 
             scrollPanel.Height = If(contentHeight > maxPanelHeight, maxPanelHeight, contentHeight)
 
@@ -190,7 +255,7 @@ Namespace SharedLibrary
                     delLocalConfigToolTip.SetToolTip(delLocalConfigButton, $"This will deactivate the local configuration in '{AN2}.ini' (by renaming it to '.bak', overwriting any existing such file), and have the configuration file of your 'Word' add-in (if available) and otherwise the central one applied going forward.")
                 End If
             Else
-                delLocalConfigToolTip.SetToolTip(delLocalConfigButton, $"This will reset all parameters that are not mandatory by removing them from your local configuration file '{AN2}.ini'. A copy will be saved beforhand to '.bak', overwriting any existing such file.")
+                delLocalConfigToolTip.SetToolTip(delLocalConfigButton, $"This will reset all parameters that are not mandatory by removing them from your local configuration file '{AN2}.ini'. A copy will be saved beforehand to '.bak', overwriting any existing such file.")
             End If
 
             Dim okButton As New System.Windows.Forms.Button()
@@ -467,12 +532,17 @@ Namespace SharedLibrary
             settingsForm.ShowDialog()
         End Sub
 
-
-
+        ''' <summary>
+        ''' Unloads an Excel COM add-in from the currently running Excel instance (if available).
+        ''' If no running Excel instance exists, a new hidden instance is created and used.
+        ''' </summary>
+        ''' <param name="addinName">
+        ''' Substring matched (case-insensitively) against <see cref="Excel.AddIn.FullName"/> to select the add-in.
+        ''' </param>
         Public Shared Sub UnloadExcelAddin(addinName As String)
             Dim excelApp As Excel.Application = Nothing
+            Dim foundAddin As Boolean = False
             Try
-
                 ' Start or get running instance of Excel
                 excelApp = TryCast(System.Runtime.InteropServices.Marshal.GetActiveObject("Excel.Application"), Excel.Application)
                 If excelApp Is Nothing Then
@@ -481,26 +551,42 @@ Namespace SharedLibrary
                 End If
 
                 For Each addin As Excel.AddIn In excelApp.AddIns2
-                    If addin.FullName.ToLower().Contains(addinName.ToLower()) Then
-                        Debug.WriteLine("Unloading add-in: " & addin.FullName)
-                        addin.Installed = False  ' Unload the add-in
-                        Marshal.ReleaseComObject(excelApp)
-                        excelApp = Nothing
-                        GC.Collect()
-                        GC.WaitForPendingFinalizers()
-                        Debug.WriteLine("Waiting for Excel to release file lock...")
-                        Thread.Sleep(1000)
-                        Exit For
-                    End If
+                    Try
+                        If addin.FullName.ToLower().Contains(addinName.ToLower()) Then
+                            Debug.WriteLine("Unloading add-in: " & addin.FullName)
+                            addin.Installed = False  ' Unload the add-in
+                            foundAddin = True
+                            Exit For
+                        End If
+                    Finally
+                        ' Release each AddIn COM object
+                        Marshal.ReleaseComObject(addin)
+                    End Try
                 Next
+
+                If foundAddin Then
+                    GC.Collect()
+                    GC.WaitForPendingFinalizers()
+                    Debug.WriteLine("Waiting for Excel to release file lock...")
+                    Thread.Sleep(1000)
+                End If
 
             Catch ex As Exception
                 Debug.WriteLine("Error unloading Excel add-In: " & ex.Message)
             Finally
-                If excelApp IsNot Nothing Then System.Runtime.InteropServices.Marshal.ReleaseComObject(excelApp)
+                If excelApp IsNot Nothing Then
+                    Marshal.ReleaseComObject(excelApp)
+                    excelApp = Nothing
+                End If
             End Try
         End Sub
 
+        ''' <summary>
+        ''' Unloads a Word COM add-in from the currently running Word instance (if available).
+        ''' </summary>
+        ''' <param name="addInName">
+        ''' Add-in name matched (case-insensitively) against <see cref="Microsoft.Office.Interop.Word.AddIn.Name"/>.
+        ''' </param>
         Public Shared Sub UnloadWordAddin(addInName As String)
             Try
                 ' Attempt to get the active (running) Word Application instance.
@@ -526,6 +612,14 @@ Namespace SharedLibrary
 
 
 
+        ''' <summary>
+        ''' Refreshes the settings form UI by updating labels (including "{model}" / "{model2}" placeholders)
+        ''' and reloading current values from <paramref name="context"/>.
+        ''' </summary>
+        ''' <param name="settingControls">Map of setting key to input control (<see cref="TextBox"/> or <see cref="CheckBox"/>).</param>
+        ''' <param name="labelControls">Map of setting key to its label control.</param>
+        ''' <param name="context">Shared context providing the in-memory configuration values.</param>
+        ''' <param name="Settings">Map of setting key to label text template.</param>
         Public Shared Sub RefreshFormValues(settingControls As Dictionary(Of String, System.Windows.Forms.Control),
                               labelControls As Dictionary(Of String, System.Windows.Forms.Label), ByRef context As ISharedContext, Settings As Dictionary(Of String, String))
             ' Update the labels and input controls dynamically
@@ -548,6 +642,11 @@ Namespace SharedLibrary
             Next
         End Sub
 
+        ''' <summary>
+        ''' Determines whether a setting key is represented as a Boolean input in the settings UI.
+        ''' </summary>
+        ''' <param name="settingKey">Setting key to check.</param>
+        ''' <returns><c>True</c> if the key is listed as Boolean; otherwise, <c>False</c>.</returns>
         Public Shared Function IsBooleanSetting(settingKey As String) As Boolean
             ' Determine if a setting is a Boolean based on its key
             Dim booleanSettings As New List(Of String) From {
@@ -561,6 +660,12 @@ Namespace SharedLibrary
         End Function
 
 
+        ''' <summary>
+        ''' Returns the current string representation of a named setting as stored on <paramref name="context"/>.
+        ''' </summary>
+        ''' <param name="settingName">Setting key to read.</param>
+        ''' <param name="context">Shared context containing the in-memory configuration values.</param>
+        ''' <returns>The setting value as a string, or an empty string if the key is not handled.</returns>
         Public Shared Function GetSettingValue(settingName As String, ByRef context As ISharedContext) As String
             ' Return the value of the setting based on its name
             Select Case settingName
@@ -828,6 +933,14 @@ Namespace SharedLibrary
         End Function
 
 
+        ''' <summary>
+        ''' Sets a named setting value on <paramref name="context"/> by mapping a string key to a specific context field.
+        ''' Some settings are parsed into numeric or Boolean types based on the key.
+        ''' After assignment, derived context flags are refreshed (<c>INI_PromptLib</c> and <c>Ignore</c>).
+        ''' </summary>
+        ''' <param name="settingName">Setting key to write.</param>
+        ''' <param name="value">String representation of the value to assign (parsed for numeric/Boolean keys).</param>
+        ''' <param name="context">Shared context that receives the updated in-memory configuration values.</param>
         Public Shared Sub SetSettingValue(settingName As String, value As String, ByRef context As ISharedContext)
             ' Set the value of the setting based on its name
 
@@ -1087,6 +1200,11 @@ Namespace SharedLibrary
         End Sub
 
 
+        ''' <summary>
+        ''' Switches primary and secondary ("_2") configuration values on <paramref name="context"/> by swapping
+        ''' each supported pair of fields.
+        ''' </summary>
+        ''' <param name="context">Shared context whose primary/secondary settings are swapped in-place.</param>
         Public Shared Sub SwitchModels(ByRef context As ISharedContext)
             ' Switch the content of variables with a _2 suffix with their corresponding variables without the _2 suffix
             Dim temp As String
@@ -1191,6 +1309,12 @@ Namespace SharedLibrary
 
         End Sub
 
+        ''' <summary>
+        ''' Writes the current in-memory configuration from <paramref name="context"/> back to an `.ini` file and
+        ''' persists selected keys into <c>My.Settings</c>.
+        ''' The `.ini` content is rewritten by updating existing keys and appending missing keys.
+        ''' </summary>
+        ''' <param name="context">Shared context providing the in-memory configuration values to persist.</param>
         Public Shared Sub UpdateAppConfig(ByRef context As ISharedContext)
             Try
 
@@ -1587,7 +1711,16 @@ Namespace SharedLibrary
                 System.IO.File.WriteAllText(TempIniFilePath, updatedContent.ToString())
 
                 ' Replace the original file with the updated file
-                System.IO.File.Delete(DefaultPath)
+                ' Ensure the target directory exists
+                Dim targetDir As String = System.IO.Path.GetDirectoryName(DefaultPath)
+                If Not System.IO.Directory.Exists(targetDir) Then
+                    System.IO.Directory.CreateDirectory(targetDir)
+                End If
+
+                ' Delete existing file only if it exists
+                If System.IO.File.Exists(DefaultPath) Then
+                    System.IO.File.Delete(DefaultPath)
+                End If
                 System.IO.File.Move(TempIniFilePath, DefaultPath)
 
                 ' Persist any keys mapped to My.Settings at the end
@@ -1615,6 +1748,12 @@ Namespace SharedLibrary
         End Sub
 
 
+        ''' <summary>
+        ''' Resets the local `.ini` configuration file (at the default INI path for the current RDV) by rewriting it to
+        ''' contain only keys listed in <c>expectedKeys</c>, using current values from <paramref name="context"/>.
+        ''' Comment and empty lines are preserved from the original file where encountered.
+        ''' </summary>
+        ''' <param name="context">Shared context providing the in-memory configuration values to keep.</param>
         Public Shared Sub ResetLocalAppConfig(ByRef context As ISharedContext)
             Try
                 ' Determine the path to the existing .ini file
@@ -1766,6 +1905,12 @@ Namespace SharedLibrary
         End Sub
 
 
+        ''' <summary>
+        ''' Returns the resolved path of the active configuration file (<c>{AN2}.ini</c>) based on registry and default
+        ''' location precedence.
+        ''' </summary>
+        ''' <param name="context">Shared context providing the current application identifier (<c>RDV</c>).</param>
+        ''' <returns>The active configuration file path with CR characters removed.</returns>
         Public Shared Function GetActiveConfigFilePath(context As ISharedContext) As String
             Dim regPath As String = GetFromRegistry(RegPath_Base, RegPath_IniPath, True)
             Dim defaultPathApp As String = GetDefaultINIPath(context.RDV)
@@ -1787,6 +1932,20 @@ Namespace SharedLibrary
         End Function
 
 
+        ''' <summary>
+        ''' Shows a modal "Expert Configuration" window containing a grid of variable names and editable values.
+        ''' </summary>
+        ''' <param name="variableNames">List of variable names shown as read-only in the first column.</param>
+        ''' <param name="variableValues">
+        ''' Dictionary of variable name to current value. Values are written back as strings when saved.
+        ''' If <c>Nothing</c>, a new case-insensitive dictionary is created.
+        ''' </param>
+        ''' <param name="context">Shared context used when resolving and editing related `.ini` files.</param>
+        ''' <param name="ownerForm">Optional dialog owner.</param>
+        ''' <returns>
+        ''' The edited dictionary when the dialog is saved; otherwise <c>Nothing</c>.
+        ''' Returns <c>Nothing</c> as well when the user chooses the "reload from disk" flow.
+        ''' </returns>
         Public Shared Function ShowVariableConfigurationWindow(
         variableNames As List(Of String),
         variableValues As Dictionary(Of String, Object),
@@ -1861,6 +2020,9 @@ Namespace SharedLibrary
             form.Controls.Add(dgv)
             form.Controls.Add(pnlButtons)
 
+            ''' <summary>
+            ''' Copies the current grid values into <c>variableValues</c> as strings by variable name.
+            ''' </summary>
             Dim syncGridToDictionary As Action =
         Sub()
             For Each row As DataGridViewRow In dgv.Rows
@@ -2005,6 +2167,13 @@ Namespace SharedLibrary
 
 
 
+        ''' <summary>
+        ''' Shows the expert configuration UI for the current <paramref name="context"/> by building a variable name/value
+        ''' dictionary from many context fields, displaying it in <see cref="ShowVariableConfigurationWindow"/>, and then
+        ''' copying returned values back into <paramref name="context"/>.
+        ''' </summary>
+        ''' <param name="context">Shared context whose configuration values are displayed and (optionally) updated.</param>
+        ''' <param name="ownerform">Owner form for the modal dialog.</param>
         Public Shared Sub ShowExpertConfiguration(ByRef context As ISharedContext, ownerform As Form)
             ' Dictionary to store variable names and their current values
             Dim variableValues As New Dictionary(Of String, Object)
@@ -2416,12 +2585,18 @@ Namespace SharedLibrary
             End If
         End Sub
 
+        ''' <summary>
+        ''' Shows a modal "About" dialog for the current application instance.
+        ''' The dialog displays application identifiers, license status information, and additional static text,
+        ''' and provides buttons to view third-party license text and to reset stored license information.
+        ''' </summary>
+        ''' <param name="owner">Owner window used for theming (background color) and modal display.</param>
+        ''' <param name="context">Shared context providing the current application identifier (<c>RDV</c>).</param>
 
         Public Shared Sub ShowAboutWindow(owner As System.Windows.Forms.Form, context As ISharedContext)
             ' Example of using the same font and appearance as ShowWindowsSettings
             Dim standardFont As New System.Drawing.Font("Segoe UI", 9.0F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point)
 
-            ' Make the form 30% wider than the original 450
             Dim baseWidth As Integer = 450
             Dim formWidth As Integer = CInt(baseWidth * 1.3)
 
@@ -2598,6 +2773,7 @@ Namespace SharedLibrary
             ' Show the form
             aboutForm.ShowDialog(owner)
         End Sub
+
 
     End Class
 

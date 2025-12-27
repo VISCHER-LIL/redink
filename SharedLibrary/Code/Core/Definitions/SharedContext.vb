@@ -1,5 +1,26 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
+' =============================================================================
+' File: SharedContext.vb
+' Purpose: Defines `SharedContext`, a shared, mutable context container that implements
+'          `ISharedContext` and is used to pass configuration values and prompt strings
+'          through the SharedLibrary and host add-ins.
+'
+' Architecture / How it works:
+'  - `ISharedContext` defines the complete contract (properties) for shared settings and
+'    runtime values that are initialized by each host project (e.g., in `ThisAddIn.Properties.vb`)
+'    and then read/updated by SharedLibrary code.
+'  - `SharedContext` provides the concrete implementation via auto-properties, making the
+'    context easy to construct, initialize, and pass around as a single object.
+'  - `SharedContext.New()` initializes the two list properties used as an in-memory prompt
+'    library (`PromptTitles` and `PromptLibrary`).
+'
+' Maintenance:
+'  - When adding a new shared property, update both `ISharedContext` and the corresponding
+'    `SharedContext` implementation, and ensure each host project initializes it consistently
+'    (see the existing checklist below).
+' =============================================================================
 
 Option Strict On
 Option Explicit On
@@ -475,7 +496,6 @@ Namespace SharedLibrary
         Public Property SP_MergePrompt2 As String Implements ISharedContext.SP_MergePrompt2
         Public Property SP_Add_MergePrompt As String Implements ISharedContext.SP_Add_MergePrompt
 
-        ' === INI Update Configuration ===
         Public Property INI_UpdateIni As Boolean Implements ISharedContext.INI_UpdateIni
         Public Property INI_UpdateIniAllowRemote As Boolean Implements ISharedContext.INI_UpdateIniAllowRemote
         Public Property INI_UpdateIniNoSignature As Boolean Implements ISharedContext.INI_UpdateIniNoSignature

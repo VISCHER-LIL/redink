@@ -10,11 +10,12 @@
 '  - Context-Based Configuration: All INI update settings are accessed via
 '    ISharedContext (_iniUpdateContext), which is set at the start of
 '    CheckForIniUpdates() and used by all helper methods.
-'  - Update Sources: Supports local file paths, network shares (UNC), and HTTPS URLs.
+'  - Update Sources: Supports local file paths, network shares (UNC), and HTTP(S) URLs.
 '    Remote sources can be disabled via INI_UpdateIniAllowRemote.
 '  - Digital Signatures: Ed25519 signatures via BouncyCastle for authenticity
-'    verification. Each update file requires a corresponding .sig file unless
-'    INI_UpdateIniNoSignature is True.
+'    verification. When signature verification is enabled, a .sig file is loaded
+'    alongside the update file. If no public key is configured, verification is skipped
+'    and a warning is reported.
 '  - Silent Update Modes: Supports five security levels (SilentUpdateSecurityLevel enum):
 '      0=Disabled (interactive), 1=SafeOnly, 2=SignedOnly, 3=LocalTrusted, 4=All
 '    Silent mode requires registry permission (PermitSilentIniUpdates).
@@ -22,51 +23,18 @@
 '    per-parameter approval/rejection with visual highlighting of suspicious changes.
 '  - Ignore List: Persists rejected parameters in My.Settings for future exclusion.
 '    Override rules (INI_UpdateIniIgnoreOverride) allow file/segment/key-specific control.
-'  - Protected Keys: Keys starting with "Update" cannot be modified remotely.
+'  - Protected Keys: Keys starting with "Update" are not modified by the auto-update mechanism.
 '  - Three INI Files Supported:
 '      1. redink.ini (main config) - uses INI_UpdateSource from context
 '      2. AlternateModelPath (segmented) - each segment has its own UpdateSource
 '      3. SpecialServicePath (segmented) - each segment has its own UpdateSource
 '
-' Configuration Properties (in ISharedContext):
-'  - INI_UpdateIni: Boolean - Master switch for update mechanism (default: True)
-'  - INI_UpdateIniAllowRemote: Boolean - Allow HTTPS sources (default: True)
-'  - INI_UpdateIniNoSignature: Boolean - Skip signature verification (default: False)
-'  - INI_UpdateSource: String - Update source for redink.ini "path; keys; pubkey"
-'  - INI_UpdateIniIgnoreOverride: String - Override rules for ignore filtering
-'  - INI_UpdateIniSilentMode: Integer - Silent update security level (0-4)
-'  - INI_UpdateIniSilentLog: Boolean - Log silent update actions (default: True)
-'
-' My.Settings Variables:
-'  - IgnoredUpdates_RedInk: String - Serialized ignored parameters for main INI
-'  - IgnoredUpdates_Custom: String - Serialized ignored params for other INI files
-'
 ' Registry Keys (optional):
-'  - RegPath_PermitSilentInitUpdates: Must be "yes"/"true"/"1" to enable silent mode
-'
-' Public Entry Points:
-'  - CheckForIniUpdates(context): Main entry point, called from UpdateHandler
-'  - ShowIgnoredParametersDialog(): UI for managing ignored parameters
-'  - ShowSignatureManagementDialog(): UI for generating keys, signing, verifying
-'  - ShowBatchSigningDialog(): UI for signing multiple files
-'  - GenerateEd25519KeyPair(): Returns (PublicKey, PrivateKey) tuple
-'  - SignUpdateFile(filePath, privateKey): Signs a file, creates .sig
-'  - VerifySignatureFile(filePath, publicKey): Verifies a file's signature
-'
-' Data Structures:
-'  - SilentUpdateSecurityLevel: Enum defining silent update trust levels
-'  - IniParameterChange: Represents a detected change with approval state
-'  - IniSegment: Represents a parsed INI segment with UpdateSource metadata
-'  - ParsedIniFile: Represents a fully parsed INI file with segments
-'  - SignatureError/SignatureErrorType: For signature validation reporting
-'  - IgnoreOverrideRule: Internal class for parsing override filter rules
-'
-' Dependencies:
-'  - Org.BouncyCastle.Crypto (Ed25519 signatures)
-'  - SharedLibrary.SharedContext (ISharedContext interface)
-'  - UpdateHandler.WriteUpdateLog() (for audit logging)
-'
+'  - RegPath_PermitSilentInitUpdates: Must be "yes"/"true"/"1" to enable silent mode,
+'    if required by noSilentINIUpdatesWithoutRegistryFlag (see SharedMethods.Constants.OwnBuild.Security.vb).
+'    (note: name is defined by the constant used in code; log output refers to "PermitSilentIniUpdates").
 ' =============================================================================
+
 
 Option Strict On
 Option Explicit On
@@ -86,9 +54,14 @@ Imports SharedLibrary.SharedLibrary.SharedContext
 Namespace SharedLibrary
     Partial Public Class SharedMethods
 
+        ''' <summary>
+        ''' Freestyle command name used to manage ignored INI update parameters.
+        ''' </summary>
         Private Const IniUpdateIgnored As String = "iniupdateignored"   ' the name of the Freestyle command
 
-        ' Module-level context reference for INI update operations
+        ''' <summary>
+        ''' Stores the active shared context for the current INI update check run.
+        ''' </summary>
         Private Shared _iniUpdateContext As ISharedContext
 
         ''' <summary>
@@ -103,7 +76,7 @@ Namespace SharedLibrary
         End Enum
 
         ''' <summary>
-        ''' Gets the current silent update mode as a typed enum value.
+        ''' Gets the configured silent update mode as a typed <see cref="SilentUpdateSecurityLevel"/> value.
         ''' </summary>
         Private Shared ReadOnly Property SilentMode As SilentUpdateSecurityLevel
             Get
@@ -258,7 +231,9 @@ Namespace SharedLibrary
                 End If
 
                 ' Check registry for silent update permission - override silent mode if not permitted
-                If _iniUpdateContext.INI_UpdateIniSilentMode <> SilentUpdateSecurityLevel.Disabled Then
+                ' Only enforce registry check if noSilentIniUpdatesWithoutRegistryFlag is True
+                If _iniUpdateContext.INI_UpdateIniSilentMode <> SilentUpdateSecurityLevel.Disabled AndAlso
+                   noSilentIniUpdatesWithoutRegistryFlag Then
                     Dim permitSilentUpdates As String = GetFromRegistry(RegPath_Base, RegPath_PermitSilentInitUpdates, True)
                     If String.IsNullOrWhiteSpace(permitSilentUpdates) OrElse
                        Not (permitSilentUpdates.Equals("yes", StringComparison.OrdinalIgnoreCase) OrElse
@@ -385,9 +360,15 @@ Namespace SharedLibrary
             End Try
         End Function
 
+        ''' <summary>
+        ''' Defines the outcome of the update approval dialog.
+        ''' </summary>
         Private Enum UpdateApprovalResult
+            ''' <summary>Approve the selected changes.</summary>
             Approve
+            ''' <summary>Reject all changes.</summary>
             Reject
+            ''' <summary>Cancel the dialog without applying changes.</summary>
             Cancel
         End Enum
 
@@ -404,13 +385,13 @@ Namespace SharedLibrary
 
 
         ''' <summary>
-        ''' Processes updates silently based on the configured security level.
+        ''' Applies updates without UI interaction according to the configured silent update security level.
         ''' </summary>
-        ''' <param name="changes">List of detected changes.</param>
-        ''' <param name="context">Shared context for file paths.</param>
-        ''' <param name="failedSources">Set of source paths that failed signature validation.</param>
-        ''' <param name="updateSources">Dictionary mapping IniFile names to their update source paths.</param>
-        ''' <returns>True if updates were applied.</returns>
+        ''' <param name="changes">The detected parameter changes.</param>
+        ''' <param name="context">The shared context used to resolve local INI file locations.</param>
+        ''' <param name="failedSources">Update sources that failed signature validation or required verification data.</param>
+        ''' <param name="updateSources">Mapping of INI file or INI file/segment identifiers to their update source path.</param>
+        ''' <returns><c>True</c> if at least one change was applied; otherwise <c>False</c>.</returns>
         Private Shared Function ProcessSilentUpdates(changes As List(Of IniParameterChange),
                                       context As ISharedContext,
                                       failedSources As HashSet(Of String),
@@ -508,12 +489,11 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Logs INI update events for audit purposes.
-        ''' Uses the shared WriteUpdateLog from UpdateHandler for consistent logging.
+        ''' Writes an INI update event to the update log (subject to logging settings unless forced).
         ''' </summary>
-        ''' <param name="eventType">Type of event (e.g., "Signature Error", "Update Applied").</param>
-        ''' <param name="details">Details about the event.</param>
-        ''' <param name="alwaysLog">If True, logs regardless of INI_UpdateIniSilentLog setting (for security events).</param>
+        ''' <param name="eventType">Short event category string.</param>
+        ''' <param name="details">Event details text.</param>
+        ''' <param name="alwaysLog">If <c>True</c>, logs even when silent logging is disabled.</param>
         Private Shared Sub LogIniUpdateEvent(eventType As String, details As String, Optional alwaysLog As Boolean = False)
             ' For silent mode, respect the INI_UpdateIniSilentLog setting unless alwaysLog is True
             If Not alwaysLog AndAlso Not _iniUpdateContext.INI_UpdateIniSilentLog Then Return
@@ -546,18 +526,26 @@ Namespace SharedLibrary
             End Function
         End Class
 
+        ''' <summary>
+        ''' Defines the type of signature validation error for reporting.
+        ''' </summary>
         Public Enum SignatureErrorType
+            ''' <summary>The signature file (.sig) could not be found.</summary>
             SignatureFileMissing
+            ''' <summary>No public key was provided for signature verification.</summary>
             PublicKeyMissing
+            ''' <summary>The provided signature did not match the content and public key.</summary>
             SignatureInvalid
+            ''' <summary>Downloading the update source or signature failed.</summary>
             DownloadFailed
+            ''' <summary>Any other signature-related failure.</summary>
             Other
         End Enum
 
         ''' <summary>
-        ''' Shows a dialog to the user reporting signature validation errors.
-        ''' This alerts users to potential security issues or configuration problems.
+        ''' Displays signature validation errors to the user in interactive mode.
         ''' </summary>
+        ''' <param name="errors">The formatted error messages to display.</param>
         Private Shared Sub ShowSignatureErrorDialog(errors As List(Of String))
             If errors Is Nothing OrElse errors.Count = 0 Then Return
 
@@ -700,8 +688,10 @@ Namespace SharedLibrary
 #Region "INI File Parsing"
 
         ''' <summary>
-        ''' Parses an INI file into a structured representation with segments.
+        ''' Parses an INI file from disk into global parameters and named segments.
         ''' </summary>
+        ''' <param name="filePath">Path to the INI file.</param>
+        ''' <returns>A parsed representation of the INI file; empty if the file does not exist or parsing fails.</returns>
         Private Shared Function ParseIniFile(filePath As String) As ParsedIniFile
             Dim result As New ParsedIniFile() With {
                 .FilePath = filePath,
@@ -798,8 +788,10 @@ Namespace SharedLibrary
         End Sub
 
         ''' <summary>
-        ''' Parses UpdateSource for a global (non-segmented) INI file.
+        ''' Parses an <c>UpdateSource</c> string for a non-segmented INI file into an <see cref="IniSegment"/> container.
         ''' </summary>
+        ''' <param name="updateSource">The raw update source string.</param>
+        ''' <returns>An <see cref="IniSegment"/> containing the parsed update path, keys, and optional public key.</returns>
         Private Shared Function ParseGlobalUpdateSource(updateSource As String) As IniSegment
             Dim segment As New IniSegment() With {
                 .Name = "",
@@ -834,13 +826,13 @@ Namespace SharedLibrary
 #Region "Update Source Loading"
 
         ''' <summary>
-        ''' Loads content from an update source (local, network, or HTTPS).
+        ''' Loads update content from a local path, network share, or HTTP(S) URL and optionally verifies its signature.
         ''' </summary>
         ''' <param name="sourcePath">Path or URL to the update source.</param>
-        ''' <param name="publicKey">Base64-encoded public key for signature verification.</param>
-        ''' <param name="signatureErrors">List to collect signature error messages for user reporting.</param>
-        ''' <param name="failedSources">Set to track source paths that failed signature validation.</param>
-        ''' <returns>Content string if successful, Nothing if failed.</returns>
+        ''' <param name="publicKey">Base64-encoded Ed25519 public key used for signature verification.</param>
+        ''' <param name="signatureErrors">Collector for formatted signature and download errors.</param>
+        ''' <param name="failedSources">Collector for sources that failed signature validation or required verification inputs.</param>
+        ''' <returns>The loaded content text, or <c>Nothing</c> if loading or required signature verification fails.</returns>
         Private Shared Function LoadUpdateSourceContent(sourcePath As String, publicKey As String, signatureErrors As List(Of String), Optional failedSources As HashSet(Of String) = Nothing) As String
 
             If String.IsNullOrWhiteSpace(sourcePath) Then Return Nothing
@@ -990,8 +982,15 @@ Namespace SharedLibrary
 #Region "Change Detection"
 
         ''' <summary>
-        ''' Checks a single (non-segmented) INI file like redink.ini for updates.
+        ''' Compares a local non-segmented INI file with its update source and returns the detected parameter changes.
         ''' </summary>
+        ''' <param name="localPath">Local INI file path.</param>
+        ''' <param name="fileName">INI file name used for reporting.</param>
+        ''' <param name="updateSource">Update source definition string (<c>path; keys; publicKey</c>).</param>
+        ''' <param name="segmentName">Segment name used for reporting; empty for global scope.</param>
+        ''' <param name="signatureErrors">Collector for signature-related diagnostics.</param>
+        ''' <param name="failedSources">Collector for sources that failed signature validation or required verification inputs.</param>
+        ''' <returns>List of detected changes; empty if none are found or update content cannot be loaded.</returns>
         Private Shared Function CheckSingleIniFile(localPath As String, fileName As String,
                                                    updateSource As String, segmentName As String,
                                                    signatureErrors As List(Of String),
@@ -1084,8 +1083,14 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Checks a segmented INI file (user-defined filename) for updates.
+        ''' Compares each local segment in a segmented INI file with its segment-specific update source.
         ''' </summary>
+        ''' <param name="localPath">Local INI file path.</param>
+        ''' <param name="fileName">INI file name used for reporting.</param>
+        ''' <param name="signatureErrors">Collector for signature-related diagnostics.</param>
+        ''' <param name="updateSources">Optional map updated with resolved update source paths per file/segment.</param>
+        ''' <param name="failedSources">Collector for sources that failed signature validation or required verification inputs.</param>
+        ''' <returns>List of detected changes; empty if none are found.</returns>
         Private Shared Function CheckSegmentedIniFile(localPath As String, fileName As String,
                                               signatureErrors As List(Of String),
                                               Optional updateSources As Dictionary(Of String, String) = Nothing,
@@ -1184,8 +1189,10 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Parses INI content string into a simple key-value dictionary (no segments).
+        ''' Parses INI text content into a flat key/value dictionary, ignoring segments and comments.
         ''' </summary>
+        ''' <param name="content">INI content text.</param>
+        ''' <returns>Dictionary of parsed keys and values.</returns>
         Private Shared Function ParseIniContentToDict(content As String) As Dictionary(Of String, String)
             Dim result As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
             If String.IsNullOrWhiteSpace(content) Then Return result
@@ -1207,8 +1214,11 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Finds a specific segment by name in INI content.
+        ''' Extracts a named segment and its key/value pairs from INI content text.
         ''' </summary>
+        ''' <param name="content">INI content text.</param>
+        ''' <param name="segmentName">The segment name to locate.</param>
+        ''' <returns>The parsed segment, or <c>Nothing</c> if not found.</returns>
         Private Shared Function FindSegmentInContent(content As String, segmentName As String) As IniSegment
             If String.IsNullOrWhiteSpace(content) OrElse String.IsNullOrWhiteSpace(segmentName) Then Return Nothing
 
@@ -1251,9 +1261,11 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Determines if a value change involves URL or path changes (suspicious).
-        ''' Also returns True if newValue contains a URL/path and oldValue is empty (new key with URL/path).
+        ''' Determines whether a value change is treated as suspicious based on URL/path-like patterns.
         ''' </summary>
+        ''' <param name="oldValue">Existing value in the local INI file, or empty for new keys.</param>
+        ''' <param name="newValue">Proposed value from the update source.</param>
+        ''' <returns><c>True</c> if the change is classified as suspicious; otherwise <c>False</c>.</returns>
         Private Shared Function IsPathOrUrlChange(oldValue As String, newValue As String) As Boolean
             ' Check if either contains URL patterns
             Dim urlPatterns = {"http://", "https://", "ftp://", "file://"}
@@ -1299,8 +1311,10 @@ Namespace SharedLibrary
             Public Property ParameterKey As String      ' "*" = any key, "all" = special, or specific key
 
             ''' <summary>
-            ''' Checks if this rule matches the given change.
+            ''' Returns whether this override rule matches the specified change (file/segment/key).
             ''' </summary>
+            ''' <param name="change">The change candidate.</param>
+            ''' <returns><c>True</c> if the rule matches; otherwise <c>False</c>.</returns>            
             Public Function Matches(change As IniParameterChange) As Boolean
                 ' Check filename match
                 If FileName <> "*" AndAlso Not FileName.Equals(change.IniFile, StringComparison.OrdinalIgnoreCase) Then
@@ -1324,15 +1338,20 @@ Namespace SharedLibrary
             End Function
         End Class
 
+
         ''' <summary>
-        ''' Parses the INI_UpdateIniIgnoreOverride string into a list of rules.
+        ''' Parses ignore override rules from <c>INI_UpdateIniIgnoreOverride</c>.
+        ''' </summary>
+        ''' <param name="overrideValue">Raw rule string.</param>
+        ''' <returns>List of parsed rules; empty if the input is empty or invalid.</returns>
+        ''' <emarks>
         ''' Supported formats:
         '''   Simple:     "+Key" or "-Key" (matches any file/segment)
         '''   File:       "+filename.ini|Key" or "-filename.ini|Key"
         '''   Full:       "+filename.ini|Segment|Key" or "-filename.ini|Segment|Key"
         '''   Wildcards:  "+*|Segment|Key" or "+filename.ini|*|Key"
         '''   Special:    "+all" (ignore everything), "-all" (include everything)
-        ''' </summary>
+        ''' </remarks>
         Private Shared Function ParseIgnoreOverrideRules(overrideValue As String) As List(Of IgnoreOverrideRule)
             Dim rules As New List(Of IgnoreOverrideRule)()
 
@@ -1475,9 +1494,10 @@ Namespace SharedLibrary
 
 
         ''' <summary>
-        ''' Generates a unique key for identifying an ignored parameter.
-        ''' Includes the filename to support user-defined INI filenames.
+        ''' Builds the ignore-list identifier string for a change (file[/segment]/key).
         ''' </summary>
+        ''' <param name="change">The change.</param>
+        ''' <returns>Ignore key string used for persistence and matching.</returns>
         Private Shared Function GetIgnoreKey(change As IniParameterChange) As String
             If String.IsNullOrEmpty(change.SegmentName) Then
                 Return $"{change.IniFile}|{change.ParameterKey}"
@@ -1487,9 +1507,10 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Gets the ignore list for a specific INI file from My.Settings.
-        ''' Uses the actual filename (not hardcoded names) to support user-defined filenames.
+        ''' Loads the persisted ignore list for the specified INI file name.
         ''' </summary>
+        ''' <param name="fileName">The INI file name (not full path).</param>
+        ''' <returns>A case-insensitive set of ignore keys.</returns>
         Private Shared Function GetIgnoreListForFile(fileName As String) As HashSet(Of String)
             Dim result As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
             Dim settingsValue As String = ""
@@ -1529,8 +1550,10 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Saves the ignore list for a specific INI file to My.Settings.
+        ''' Persists the ignore list for the specified INI file name.
         ''' </summary>
+        ''' <param name="fileName">The INI file name (not full path).</param>
+        ''' <param name="ignoreList">Ignore keys to store.</param>
         Private Shared Sub SaveIgnoreListForFile(fileName As String, ignoreList As HashSet(Of String))
             Try
                 Dim value = String.Join(";", ignoreList)
@@ -1551,8 +1574,9 @@ Namespace SharedLibrary
         End Sub
 
         ''' <summary>
-        ''' Adds parameters to the ignore list.
+        ''' Adds the specified changes to the persisted ignore list.
         ''' </summary>
+        ''' <param name="changes">Changes to persist as ignored.</param>
         Private Shared Sub AddToIgnoreList(changes As List(Of IniParameterChange))
             ' Group by file
             Dim byFile = changes.GroupBy(Function(c) c.IniFile)
@@ -1569,7 +1593,7 @@ Namespace SharedLibrary
         End Sub
 
         ''' <summary>
-        ''' Shows a dialog to manage ignored parameters.
+        ''' Shows the UI for editing the persisted ignore list entries.
         ''' </summary>
         Public Shared Sub ShowIgnoredParametersDialog()
             Dim form As New Form() With {
@@ -1725,8 +1749,10 @@ Namespace SharedLibrary
 #Region "Update Approval Dialog"
 
         ''' <summary>
-        ''' Shows the update approval dialog with all detected changes.
+        ''' Shows a dialog allowing the user to approve or reject individual detected changes.
         ''' </summary>
+        ''' <param name="changes">Detected changes whose selection state is edited by the dialog.</param>
+        ''' <returns>The dialog result indicating approve/reject/cancel.</returns>
         Private Shared Function ShowUpdateApprovalDialog(changes As List(Of IniParameterChange)) As UpdateApprovalResult
             Dim result As UpdateApprovalResult = UpdateApprovalResult.Cancel
 
@@ -1946,8 +1972,9 @@ Namespace SharedLibrary
 
 
         ''' <summary>
-        ''' Shows confirmation dialog for adding rejected items to ignore list.
+        ''' Shows a dialog offering to add rejected changes to the persisted ignore list.
         ''' </summary>
+        ''' <param name="rejectedChanges">Changes that were rejected by the user.</param>
         Private Shared Sub ShowIgnoreConfirmationDialog(rejectedChanges As List(Of IniParameterChange))
             If rejectedChanges Is Nothing OrElse rejectedChanges.Count = 0 Then Return
 
@@ -2067,8 +2094,11 @@ Namespace SharedLibrary
 
 
         ''' <summary>
-        ''' Truncates a value for display purposes.
+        ''' Truncates a string for display in UI lists.
         ''' </summary>
+        ''' <param name="value">Value to truncate.</param>
+        ''' <param name="maxLen">Maximum length of the returned string.</param>
+        ''' <returns>The original string if short enough; otherwise a truncated string ending with <c>...</c>.</returns>
         Private Shared Function TruncateValue(value As String, maxLen As Integer) As String
             If String.IsNullOrEmpty(value) Then Return ""
             If value.Length <= maxLen Then Return value
@@ -2080,8 +2110,10 @@ Namespace SharedLibrary
 #Region "Apply Updates"
 
         ''' <summary>
-        ''' Applies approved changes to the INI files.
+        ''' Writes approved changes to the corresponding local INI files and creates backups via <c>.bak</c>.
         ''' </summary>
+        ''' <param name="changes">Approved changes to apply.</param>
+        ''' <param name="context">Shared context used to resolve INI file paths.</param>
         Private Shared Sub ApplyApprovedUpdates(changes As List(Of IniParameterChange), context As ISharedContext)
             ' Group changes by file
             Dim byFile = changes.GroupBy(Function(c) c.IniFile)
@@ -2255,9 +2287,11 @@ Namespace SharedLibrary
 #Region "Ed25519 Digital Signature"
 
         ''' <summary>
-        ''' Generates a new Ed25519 keypair for signing update files.
+        ''' Generates a new Ed25519 key pair encoded as Base64 strings.
         ''' </summary>
-        ''' <returns>Tuple of (Base64 Public Key, Base64 Private Key)</returns>
+        ''' <returns>
+        ''' A tuple containing <c>PublicKey</c> and <c>PrivateKey</c> as Base64 strings, or (<c>Nothing</c>, <c>Nothing</c>) on failure.
+        ''' </returns>
         Public Shared Function GenerateEd25519KeyPair() As (PublicKey As String, PrivateKey As String)
             Try
                 Dim keyGen As New Ed25519KeyPairGenerator()
@@ -2279,11 +2313,11 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Signs a file using Ed25519 and creates a .sig file alongside it.
+        ''' Signs a file's bytes using an Ed25519 private key and writes the Base64 signature to <c>filePath + ".sig"</c>.
         ''' </summary>
-        ''' <param name="filePath">Path to the file to sign.</param>
+        ''' <param name="filePath">The file to sign.</param>
         ''' <param name="base64PrivateKey">Base64-encoded Ed25519 private key.</param>
-        ''' <returns>True if signing succeeded.</returns>
+        ''' <returns><c>True</c> if the signature file was created; otherwise <c>False</c>.</returns>
         Public Shared Function SignUpdateFile(filePath As String, base64PrivateKey As String) As Boolean
             Try
                 If Not File.Exists(filePath) Then
@@ -2313,8 +2347,12 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Verifies an Ed25519 signature.
+        ''' Verifies that the specified Base64 signature matches the specified content and Base64 public key.
         ''' </summary>
+        ''' <param name="content">Content string to verify (UTF-8 bytes are used).</param>
+        ''' <param name="signatureBase64">Base64-encoded signature bytes.</param>
+        ''' <param name="publicKeyBase64">Base64-encoded Ed25519 public key bytes.</param>
+        ''' <returns><c>True</c> if the signature is valid; otherwise <c>False</c>.</returns>
         Private Shared Function VerifyEd25519Signature(content As String, signatureBase64 As String, publicKeyBase64 As String) As Boolean
             Try
                 Dim pubKeyBytes = System.Convert.FromBase64String(publicKeyBase64)
@@ -2336,8 +2374,11 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Verifies a signature file (.sig) against its source file.
+        ''' Verifies <c>filePath</c> against its adjacent <c>.sig</c> file using the provided public key.
         ''' </summary>
+        ''' <param name="filePath">Source file path.</param>
+        ''' <param name="publicKeyBase64">Base64-encoded Ed25519 public key.</param>
+        ''' <returns><c>True</c> if the signature validates; otherwise <c>False</c>.</returns>
         Public Shared Function VerifySignatureFile(filePath As String, publicKeyBase64 As String) As Boolean
             Try
                 If Not File.Exists(filePath) Then
@@ -2852,11 +2893,11 @@ Namespace SharedLibrary
 #Region "Batch Signing Utility"
 
         ''' <summary>
-        ''' Signs multiple files at once using the same private key.
+        ''' Signs multiple files using the same private key and returns per-file results.
         ''' </summary>
-        ''' <param name="filePaths">Array of file paths to sign.</param>
+        ''' <param name="filePaths">File paths to sign.</param>
         ''' <param name="base64PrivateKey">Base64-encoded Ed25519 private key.</param>
-        ''' <returns>Dictionary of results (file path -> success/error message).</returns>
+        ''' <returns>Dictionary mapping file paths to a result string.</returns>
         Public Shared Function BatchSignFiles(filePaths As String(), base64PrivateKey As String) As Dictionary(Of String, String)
             Dim results As New Dictionary(Of String, String)()
 
@@ -2880,7 +2921,7 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Shows a batch signing dialog for signing multiple files.
+        ''' Shows a dialog for selecting multiple files and signing them with a single private key.
         ''' </summary>
         Public Shared Sub ShowBatchSigningDialog()
             Dim form As New Form() With {

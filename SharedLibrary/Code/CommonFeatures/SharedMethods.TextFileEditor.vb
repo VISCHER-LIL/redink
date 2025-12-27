@@ -1,15 +1,51 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 
+' =============================================================================
+' File: SharedMethods.TextFileEditor.vb
+' Purpose: Provides a modal WinForms-based text editor for an arbitrary file path,
+'          including optional JSON formatting support and (when a context is provided)
+'          an AI-powered JSON check that shows the result as rendered HTML.
+'
+' Behavior:
+'  - Loads existing file contents (UTF-8 preferred; falls back to default encoding).
+'  - Saves content as UTF-8 with BOM and creates a ".bak" backup when the target file exists.
+'  - For JSON files (or when ForceJson=True), supports pretty/minified display toggling.
+'    * Full-document mode: parses the entire document as JSON and toggles formatting.
+'    * Embedded-segment mode (ForceJson=True only): finds JSON object/array segments in mixed text,
+'      parses them, and replaces them with formatted JSON.
+'  - Keyboard shortcuts:
+'    * Ctrl+S: Save
+'    * Ctrl+Shift+F: Toggle JSON Pretty/Minify (when available)
+'
+' Key internal helpers:
+'  - ExtractEmbeddedJsonSegments: finds parseable JSON segments (object/array) within text.
+'  - ReplaceSegmentsWithFormatting: replaces segments with a chosen JSON formatting style.
+'  - TryFindBalancedJson: scans for balanced JSON object/array boundaries while honoring strings/escapes.
+' =============================================================================
 
 Option Strict On
 Option Explicit On
+
 Imports Markdig
 Imports SharedLibrary.SharedLibrary.SharedContext
 
 Namespace SharedLibrary
     Partial Public Class SharedMethods
 
+        ''' <summary>
+        ''' Shows a modal text editor for the specified file path, with optional JSON formatting support.
+        ''' </summary>
+        ''' <param name="filePath">Target file path to load and save.</param>
+        ''' <param name="headerText">Text displayed above the editor.</param>
+        ''' <param name="ForceJson">
+        ''' If <c>True</c>, enables JSON formatting support even if the file extension is not <c>.json</c>.
+        ''' In ForceJson mode, embedded JSON segments may be pretty-printed/minified within mixed text.
+        ''' </param>
+        ''' <param name="_context">
+        ''' Optional shared context. If provided and JSON mode is active, an additional button "Check JSON with AI"
+        ''' is shown to run an LLM check and display the result.
+        ''' </param>
         Public Shared Sub ShowTextFileEditor(ByVal filePath As System.String, ByVal headerText As System.String, Optional ForceJson As Boolean = False, Optional _context As ISharedContext = Nothing)
             ' --- Guard & Input Validation ---
             Try
@@ -209,6 +245,7 @@ Namespace SharedLibrary
                         flowButtons.Controls.Add(btnToggleJson)
                         flowButtons.Controls.SetChildIndex(btnToggleJson, 1)
 
+                        ' Toggles the editor text between indented and minified JSON.
                         AddHandler btnToggleJson.Click,
                             Sub()
                                 Try
@@ -249,6 +286,7 @@ Namespace SharedLibrary
                             flowButtons.Controls.Add(btnToggleJson)
                             flowButtons.Controls.SetChildIndex(btnToggleJson, 1)
 
+                            ' Toggles the editor text between pretty-printed and minified embedded JSON segments.
                             AddHandler btnToggleJson.Click,
                                 Sub()
                                     Try
@@ -285,7 +323,7 @@ Namespace SharedLibrary
                             flowButtons.Controls.SetChildIndex(btnProcessLLM, 1)
                         End If
 
-                        ' LLM Process logic
+                        ' Checks the current selection (or full editor content) using the LLM and shows the result as HTML.
                         AddHandler btnProcessLLM.Click,
                         Async Sub(sender As Object, e As EventArgs)
                             Try
@@ -305,7 +343,7 @@ Namespace SharedLibrary
                                     Return
                                 End If
 
-                                ' Define system prompt (customize as needed)
+                                ' Define system prompt
                                 Dim systemPrompt As String = JSONCheckPrompt
 
                                 ' Call LLM function
@@ -346,6 +384,9 @@ Namespace SharedLibrary
             End Try
 
             ' Save logic
+            ''' <summary>
+            ''' Saves the current editor content to disk and creates a ".bak" backup when the target file exists.
+            ''' </summary>
             Dim doSave As System.Action =
         Sub()
             Try
@@ -413,6 +454,7 @@ Namespace SharedLibrary
             End Try
         End Sub
 
+            ' Sets the initial cursor/selection when the form is shown.
             AddHandler editorForm.Shown,
     Sub(sender As System.Object, e As System.EventArgs)
         Try
@@ -440,13 +482,35 @@ Namespace SharedLibrary
         End Sub
 
         ' Keep the segment type non-public
+        ''' <summary>
+        ''' Represents a JSON segment found within a larger text, including its position and parsed token.
+        ''' </summary>
         Private Structure JsonSegment
+            ''' <summary>
+            ''' Start offset of the segment in the original text.
+            ''' </summary>
             Public Start As Integer
+
+            ''' <summary>
+            ''' Length of the segment in characters.
+            ''' </summary>
             Public Length As Integer
+
+            ''' <summary>
+            ''' Parsed JSON token for this segment.
+            ''' </summary>
             Public Token As Newtonsoft.Json.Linq.JToken
         End Structure
 
         ' Internal-only: do not expose private type publicly
+        ''' <summary>
+        ''' Scans a text for JSON object/array segments and returns those that can be parsed as JSON.
+        ''' </summary>
+        ''' <param name="text">Source text to scan.</param>
+        ''' <param name="requireObjectInArray">
+        ''' If <c>True</c>, skips array segments that do not contain a '{' character (used to ignore bracketed headings like "[Something]").
+        ''' </param>
+        ''' <returns>List of parsed JSON segments (may be empty).</returns>
         Private Shared Function ExtractEmbeddedJsonSegments(text As String,
                                                    Optional requireObjectInArray As Boolean = True) _
                                                    As List(Of JsonSegment)
@@ -488,6 +552,13 @@ Namespace SharedLibrary
         End Function
 
         ' Internal-only: do not expose private type publicly
+        ''' <summary>
+        ''' Replaces the specified JSON segments in the input text with the JSON token string using the specified formatting.
+        ''' </summary>
+        ''' <param name="text">Original text.</param>
+        ''' <param name="segments">JSON segments to replace.</param>
+        ''' <param name="fmt">JSON formatting mode used to render the tokens.</param>
+        ''' <returns>Text with segments replaced, or the original text when no segments are provided.</returns>
         Private Shared Function ReplaceSegmentsWithFormatting(text As String,
                                                      segments As List(Of JsonSegment),
                                                      fmt As Newtonsoft.Json.Formatting) As String
@@ -510,6 +581,14 @@ Namespace SharedLibrary
         End Function
 
         ' Balanced scanner that honors strings and escapes to find end index of a JSON object/array
+        ''' <summary>
+        ''' Attempts to find the end index of a JSON object/array starting at <paramref name="startIndex"/>,
+        ''' balancing curly/square brackets while honoring JSON string escaping rules.
+        ''' </summary>
+        ''' <param name="s">Source text.</param>
+        ''' <param name="startIndex">Index of the initial '{' or '[' character.</param>
+        ''' <param name="endIndex">On success, receives the index of the matching closing brace/bracket.</param>
+        ''' <returns><c>True</c> if a balanced end was found; otherwise <c>False</c>.</returns>
         Private Shared Function TryFindBalancedJson(s As String, startIndex As Integer, ByRef endIndex As Integer) As Boolean
             If startIndex < 0 OrElse startIndex >= s.Length Then Return False
 
