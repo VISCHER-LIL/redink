@@ -111,7 +111,7 @@ Namespace SharedLibrary
             Dim inputForm As New System.Windows.Forms.Form() With {
         .Text = title,
         .FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog,
-        .StartPosition = System.Windows.Forms.FormStartPosition.CenterParent,
+        .StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen,
         .MinimizeBox = False,
         .MaximizeBox = False,
         .ShowInTaskbar = False,
@@ -178,7 +178,7 @@ Namespace SharedLibrary
         .DialogResult = System.Windows.Forms.DialogResult.OK,
         .Enabled = False,
         .AutoSize = True,
-        .Padding = New System.Windows.Forms.Padding(8, 4, 8, 4),
+        .Padding = New System.Windows.Forms.Padding(8, 4, 5, 4),
         .Margin = New System.Windows.Forms.Padding(0, 0, 20, 0)
     }
             AddHandler buttonOK.Click, Sub()
@@ -190,7 +190,7 @@ Namespace SharedLibrary
         .Text = "Cancel",
         .DialogResult = System.Windows.Forms.DialogResult.Cancel,
         .AutoSize = True,
-        .Padding = New System.Windows.Forms.Padding(8, 4, 8, 4),
+        .Padding = New System.Windows.Forms.Padding(8, 4, 5, 4),
         .Margin = New System.Windows.Forms.Padding(0, 0, 0, 0)
     }
             AddHandler buttonCancel.Click, Sub()
@@ -232,7 +232,14 @@ Namespace SharedLibrary
 
             ' Show dialog.
             inputForm.TopMost = True
-            inputForm.ShowDialog()
+
+            Dim hwndOwner As IntPtr = GetOfficeApplicationHwnd() ' Uses OpusApp/XLMAIN/rctrl_renwnd32
+            If hwndOwner <> IntPtr.Zero Then
+                inputForm.ShowDialog(New WindowWrapper(hwndOwner))
+            Else
+                inputForm.ShowDialog()
+            End If
+
             Return selectedOption
         End Function
 
@@ -584,27 +591,29 @@ Namespace SharedLibrary
                         Optional CloseAfterExtra As Boolean = False
                     ) As Integer
 
-            ' Truncate if too long.
-            Dim isTruncated As Boolean = False
-            If bodyText.Length > 10000 Then
-                bodyText = bodyText.Substring(0, 10000)
-                isTruncated = True
-            End If
+            ' Screen working area.
+            Dim wa As Rectangle = Screen.FromPoint(Cursor.Position).WorkingArea
+            Dim maxScreenHeight As Integer = CInt(wa.Height * 0.5)
+            Dim maxScreenWidth As Integer = CInt(wa.Width * 0.9)
 
-            ' Create and configure form.
+            ' Constants.
+            Const MIN_WIDTH As Integer = 450
+            Const PADDING As Integer = 20
+            Const BUTTON_GAP As Integer = 10
+            Const ASPECT_RATIO As Double = 16.0 / 9.0
+
+            ' Create and configure form (resizable).
             Dim messageForm As New Form() With {
-            .Opacity = 0,
-            .Text = header,
-            .FormBorderStyle = FormBorderStyle.FixedDialog,
-            .StartPosition = FormStartPosition.CenterScreen,
-            .MaximizeBox = False,
-            .MinimizeBox = False,
-            .ShowInTaskbar = False,
-            .TopMost = True,
-            .AutoScaleMode = AutoScaleMode.Font,
-            .AutoSize = True,
-            .AutoSizeMode = AutoSizeMode.GrowAndShrink
-        }
+                .Opacity = 0,
+                .Text = header,
+                .FormBorderStyle = FormBorderStyle.Sizable,
+                .StartPosition = FormStartPosition.CenterScreen,
+                .MaximizeBox = False,
+                .MinimizeBox = False,
+                .ShowInTaskbar = False,
+                .TopMost = True,
+                .AutoScaleMode = AutoScaleMode.Font
+            }
 
             ' Icon.
             Dim bmpIcon As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -614,55 +623,21 @@ Namespace SharedLibrary
             Dim standardFont As New System.Drawing.Font("Segoe UI", 9.0F, FontStyle.Regular, GraphicsUnit.Point)
             messageForm.Font = standardFont
 
-            ' Layout containers.
-            Dim maxLabelWidth = 480
-            Dim maxScreenHeight = Screen.PrimaryScreen.WorkingArea.Height - 100
-
-            Dim mainFlow As New FlowLayoutPanel() With {
-            .FlowDirection = FlowDirection.TopDown,
-            .Dock = DockStyle.Fill,
-            .AutoSize = True,
-            .AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            .Padding = New Padding(20),
-            .MaximumSize = New Size(maxLabelWidth + 40, 0)
-        }
-
-            ' Body label.
-            Dim bodyLabel As New System.Windows.Forms.Label() With {
-            .Text = bodyText,
-            .Font = standardFont,
-            .AutoSize = True,
-            .MaximumSize = New Size(maxLabelWidth, maxScreenHeight \ 2)
-        }
-            mainFlow.Controls.Add(bodyLabel)
-
-            ' "(text has been truncated)" label, if needed.
-            If isTruncated Then
-                Dim truncatedLabel As New System.Windows.Forms.Label() With {
-                .Text = "(text has been truncated)",
+            ' Create buttons first to measure their size.
+            Dim button1 As New Button() With {
+                .Text = button1Text,
+                .AutoSize = True,
+                .Font = standardFont
+            }
+            Dim button2 As New Button() With {
+                .Text = button2Text,
+                .AutoSize = True,
+                .Font = standardFont
+            }
+            Dim countdownLabel As New System.Windows.Forms.Label() With {
                 .Font = standardFont,
                 .AutoSize = True
             }
-                mainFlow.Controls.Add(truncatedLabel)
-            End If
-
-            ' Countdown label (for auto-close).
-            Dim countdownLabel As New System.Windows.Forms.Label() With {
-            .Font = standardFont,
-            .AutoSize = True
-        }
-
-            ' Yes/No buttons.
-            Dim button1 As New Button() With {
-            .Text = button1Text,
-            .AutoSize = True,
-            .Font = standardFont
-        }
-            Dim button2 As New Button() With {
-            .Text = button2Text,
-            .AutoSize = True,
-            .Font = standardFont
-        }
 
             ' Result variable.
             Dim result As Integer = 0
@@ -676,50 +651,163 @@ Namespace SharedLibrary
                                           messageForm.Close()
                                       End Sub
 
-            ' Bottom flow for buttons (+ countdown).
+            ' Bottom flow for buttons.
             Dim bottomFlow As New FlowLayoutPanel() With {
-                        .FlowDirection = FlowDirection.LeftToRight,
-                        .AutoSize = True,
-                        .AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                        .Margin = New Padding(0, 20, 0, 0)
-                    }
+                .FlowDirection = FlowDirection.LeftToRight,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .Dock = DockStyle.Bottom,
+                .Padding = New Padding(PADDING, BUTTON_GAP, PADDING, PADDING),
+                .WrapContents = True
+            }
             bottomFlow.Controls.Add(button1)
             bottomFlow.Controls.Add(button2)
 
-            ' Optional extra button (with increased spacing from other buttons).
+            ' Optional extra button.
+            Dim extraButton As Button = Nothing
             If (Not autoCloseSeconds.HasValue) AndAlso
-       (Not String.IsNullOrEmpty(extraButtonText)) AndAlso
-       (extraButtonAction IsNot Nothing) Then
+               (Not String.IsNullOrEmpty(extraButtonText)) AndAlso
+               (extraButtonAction IsNot Nothing) Then
 
-
-                Dim extraButton As New System.Windows.Forms.Button() With {
-                            .Text = extraButtonText,
-                            .AutoSize = True,
-                            .Font = standardFont,
-                                         .Margin = New System.Windows.Forms.Padding(10, button1.Margin.Top, 0, button1.Margin.Bottom)
-                        }
+                extraButton = New Button() With {
+                    .Text = extraButtonText,
+                    .AutoSize = True,
+                    .Font = standardFont,
+                    .Margin = New Padding(BUTTON_GAP, button1.Margin.Top, 0, button1.Margin.Bottom)
+                }
 
                 AddHandler extraButton.Click,
-            Sub()
-                Try
-                    extraButtonAction.Invoke()
-                Catch ex As System.Exception
-                    ' Swallow to keep dialog functional.
-                End Try
-                If CloseAfterExtra Then messageForm.Close()
-            End Sub
+                    Sub()
+                        Try
+                            extraButtonAction.Invoke()
+                        Catch ex As System.Exception
+                            ' Swallow to keep dialog functional.
+                        End Try
+                        If CloseAfterExtra Then messageForm.Close()
+                    End Sub
 
                 bottomFlow.Controls.Add(extraButton)
             End If
 
-
             If autoCloseSeconds.HasValue Then
                 bottomFlow.Controls.Add(countdownLabel)
             End If
-            mainFlow.Controls.Add(bottomFlow)
 
-            messageForm.Controls.Add(mainFlow)
+            ' Measure button panel height.
+            bottomFlow.PerformLayout()
+            Dim buttonPanelHeight As Integer = bottomFlow.PreferredSize.Height
 
+            ' Body label for text measurement.
+            Dim bodyLabel As New System.Windows.Forms.Label() With {
+                .Text = bodyText,
+                .Font = standardFont,
+                .AutoSize = True
+            }
+
+            ' Calculate optimal dimensions with 16:9 aspect ratio preference.
+            Dim chromeWidth As Integer = messageForm.Width - messageForm.ClientSize.Width + 20
+            Dim chromeHeight As Integer = messageForm.Height - messageForm.ClientSize.Height
+
+            ' Start with minimum width and calculate text height.
+            Dim contentWidth As Integer = MIN_WIDTH - 2 * PADDING
+            bodyLabel.MaximumSize = New Size(contentWidth, 0)
+            Dim textSize As Size = bodyLabel.GetPreferredSize(New Size(contentWidth, 0))
+
+            ' Try to achieve 16:9 ratio by widening if text is tall.
+            Dim targetHeight As Integer = textSize.Height + buttonPanelHeight + PADDING
+            Dim targetWidth As Integer = MIN_WIDTH
+
+            ' Iteratively widen to approach 16:9 ratio while text is taller than optimal.
+            Dim iterations As Integer = 0
+            While iterations < 20 AndAlso targetHeight > 0
+                Dim optimalHeight As Integer = CInt(targetWidth / ASPECT_RATIO)
+                If targetHeight <= optimalHeight OrElse targetWidth >= maxScreenWidth Then
+                    Exit While
+                End If
+
+                ' Increase width.
+                targetWidth = Math.Min(targetWidth + 50, maxScreenWidth)
+                contentWidth = targetWidth - 2 * PADDING - chromeWidth
+
+                bodyLabel.MaximumSize = New Size(contentWidth, 0)
+                textSize = bodyLabel.GetPreferredSize(New Size(contentWidth, 0))
+                targetHeight = textSize.Height + buttonPanelHeight + PADDING
+
+                iterations += 1
+            End While
+
+            ' Determine if scrolling is needed.
+            Dim needsScroll As Boolean = textSize.Height > (maxScreenHeight - buttonPanelHeight - PADDING)
+            Dim bodyPanelHeight As Integer
+
+            If needsScroll Then
+                bodyPanelHeight = maxScreenHeight - buttonPanelHeight - PADDING
+                ' Account for scrollbar width.
+                contentWidth = contentWidth - SystemInformation.VerticalScrollBarWidth
+                bodyLabel.MaximumSize = New Size(contentWidth, 0)
+            Else
+                bodyPanelHeight = textSize.Height
+            End If
+
+            ' Create scrollable body container.
+            Dim bodyScrollPanel As New Panel() With {
+                .Dock = DockStyle.Fill,
+                .AutoScroll = needsScroll,
+                .Padding = New Padding(PADDING, PADDING, PADDING, BUTTON_GAP)
+            }
+
+            bodyLabel.MaximumSize = New Size(contentWidth, 0)
+            bodyLabel.Location = New Point(PADDING, PADDING)  ' Respect the left and top padding
+            bodyScrollPanel.Controls.Add(bodyLabel)
+
+            If needsScroll Then
+                bodyScrollPanel.AutoScrollMinSize = New Size(contentWidth, textSize.Height + PADDING)  ' Add padding to scroll size
+            End If
+
+            ' Main layout using TableLayoutPanel for proper resizing.
+            Dim mainLayout As New TableLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .ColumnCount = 1,
+                .RowCount = 2,
+                .Padding = New Padding(0),
+                .Margin = New Padding(0)
+            }
+            mainLayout.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100.0F))
+            mainLayout.RowStyles.Add(New RowStyle(SizeType.Percent, 100.0F)) ' Body expands.
+            mainLayout.RowStyles.Add(New RowStyle(SizeType.AutoSize))        ' Buttons fixed.
+
+            mainLayout.Controls.Add(bodyScrollPanel, 0, 0)
+            mainLayout.Controls.Add(bottomFlow, 0, 1)
+
+            messageForm.Controls.Add(mainLayout)
+
+            ' Calculate final form size.
+            Dim clientWidth As Integer = Math.Max(MIN_WIDTH, targetWidth) - chromeWidth
+            Dim clientHeight As Integer = bodyPanelHeight + buttonPanelHeight + PADDING + BUTTON_GAP
+
+            messageForm.ClientSize = New Size(clientWidth, clientHeight)
+
+            ' Set minimum size to ensure buttons always visible.
+            Dim minButtonWidth As Integer = bottomFlow.PreferredSize.Width + 2 * PADDING
+            messageForm.MinimumSize = New Size(
+                Math.Max(MIN_WIDTH, minButtonWidth + chromeWidth),
+                buttonPanelHeight + 100 + chromeHeight
+            )
+
+            ' Handle resize to update label wrapping.
+            AddHandler messageForm.Resize,
+                Sub()
+                    Dim availableWidth As Integer = bodyScrollPanel.ClientSize.Width - 2 * PADDING
+                    If bodyScrollPanel.AutoScroll Then
+                        availableWidth -= SystemInformation.VerticalScrollBarWidth
+                    End If
+                    bodyLabel.MaximumSize = New Size(Math.Max(100, availableWidth), 0)
+                    bodyLabel.PerformLayout()
+
+                    If bodyScrollPanel.AutoScroll Then
+                        bodyScrollPanel.AutoScrollMinSize = New Size(availableWidth, bodyLabel.PreferredHeight + PADDING)
+                    End If
+                End Sub
 
             ' Auto-close timer.
             If autoCloseSeconds.HasValue Then
@@ -742,11 +830,21 @@ Namespace SharedLibrary
             ' Show and return.
             messageForm.TopMost = True
             messageForm.Opacity = 1
-            messageForm.ShowDialog()
+            messageForm.BringToFront()
+            messageForm.Focus()
             messageForm.Activate()
+
+            AddHandler messageForm.Shown,
+                Sub(sender, e)
+                    messageForm.TopMost = False
+                    messageForm.TopMost = True
+                    messageForm.Activate()
+                    messageForm.BringToFront()
+                End Sub
+
+            messageForm.ShowDialog()
             Return result
         End Function
-
 
         ''' <summary>
         ''' Shows a modal message dialog with OK button and optional auto-close behavior.

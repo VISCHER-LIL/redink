@@ -1105,13 +1105,21 @@ Namespace SharedLibrary
                 If chkExcel.Checked Then CreateAppConfig("Excel", providerName)
                 If chkOutlook.Checked Then CreateAppConfig("Outlook", providerName)
 
+                ShowCustomMessageBox(
+                            "You have completed a basic installation." & vbCrLf & vbCrLf &
+                            "To add more model configurations, Special Service configurations, get sample files " &
+                            "(including a prompt library) and change your settings, go to 'Settings', where you " &
+                            "will find in particular a button with 'Get More'. Use it." & vbCrLf & vbCrLf &
+                            $"Have fun using {SharedMethods.AN}!"
+                        )
+
                 ' Close wizard
                 Me.DialogResult = DialogResult.OK
                 _context.InitialConfigFailed = False
                 Me.Close()
 
             Catch ex As System.Exception
-                MessageBox.Show("Error in btnOK_Click: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                MessageBox.Show("Error finalizing configuration: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             End Try
         End Sub
 

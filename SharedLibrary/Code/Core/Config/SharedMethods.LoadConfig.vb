@@ -131,8 +131,8 @@ Namespace SharedLibrary
                 context.INI_TokenCount = If(configDict.ContainsKey("TokenCount"), configDict("TokenCount"), "")
                 context.INI_APICall = If(configDict.ContainsKey("APICall"), configDict("APICall"), "")
                 context.INI_APICall_Object = If(configDict.ContainsKey("APICall_Object"), configDict("APICall_Object"), "")
-                context.INI_Timeout = If(configDict.ContainsKey("Timeout"), CLng(configDict("Timeout")), 0)
-                context.INI_MaxOutputToken = If(configDict.ContainsKey("MaxOutputToken"), CInt(configDict("MaxOutputToken")), 0)
+                context.INI_Timeout = If(configDict.ContainsKey("Timeout"), CLng(configDict("Timeout")), DEFAULT_TIMEOUT_LONG)
+                context.INI_MaxOutputToken = If(configDict.ContainsKey("MaxOutputToken"), CInt(configDict("MaxOutputToken")), DEFAULT_MAX_OUTPUT_TOKEN)
                 context.INI_Temperature = If(configDict.ContainsKey("Temperature"), configDict("Temperature"), "")
                 context.INI_Model = If(configDict.ContainsKey("Model"), configDict("Model"), "")
 
@@ -213,15 +213,15 @@ Namespace SharedLibrary
                 context.INI_PostCorrection = If(configDict.ContainsKey("PostCorrection"), configDict("PostCorrection"), "")
                 context.INI_APIKeyPrefix = If(configDict.ContainsKey("APIKeyPrefix"), configDict("APIKeyPrefix"), "")
                 context.INI_UsageRestrictions = If(configDict.ContainsKey("UsageRestrictions"), configDict("UsageRestrictions"), "")
-                context.INI_Language1 = If(configDict.ContainsKey("Language1"), configDict("Language1"), "English")
-                context.INI_Language2 = If(configDict.ContainsKey("Language2"), configDict("Language2"), "German")
-                context.INI_KeepFormatCap = If(configDict.ContainsKey("KeepFormatCap"), CInt(configDict("KeepFormatCap")), 5000)
-                context.INI_MarkupMethodHelper = If(configDict.ContainsKey("MarkupMethodHelper"), CInt(configDict("MarkupMethodHelper")), 3)
-                context.INI_MarkupMethodWord = If(configDict.ContainsKey("MarkupMethodWord"), CInt(configDict("MarkupMethodWord")), 3)
-                context.INI_MarkupMethodOutlook = If(configDict.ContainsKey("MarkupMethodOutlook"), CInt(configDict("MarkupMethodOutlook")), 3)
-                context.INI_MarkupDiffCap = If(configDict.ContainsKey("MarkupDiffCap"), CInt(configDict("MarkupDiffCap")), 20000)
-                context.INI_MarkupRegexCap = If(configDict.ContainsKey("MarkupRegexCap"), CInt(configDict("MarkupRegexCap")), 30000)
-                context.INI_ChatCap = If(configDict.ContainsKey("ChatCap"), CInt(configDict("ChatCap")), 50000)
+                context.INI_Language1 = If(configDict.ContainsKey("Language1"), configDict("Language1"), DEFAULT_LANGUAGE_1)
+                context.INI_Language2 = If(configDict.ContainsKey("Language2"), configDict("Language2"), DEFAULT_LANGUAGE_2)
+                context.INI_KeepFormatCap = If(configDict.ContainsKey("KeepFormatCap"), CInt(configDict("KeepFormatCap")), DEFAULT_KEEPFORMAT_CAP)
+                context.INI_MarkupMethodHelper = If(configDict.ContainsKey("MarkupMethodHelper"), CInt(configDict("MarkupMethodHelper")), DEFAULT_MARKUP_METHOD_HELPER)
+                context.INI_MarkupMethodWord = If(configDict.ContainsKey("MarkupMethodWord"), CInt(configDict("MarkupMethodWord")), DEFAULT_MARKUP_METHOD_WORD)
+                context.INI_MarkupMethodOutlook = If(configDict.ContainsKey("MarkupMethodOutlook"), CInt(configDict("MarkupMethodOutlook")), DEFAULT_MARKUP_METHOD_OUTLOOK)
+                context.INI_MarkupDiffCap = If(configDict.ContainsKey("MarkupDiffCap"), CInt(configDict("MarkupDiffCap")), DEFAULT_MARKUP_DIFF_CAP)
+                context.INI_MarkupRegexCap = If(configDict.ContainsKey("MarkupRegexCap"), CInt(configDict("MarkupRegexCap")), DEFAULT_MARKUP_REGEX_CAP)
+                context.INI_ChatCap = If(configDict.ContainsKey("ChatCap"), CInt(configDict("ChatCap")), DEFAULT_CHAT_CAP)
 
                 ' Load per-user overrides from My.Settings.
                 context.INI_DefaultPrefix = My.Settings.DefaultPrefix
@@ -236,18 +236,18 @@ Namespace SharedLibrary
                 context.INI_NoDash = ParseBoolean(configDict, "NoEmDash")
                 context.INI_MarkdownBubbles = ParseBoolean(configDict, "MarkdownBubbles")
                 context.INI_KeepFormat1 = ParseBoolean(configDict, "KeepFormat1")
-                context.INI_ReplaceText1 = ParseBoolean(configDict, "ReplaceText1", True)
+                context.INI_ReplaceText1 = ParseBoolean(configDict, "ReplaceText1", DEFAULT_BOOL_REPLACETEXT1)
                 context.INI_KeepFormat2 = ParseBoolean(configDict, "KeepFormat2")
-                context.INI_MarkdownConvert = ParseBoolean(configDict, "MarkdownConvert", True)
+                context.INI_MarkdownConvert = ParseBoolean(configDict, "MarkdownConvert", DEFAULT_BOOL_MARKDOWNCONVERT)
                 context.INI_KeepParaFormatInline = ParseBoolean(configDict, "KeepParaFormatInline")
-                context.INI_ReplaceText2 = ParseBoolean(configDict, "ReplaceText2", True)
-                context.INI_DoMarkupOutlook = ParseBoolean(configDict, "DoMarkupOutlook", True)
-                context.INI_DoMarkupWord = ParseBoolean(configDict, "DoMarkupWord", True)
+                context.INI_ReplaceText2 = ParseBoolean(configDict, "ReplaceText2", DEFAULT_BOOL_REPLACETEXT2)
+                context.INI_DoMarkupOutlook = ParseBoolean(configDict, "DoMarkupOutlook", DEFAULT_BOOL_DOMARKUPOUTLOOK)
+                context.INI_DoMarkupWord = ParseBoolean(configDict, "DoMarkupWord", DEFAULT_BOOL_DOMARKUPWORD)
                 context.INI_RoastMe = ParseBoolean(configDict, "RoastMe", False)
                 context.INI_APIDebug = ParseBoolean(configDict, "APIDebug")
                 context.INI_APIEncrypted = ParseBoolean(configDict, "APIKeyEncrypted")
                 context.INI_ShortcutsWordExcel = If(configDict.ContainsKey("ShortcutsWordExcel"), configDict("ShortcutsWordExcel"), "")
-                context.INI_ContextMenu = ParseBoolean(configDict, "ContextMenu", True)
+                context.INI_ContextMenu = ParseBoolean(configDict, "ContextMenu", DEFAULT_BOOL_CONTEXTMENU)
 
                 ' Set runtime ignore prompt based on INI_Ignore.
                 If context.INI_Ignore Then context.Ignore = context.SP_Ignore Else context.Ignore = ""
@@ -256,13 +256,13 @@ Namespace SharedLibrary
 
                 context.INI_UpdateCheckInterval = If(configDict.ContainsKey("UpdateCheckInterval"), CInt(configDict("UpdateCheckInterval")), DefaultUpdateIntervalDays)
                 context.INI_UpdatePath = If(configDict.ContainsKey("UpdatePath"), configDict("UpdatePath"), "")
-                context.INI_UpdateIni = ParseBoolean(configDict, "UpdateIni", True)
-                context.INI_UpdateIniAllowRemote = ParseBoolean(configDict, "UpdateIniAllowRemote", True)
+                context.INI_UpdateIni = ParseBoolean(configDict, "UpdateIni", DEFAULT_BOOL_UPDATEINI)
+                context.INI_UpdateIniAllowRemote = ParseBoolean(configDict, "UpdateIniAllowRemote", DEFAULT_BOOL_UPDATEINI_ALLOWREMOTE)
                 context.INI_UpdateIniNoSignature = ParseBoolean(configDict, "UpdateIniNoSignature", False)
                 context.INI_UpdateSource = If(configDict.ContainsKey("UpdateSource"), configDict("UpdateSource"), "")
                 context.INI_UpdateIniIgnoreOverride = If(configDict.ContainsKey("UpdateIniIgnoreOverride"), configDict("UpdateIniIgnoreOverride"), "")
-                context.INI_UpdateIniSilentMode = If(configDict.ContainsKey("UpdateIniSilentMode"), CInt(configDict("UpdateIniSilentMode")), 0)
-                context.INI_UpdateIniSilentLog = ParseBoolean(configDict, "UpdateIniSilentLog", True)
+                context.INI_UpdateIniSilentMode = If(configDict.ContainsKey("UpdateIniSilentMode"), CInt(configDict("UpdateIniSilentMode")), DEFAULT_UPDATE_INI_SILENT_MODE)
+                context.INI_UpdateIniSilentLog = ParseBoolean(configDict, "UpdateIniSilentLog", DEFAULT_BOOL_UPDATEINISILENTLOG)
 
                 context.INI_HelpMeInkyPath = If(configDict.ContainsKey("HelpMeInkyPath"), configDict("HelpMeInkyPath"), Default_HelpMeInkyPath)
                 context.INI_DiscussInkyPath = If(configDict.ContainsKey("DiscussInkyPath"), configDict("DiscussInkyPath"), "")
@@ -294,13 +294,13 @@ Namespace SharedLibrary
                 context.INI_PromptLibPath_Transcript = If(configDict.ContainsKey("PromptLib_Transcript"), configDict("PromptLib_Transcript"), "")
 
                 ' Process Internet search if enabled.
-                context.INI_ISearch = ParseBoolean(configDict, "ISearch", True)
+                context.INI_ISearch = ParseBoolean(configDict, "ISearch", DEFAULT_BOOL_ISEARCH_ENABLED)
                 If context.INI_ISearch Then
                     context.INI_ISearch_Approve = ParseBoolean(configDict, "ISearch_Approve", False)
-                    context.INI_ISearch_URL = If(configDict.ContainsKey("ISearch_URL"), configDict("ISearch_URL"), "https://duckduckgo.com/html/?q=")
-                    context.INI_ISearch_ResponseMask1 = If(configDict.ContainsKey("ISearch_ResponseMask1"), configDict("ISearch_ResponseMask1"), "duckduckgo.com/l/?uddg=")
-                    context.INI_ISearch_ResponseMask2 = If(configDict.ContainsKey("ISearch_ResponseMask2"), configDict("ISearch_ResponseMask2"), "&")
-                    context.INI_ISearch_Name = If(configDict.ContainsKey("ISearch_Name"), configDict("ISearch_Name"), "DuckDuckGo")
+                    context.INI_ISearch_URL = If(configDict.ContainsKey("ISearch_URL"), configDict("ISearch_URL"), DEFAULT_ISEARCH_URL)
+                    context.INI_ISearch_ResponseMask1 = If(configDict.ContainsKey("ISearch_ResponseMask1"), configDict("ISearch_ResponseMask1"), DEFAULT_ISEARCH_RESPONSE_MASK_1)
+                    context.INI_ISearch_ResponseMask2 = If(configDict.ContainsKey("ISearch_ResponseMask2"), configDict("ISearch_ResponseMask2"), DEFAULT_ISEARCH_RESPONSE_MASK_2)
+                    context.INI_ISearch_Name = If(configDict.ContainsKey("ISearch_Name"), configDict("ISearch_Name"), DEFAULT_ISEARCH_NAME)
                     context.INI_ISearch_Tries = If(configDict.ContainsKey("ISearch_Tries"), CInt(configDict("ISearch_Tries")), ISearch_DefTries)
                     context.INI_ISearch_Results = If(configDict.ContainsKey("ISearch_Results"), CInt(configDict("ISearch_Results")), ISearch_DefResults)
                     context.INI_ISearch_MaxDepth = If(configDict.ContainsKey("ISearch_MaxDepth"), CInt(configDict("ISearch_MaxDepth")), ISearch_DefMaxDepth)
@@ -319,7 +319,7 @@ Namespace SharedLibrary
                 context.INI_Lib = ParseBoolean(configDict, "Lib")
                 If context.INI_Lib Then
                     context.INI_Lib_File = If(configDict.ContainsKey("Lib_File"), configDict("Lib_File"), "")
-                    context.INI_Lib_Timeout = If(configDict.ContainsKey("Lib_Timeout"), CLng(configDict("Lib_Timeout")), 60000)
+                    context.INI_Lib_Timeout = If(configDict.ContainsKey("Lib_Timeout"), CLng(configDict("Lib_Timeout")), DEFAULT_TIMEOUT_LIB)
                     context.INI_Lib_Find_SP = If(configDict.ContainsKey("Lib_Find_SP"), configDict("Lib_Find_SP"), Default_Lib_Find_SP)
                     context.INI_Lib_Apply_SP = If(configDict.ContainsKey("Lib_Apply_SP"), configDict("Lib_Apply_SP"), Default_Lib_Apply_SP)
                     context.INI_Lib_Apply_SP_Markup = If(configDict.ContainsKey("Lib_Apply_SP_Markup"), configDict("Lib_Apply_SP_Markup"), Default_Lib_Apply_SP_Markup)
@@ -339,8 +339,8 @@ Namespace SharedLibrary
                     context.INI_TokenCount_2 = If(configDict.ContainsKey("TokenCount_2"), configDict("TokenCount_2"), "")
                     context.INI_APICall_2 = If(configDict.ContainsKey("APICall_2"), configDict("APICall_2"), "")
                     context.INI_APICall_Object_2 = If(configDict.ContainsKey("APICall_Object_2"), configDict("APICall_Object_2"), "")
-                    context.INI_Timeout_2 = If(configDict.ContainsKey("Timeout_2"), CLng(configDict("Timeout_2")), 0)
-                    context.INI_MaxOutputToken_2 = If(configDict.ContainsKey("MaxOutputToken_2"), CInt(configDict("MaxOutputToken_2")), 0)
+                    context.INI_Timeout_2 = If(configDict.ContainsKey("Timeout_2"), CLng(configDict("Timeout_2")), DEFAULT_TIMEOUT_2_LONG)
+                    context.INI_MaxOutputToken_2 = If(configDict.ContainsKey("MaxOutputToken_2"), CInt(configDict("MaxOutputToken_2")), DEFAULT_MAX_OUTPUT_TOKEN_2)
                     context.INI_Temperature_2 = If(configDict.ContainsKey("Temperature_2"), configDict("Temperature_2"), "")
                     context.INI_Model_2 = If(configDict.ContainsKey("Model_2"), configDict("Model_2"), "")
                     context.INI_APIEncrypted_2 = ParseBoolean(configDict, "APIKeyEncrypted_2")
@@ -353,7 +353,7 @@ Namespace SharedLibrary
                     context.INI_OAuth2ClientMail = If(configDict.ContainsKey("OAuth2ClientMail"), configDict("OAuth2ClientMail"), "")
                     context.INI_OAuth2Scopes = If(configDict.ContainsKey("OAuth2Scopes"), configDict("OAuth2Scopes"), "")
                     context.INI_OAuth2Endpoint = If(configDict.ContainsKey("OAuth2Endpoint"), configDict("OAuth2Endpoint"), "")
-                    context.INI_OAuth2ATExpiry = If(configDict.ContainsKey("OAuth2ATExpiry"), CLng(configDict("OAuth2ATExpiry")), 3600)
+                    context.INI_OAuth2ATExpiry = If(configDict.ContainsKey("OAuth2ATExpiry"), CLng(configDict("OAuth2ATExpiry")), DEFAULT_OAUTH2_AT_EXPIRY)
 
                 End If
 
@@ -363,7 +363,7 @@ Namespace SharedLibrary
                         context.INI_OAuth2ClientMail_2 = If(configDict.ContainsKey("OAuth2ClientMail_2"), configDict("OAuth2ClientMail_2"), "")
                         context.INI_OAuth2Scopes_2 = If(configDict.ContainsKey("OAuth2Scopes_2"), configDict("OAuth2Scopes_2"), "")
                         context.INI_OAuth2Endpoint_2 = If(configDict.ContainsKey("OAuth2Endpoint_2"), configDict("OAuth2Endpoint_2"), "")
-                        context.INI_OAuth2ATExpiry_2 = If(configDict.ContainsKey("OAuth2ATExpiry_2"), CLng(configDict("OAuth2ATExpiry_2")), 3600)
+                        context.INI_OAuth2ATExpiry_2 = If(configDict.ContainsKey("OAuth2ATExpiry_2"), CLng(configDict("OAuth2ATExpiry_2")), DEFAULT_OAUTH2_AT_EXPIRY_2)
                     End If
                 End If
 

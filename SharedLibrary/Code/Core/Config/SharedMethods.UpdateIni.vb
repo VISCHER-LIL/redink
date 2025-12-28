@@ -642,19 +642,19 @@ Namespace SharedLibrary
             Dim btnClose As New Button() With {
                 .Text = "Close",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8),
+                .Padding = New Padding(10, 5, 10, 5),
                 .Margin = New Padding(0, 0, 10, 0)
             }
             Dim btnCopy As New Button() With {
                 .Text = "Copy to Clipboard",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8),
+                .Padding = New Padding(10, 5, 10, 5),
                 .Margin = New Padding(0, 0, 10, 0)
             }
             Dim btnDiagnose As New Button() With {
                 .Text = "Open Signature Tool...",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8)
+                .Padding = New Padding(10, 5, 10, 5)
             }
 
             pnlButtons.Controls.Add(btnClose)
@@ -761,6 +761,7 @@ Namespace SharedLibrary
         '''   - "all" = update all keys from remote (including new keys)
         '''   - "new" = only propose new keys not in local file
         '''   - "key1,key2" = only update specific listed keys
+        '''   - "-key1" = do not update specific listed key
         '''   - "all,new" or "key1,key2,new" = combine behaviors
         ''' </summary>
         Private Shared Sub ParseUpdateSource(segment As IniSegment)
@@ -1015,9 +1016,19 @@ Namespace SharedLibrary
                 ' Check for special key modifiers
                 Dim hasAll = sourceInfo.UpdateKeys.Any(Function(k) k.Equals("all", StringComparison.OrdinalIgnoreCase))
                 Dim hasNew = sourceInfo.UpdateKeys.Any(Function(k) k.Equals("new", StringComparison.OrdinalIgnoreCase))
+                Dim excludedKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+
+                For Each k In sourceInfo.UpdateKeys
+                    If k.StartsWith("-", StringComparison.Ordinal) AndAlso k.Length > 1 Then
+                        excludedKeys.Add(k.Substring(1).Trim())
+                    End If
+                Next
+
                 Dim specificKeys = sourceInfo.UpdateKeys.Where(
-                    Function(k) Not k.Equals("all", StringComparison.OrdinalIgnoreCase) AndAlso
-                                Not k.Equals("new", StringComparison.OrdinalIgnoreCase)).ToList()
+                            Function(k) Not k.Equals("all", StringComparison.OrdinalIgnoreCase) AndAlso
+                                        Not k.Equals("new", StringComparison.OrdinalIgnoreCase) AndAlso
+                                        Not k.StartsWith("-", StringComparison.Ordinal)
+                        ).ToList()
 
                 ' Determine which keys to check
                 Dim keysToCheck As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
@@ -1042,6 +1053,11 @@ Namespace SharedLibrary
                         End If
                     Next
                 End If
+
+                ' Remove explicitly excluded keys
+                For Each excludedKey In excludedKeys
+                    keysToCheck.Remove(excludedKey)
+                Next
 
                 ' Compare values
                 For Each key In keysToCheck
@@ -1124,26 +1140,33 @@ Namespace SharedLibrary
                     ' Check for special key modifiers
                     Dim hasAll As Boolean = segment.UpdateKeys.Any(Function(k) k.Equals("all", StringComparison.OrdinalIgnoreCase))
                     Dim hasNew As Boolean = segment.UpdateKeys.Any(Function(k) k.Equals("new", StringComparison.OrdinalIgnoreCase))
+
+                    Dim excludedKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+                    For Each k In segment.UpdateKeys
+                        If k.StartsWith("-", StringComparison.Ordinal) AndAlso k.Length > 1 Then
+                            excludedKeys.Add(k.Substring(1).Trim())
+                        End If
+                    Next
+
                     Dim specificKeys As List(Of String) = segment.UpdateKeys.Where(
-                        Function(k) Not k.Equals("all", StringComparison.OrdinalIgnoreCase) AndAlso
-                                    Not k.Equals("new", StringComparison.OrdinalIgnoreCase)).ToList()
+                                Function(k) Not k.Equals("all", StringComparison.OrdinalIgnoreCase) AndAlso
+                                            Not k.Equals("new", StringComparison.OrdinalIgnoreCase) AndAlso
+                                            Not k.StartsWith("-", StringComparison.Ordinal)
+                            ).ToList()
 
                     ' Determine which keys to check
                     Dim keysToCheck As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
 
                     If hasAll Then
-                        ' "all" - check all keys from remote segment
                         For Each key As String In remoteSegment.Parameters.Keys
                             keysToCheck.Add(key)
                         Next
                     Else
-                        ' Add specific keys
                         For Each key As String In specificKeys
                             keysToCheck.Add(key)
                         Next
                     End If
 
-                    ' If "new" is specified, also include keys that exist in remote but not in local
                     If hasNew Then
                         For Each key As String In remoteSegment.Parameters.Keys
                             If Not segment.Parameters.ContainsKey(key) Then
@@ -1151,6 +1174,11 @@ Namespace SharedLibrary
                             End If
                         Next
                     End If
+
+                    ' Remove explicitly excluded keys
+                    For Each excludedKey In excludedKeys
+                        keysToCheck.Remove(excludedKey)
+                    Next
 
                     ' Compare values
                     For Each key As String In keysToCheck
@@ -1691,13 +1719,13 @@ Namespace SharedLibrary
             Dim btnSave As New Button() With {
                 .Text = "Save Changes",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8),
+                .Padding = New Padding(10, 5, 10, 5),
                 .Margin = New Padding(0, 0, 10, 0)
             }
             Dim btnCancel As New Button() With {
                 .Text = "Cancel",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8)
+                .Padding = New Padding(10, 5, 10, 5)
             }
 
             pnlButtons.Controls.Add(btnSave)
@@ -1939,13 +1967,13 @@ Namespace SharedLibrary
             Dim btnApprove As New Button() With {
                 .Text = "Approve Selected",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8),
+                .Padding = New Padding(10, 5, 10, 5),
                 .Margin = New Padding(0, 0, 10, 0)
             }
             Dim btnReject As New Button() With {
                 .Text = "Reject All",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8)
+                .Padding = New Padding(10, 5, 10, 5)
             }
 
             pnlButtons.Controls.Add(btnApprove)
@@ -2045,19 +2073,19 @@ Namespace SharedLibrary
             Dim btnIgnore As New Button() With {
         .Text = "Ignore Selected",
         .AutoSize = True,
-        .Padding = New Padding(15, 8, 15, 8),
+        .Padding = New Padding(10, 5, 10, 5),
         .Margin = New Padding(0, 0, 10, 0)
     }
             Dim btnIgnoreAll As New Button() With {
         .Text = "Ignore All",
         .AutoSize = True,
-        .Padding = New Padding(15, 8, 15, 8),
+        .Padding = New Padding(10, 5, 10, 5),
         .Margin = New Padding(0, 0, 10, 0)
     }
             Dim btnAbort As New Button() With {
         .Text = "Don't Ignore Any",
         .AutoSize = True,
-        .Padding = New Padding(15, 8, 15, 8)
+        .Padding = New Padding(10, 5, 10, 5)
     }
 
             pnlButtons.Controls.Add(btnIgnore)
@@ -3010,13 +3038,13 @@ Namespace SharedLibrary
             Dim btnAddFiles As New Button() With {
                 .Text = "Add Files...",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8),
+                .Padding = New Padding(10, 5, 10, 5),
                 .Margin = New Padding(0, 0, 10, 0)
             }
             Dim btnClear As New Button() With {
                 .Text = "Clear List",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8)
+                .Padding = New Padding(10, 5, 10, 5)
             }
 
             pnlFileButtons.Controls.Add(btnAddFiles)
@@ -3044,13 +3072,13 @@ Namespace SharedLibrary
             Dim btnSignAll As New Button() With {
                 .Text = "Sign All Files",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8),
+                .Padding = New Padding(10, 5, 10, 5),
                 .Margin = New Padding(0, 0, 10, 0)
             }
             Dim btnClose As New Button() With {
                 .Text = "Close",
                 .AutoSize = True,
-                .Padding = New Padding(15, 8, 15, 8)
+                .Padding = New Padding(10, 5, 10, 5)
             }
 
             pnlButtons.Controls.Add(btnSignAll)

@@ -86,6 +86,57 @@ Namespace SharedLibrary
         End Function
 
 
+        Public Shared Function GenerateRandomText(ByVal targetLength As Integer) As String
+            If targetLength <= 0 Then
+                Return String.Empty
+            End If
+
+            Dim words As String() = {
+        "the", "and", "to", "of", "a", "in", "that", "is", "for", "on",
+        "with", "as", "by", "this", "from", "or", "be", "are", "it", "an",
+        "which", "at", "we", "can", "has", "have", "will", "not", "one",
+        "all", "their", "more", "about", "when", "there", "use", "used",
+        "such", "other", "some", "time", "each", "many", "these", "may",
+        "like", "well", "very", "into", "over", "after", "before"
+    }
+
+            Dim random As New System.Random()
+            Dim builder As New System.Text.StringBuilder(targetLength + 100)
+
+            Dim currentParagraphLength As Integer = 0
+            Dim paragraphTargetLength As Integer = random.Next(250, 500)
+
+            While builder.Length < targetLength
+                Dim word As String = words(random.Next(words.Length))
+
+                If builder.Length > 0 Then
+                    builder.Append(" ")
+                    currentParagraphLength += 1
+                End If
+
+                builder.Append(word)
+                currentParagraphLength += word.Length
+
+                ' Insert paragraph breaks when paragraph size is reached
+                If currentParagraphLength >= paragraphTargetLength AndAlso builder.Length < targetLength - 2 Then
+                    builder.Append(System.Environment.NewLine)
+                    builder.Append(System.Environment.NewLine)
+
+                    currentParagraphLength = 0
+                    paragraphTargetLength = random.Next(250, 500)
+                End If
+            End While
+
+            ' Trim to exact requested length
+            If builder.Length > targetLength Then
+                builder.Length = targetLength
+            End If
+
+            Return builder.ToString()
+        End Function
+
+
+
         ''' <summary>
         ''' Writes a string value to the Windows registry at <paramref name="regPath"/> using the default (unnamed) value.
         ''' </summary>

@@ -194,9 +194,81 @@ Namespace SharedLibrary
 
             scrollPanel.Height = If(contentHeight > maxPanelHeight, maxPanelHeight, contentHeight)
 
-            ' (4) Buttons below panel (unchanged logic, but buttonYPos now reflects possibly taller panel)
-            Dim buttonYPos As Integer = scrollPanel.Bottom + 20
+            ' (4) Buttons below panel 
+
+            ' Top of button row
+            Dim topButtonYPos As Integer = scrollPanel.Bottom + 20
+            ' Height of one button row (derived once, reused)
+            Dim buttonRowHeight As Integer = TextRenderer.MeasureText("Sample", standardFont).Height + 10
+            ' Dim buttonYPos As Integer = scrollPanel.Bottom + 20
+            Dim buttonYPos As Integer = topButtonYPos + buttonRowHeight + 10
+
             Dim buttonSpacing As Integer = 10
+
+            ' --- INI Importer Buttons -------------------------------------------------
+
+            Dim getMoreStuffButton As New System.Windows.Forms.Button()
+            getMoreStuffButton.Text = "Get More"
+            Dim getMoreStuffSize As System.Drawing.Size = TextRenderer.MeasureText(getMoreStuffButton.Text, standardFont)
+            getMoreStuffButton.Size = New System.Drawing.Size(getMoreStuffSize.Width + 20, getMoreStuffSize.Height + 10)
+            getMoreStuffButton.Location = New System.Drawing.Point(10, topButtonYPos)
+            settingsForm.Controls.Add(getMoreStuffButton)
+
+            Dim getMoreStuffButtonToolTip As New System.Windows.Forms.ToolTip()
+            getMoreStuffButtonToolTip.SetToolTip(
+                    getMoreStuffButton,
+                    $"Will open {GetMoreStuffURL} to show you additional AI models, Special Services and other settings you can load into your configuration."
+                )
+
+            Dim loadProviderSettingsButton As New System.Windows.Forms.Button()
+            loadProviderSettingsButton.Text = "Get Model/Special Service"
+            Dim loadProviderSettingsSize As System.Drawing.Size = TextRenderer.MeasureText(loadProviderSettingsButton.Text, standardFont)
+            loadProviderSettingsButton.Size = New System.Drawing.Size(loadProviderSettingsSize.Width + 20, loadProviderSettingsSize.Height + 10)
+            loadProviderSettingsButton.Location = New System.Drawing.Point(getMoreStuffButton.Right + buttonSpacing, topButtonYPos)
+            settingsForm.Controls.Add(loadProviderSettingsButton)
+
+            Dim loadProviderSettingsToolTip As New System.Windows.Forms.ToolTip()
+            loadProviderSettingsToolTip.SetToolTip(
+                    loadProviderSettingsButton,
+                    $"Allows you to configure AI models and Special Services based on an URL (or file) you provide. See '{getMoreStuffButton.Text}' for URLs."
+                )
+
+            Dim loadOtherSettingsButton As New System.Windows.Forms.Button()
+            loadOtherSettingsButton.Text = "Get Settings"
+            Dim loadOtherSettingsSize As System.Drawing.Size = TextRenderer.MeasureText(loadOtherSettingsButton.Text, standardFont)
+            loadOtherSettingsButton.Size = New System.Drawing.Size(loadOtherSettingsSize.Width + 20, loadOtherSettingsSize.Height + 10)
+            loadOtherSettingsButton.Location = New System.Drawing.Point(loadProviderSettingsButton.Right + buttonSpacing, topButtonYPos)
+            settingsForm.Controls.Add(loadOtherSettingsButton)
+
+            Dim loadOtherSettingsToolTip As New System.Windows.Forms.ToolTip()
+            loadOtherSettingsToolTip.SetToolTip(
+                        loadOtherSettingsButton,
+                        $"Allows you to add configuration settings for {AN} based on an URL (or file) you provide. See '{getMoreStuffButton.Text}' for URLs."
+                    )
+
+            Dim downloadSampleFilesButton As New System.Windows.Forms.Button()
+            downloadSampleFilesButton.Text = "Get Sample Files"
+            Dim downloadSampleFilesSize As System.Drawing.Size = TextRenderer.MeasureText(downloadSampleFilesButton.Text, standardFont)
+            downloadSampleFilesButton.Size = New System.Drawing.Size(downloadSampleFilesSize.Width + 20, downloadSampleFilesSize.Height + 10)
+            downloadSampleFilesButton.Location = New System.Drawing.Point(loadOtherSettingsButton.Right + buttonSpacing, topButtonYPos)
+            settingsForm.Controls.Add(downloadSampleFilesButton)
+
+            Dim downloadSampleFilesToolTip As New System.Windows.Forms.ToolTip()
+            downloadSampleFilesToolTip.SetToolTip(
+                            downloadSampleFilesButton,
+                            $"Downloads from {AppsUrl} sample files you can use with {AN} and update your configuration, if necessary."
+                        )
+
+
+            Dim activeIniPath As String = GetActiveConfigFilePath(context)
+            If Not IniImportManager.CanUseImportFeature(context, activeIniPath, "") Then
+                getMoreStuffButton.Enabled = False
+                loadProviderSettingsButton.Enabled = False
+                loadOtherSettingsButton.Enabled = False
+                downloadSampleFilesButton.Enabled = False
+            End If
+
+            ' ------------------------------------------------------------------------
 
             Dim switchButton As New System.Windows.Forms.Button()
             switchButton.Text = "Switch Model"
@@ -316,7 +388,67 @@ Namespace SharedLibrary
             End If
             Dim CapturedContext As ISharedContext = context
 
-            ' (All existing handlers remain unchanged below) --------------------------------
+
+            AddHandler getMoreStuffButton.Click, Sub(sender, e)
+                                                     Try
+                                                         System.Diagnostics.Process.Start(New System.Diagnostics.ProcessStartInfo With {
+                                                                .FileName = GetMoreStuffURL,
+                                                                .UseShellExecute = True
+                                                            })
+                                                     Catch ex As System.Exception
+                                                         MessageBox.Show("Unable to open browser.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                                                     End Try
+                                                 End Sub
+
+            AddHandler loadProviderSettingsButton.Click, Sub(sender, e)
+                                                             If IniImportManager.RunInteractiveImportProvidersOnly(CapturedContext, settingsForm) Then
+                                                                 Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                                                                 If answer = 1 Then
+                                                                     ' Mark config as not loaded so InitializeConfig will re-read from disk
+                                                                     CapturedContext.INIloaded = False
+                                                                     ' Reload configuration from disk into memory
+                                                                     InitializeConfig(CapturedContext, False, True)
+                                                                     ' Refresh the UI with the newly loaded values
+                                                                     RefreshFormValues(settingControls, labelControls, CapturedContext, Settings)
+                                                                     switchButton.Enabled = CapturedContext.INI_SecondAPI
+                                                                     CapturedContext.MenusAdded = False
+                                                                 End If
+                                                             End If
+                                                         End Sub
+
+            AddHandler loadOtherSettingsButton.Click, Sub(sender, e)
+                                                          If IniImportManager.RunInteractiveImportOtherParameters(CapturedContext, settingsForm) Then
+                                                              Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                                                              If answer = 1 Then
+                                                                  ' Mark config as not loaded so InitializeConfig will re-read from disk
+                                                                  CapturedContext.INIloaded = False
+                                                                  ' Reload configuration from disk into memory
+                                                                  InitializeConfig(CapturedContext, False, True)
+                                                                  ' Refresh the UI with the newly loaded values
+                                                                  RefreshFormValues(settingControls, labelControls, CapturedContext, Settings)
+                                                                  switchButton.Enabled = CapturedContext.INI_SecondAPI
+                                                                  CapturedContext.MenusAdded = False
+                                                              End If
+                                                          End If
+                                                      End Sub
+
+            AddHandler downloadSampleFilesButton.Click, Sub(sender, e)
+
+                                                            If IniImportManager.RunDownloadSampleFiles(CapturedContext, settingsForm) Then
+                                                                Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                                                                If answer = 1 Then
+                                                                    ' Mark config as not loaded so InitializeConfig will re-read from disk
+                                                                    CapturedContext.INIloaded = False
+                                                                    ' Reload configuration from disk into memory
+                                                                    InitializeConfig(CapturedContext, False, True)
+                                                                    ' Refresh the UI with the newly loaded values
+                                                                    RefreshFormValues(settingControls, labelControls, CapturedContext, Settings)
+                                                                    switchButton.Enabled = CapturedContext.INI_SecondAPI
+                                                                    CapturedContext.MenusAdded = False
+                                                                End If
+                                                            End If
+                                                        End Sub
+
             AddHandler switchButton.Click, Sub(sender, e)
                                                If CapturedContext.INI_SecondAPI Then
                                                    For Each settingKey In settingControls.Keys
@@ -1550,7 +1682,7 @@ Namespace SharedLibrary
                     {"UpdateIniSilentLog", context.INI_UpdateIniSilentLog.ToString()}
                 }
 
-                Dim KeysToSkipWhenDefault As New Dictionary(Of String, String) From {
+                Dim KeysToSkipWhenDefault As New Dictionary(Of String, Object) From {
                     {"ISearch_SearchTerm_SP", Default_INI_ISearch_SearchTerm_SP},
                     {"ISearch_Apply_SP", Default_INI_ISearch_Apply_SP},
                     {"ISearch_Apply_SP_Markup", Default_INI_ISearch_Apply_SP_Markup},
@@ -1621,7 +1753,38 @@ Namespace SharedLibrary
                     {"SP_FindPrompts", Default_SP_FindPrompts},
                     {"SP_Add_MergePrompt", Default_SP_Add_MergePrompt},
                     {"SP_MergePrompt", Default_SP_MergePrompt},
-                    {"SP_MergePrompt2", Default_SP_MergePrompt2}
+                    {"SP_MergePrompt2", Default_SP_MergePrompt2},
+                    {"Timeout", DEFAULT_TIMEOUT_LONG},
+                    {"Language1", DEFAULT_LANGUAGE_1},
+                    {"Language2", DEFAULT_LANGUAGE_2},
+                    {"KeepFormatCap", DEFAULT_KEEPFORMAT_CAP},
+                    {"MarkupMethodHelper", DEFAULT_MARKUP_METHOD_HELPER},
+                    {"MarkupMethodWord", DEFAULT_MARKUP_METHOD_WORD},
+                    {"MarkupMethodOutlook", DEFAULT_MARKUP_METHOD_OUTLOOK},
+                    {"MarkupDiffCap", DEFAULT_MARKUP_DIFF_CAP},
+                    {"MarkupRegexCap", DEFAULT_MARKUP_REGEX_CAP},
+                    {"ChatCap", DEFAULT_CHAT_CAP},
+                    {"Lib_Timeout", DEFAULT_TIMEOUT_LIB},
+                    {"UpdateIniSilentMode", DEFAULT_UPDATE_INI_SILENT_MODE},
+                    {"ReplaceText1", DEFAULT_BOOL_REPLACETEXT1},
+                    {"MarkdownConvert", DEFAULT_BOOL_MARKDOWNCONVERT},
+                    {"ReplaceText2", DEFAULT_BOOL_REPLACETEXT2},
+                    {"DoMarkupOutlook", DEFAULT_BOOL_DOMARKUPOUTLOOK},
+                    {"DoMarkupWord", DEFAULT_BOOL_DOMARKUPWORD},
+                    {"ContextMenu", DEFAULT_BOOL_CONTEXTMENU},
+                    {"ISearch", DEFAULT_BOOL_ISEARCH_ENABLED},
+                    {"UpdateIni", DEFAULT_BOOL_UPDATEINI},
+                    {"UpdateIniAllowRemote", DEFAULT_BOOL_UPDATEINI_ALLOWREMOTE},
+                    {"UpdateIniSilentLog", DEFAULT_BOOL_UPDATEINISILENTLOG},
+                    {"ISearch_URL", DEFAULT_ISEARCH_URL},
+                    {"ISearch_ResponseMask1", DEFAULT_ISEARCH_RESPONSE_MASK_1},
+                    {"ISearch_ResponseMask2", DEFAULT_ISEARCH_RESPONSE_MASK_2},
+                    {"ISearch_Name", DEFAULT_ISEARCH_NAME},
+                    {"ISearch_Tries", ISearch_DefTries},
+                    {"ISearch_Results", ISearch_DefResults},
+                    {"ISearch_MaxDepth", ISearch_DefMaxDepth},
+                    {"ISearch_Timeout", ISearch_DefSearchTimeout},
+                    {"UpdateCheckInterval", DefaultUpdateIntervalDays}
                 }
 
                 Dim SaveToMySettings As New Dictionary(Of String, String) From {
@@ -1630,7 +1793,6 @@ Namespace SharedLibrary
                     {"MarkupMethodWordOverride", "MarkupMethodWordOverride"},
                     {"MarkupMethodOutlookOverride", "MarkupMethodOutlookOverride"}
                 }
-
 
                 ' Accumulate settings to persist to My.Settings at the end
                 Dim pendingMySettings As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
@@ -1686,8 +1848,8 @@ Namespace SharedLibrary
 
                     ' If this key is mapped to My.Settings, store there only (respecting default-skip behavior)
                     If SaveToMySettings.ContainsKey(key) Then
-                        If KeysToSkipWhenDefault.ContainsKey(key) AndAlso KeysToSkipWhenDefault(key) = value Then
-                            ' Skip adding default to settings to mirror previous "skip when default" behavior
+                        If IsDefaultValue(key, value, KeysToSkipWhenDefault) Then
+                            ' Skip adding default to settings to mirror previous "skip When Default" behavior
                         Else
                             Dim settingsKey As String = SaveToMySettings(key)
                             pendingMySettings(settingsKey) = value
@@ -1696,13 +1858,16 @@ Namespace SharedLibrary
                         Continue For
                     End If
 
+
                     ' For normal keys: skip adding to file if default matches the skip rule
-                    If KeysToSkipWhenDefault.ContainsKey(key) AndAlso KeysToSkipWhenDefault(key) = value Then
+                    If IsDefaultValue(key, value, KeysToSkipWhenDefault) Then
                         Continue For
                     End If
 
-                    ' Write the key-value pair to the updated content
-                    updatedContent.AppendLine($"{key} = {value}")
+                    ' Write the key-value pair to the updated content, but not for empty keys                    
+                    If ShouldWriteKey(key, value, KeysToSkipWhenDefault) Then
+                        updatedContent.AppendLine($"{key} = {value}")
+                    End If
                 Next
 
                 ' Write the updated content to the temporary ini file
@@ -1735,7 +1900,7 @@ Namespace SharedLibrary
                 If IniFilePath = DefaultPath Then
                     ShowCustomMessageBox("Your configuration file has been updated.")
                 Else
-                    ShowCustomMessageBox("Your configuration has been saved to a local configuration file (which will be used going forward until deleted).")
+                    ShowCustomMessageBox("Your configuration has been saved To a local configuration file (which will be used going forward until deleted).")
                 End If
 
                 InitializeConfig(context, False, True)
@@ -1744,6 +1909,109 @@ Namespace SharedLibrary
                 ShowCustomMessageBox($"Error updating configuration file: {ex.Message}")
             End Try
         End Sub
+
+
+        ''' <summary>
+        ''' Determines whether the specified INI key/value pair represents its defined default value
+        ''' and therefore should be skipped when writing the configuration file.
+        ''' </summary>
+        ''' <param name="key">
+        ''' The INI key name to evaluate.
+        ''' </param>
+        ''' <param name="currentValue">
+        ''' The current string value that would be written to the INI file.
+        ''' </param>
+        ''' <param name="defaults">
+        ''' A dictionary mapping INI keys to their strongly-typed default values.
+        ''' </param>
+        ''' <returns>
+        ''' <c>True</c> if the current value matches the default value for the specified key;
+        ''' otherwise, <c>False</c>.
+        ''' </returns>
+        Private Shared Function IsDefaultValue(
+    ByVal key As String,
+    ByVal currentValue As String,
+    ByVal defaults As Dictionary(Of String, Object)
+) As Boolean
+
+            If Not defaults.ContainsKey(key) Then
+                Return False
+            End If
+
+            Dim defaultValue As Object = defaults(key)
+
+            Dim normalizedCurrent As String = NormalizeIniValue(currentValue)
+            Dim normalizedDefault As String = NormalizeIniValue(defaultValue)
+
+            Return String.Equals(normalizedCurrent, normalizedDefault, StringComparison.OrdinalIgnoreCase)
+        End Function
+
+
+        ''' <summary>
+        ''' Normalizes an INI value or default value into a canonical string representation
+        ''' suitable for reliable, culture-invariant comparison.
+        ''' </summary>
+        ''' <param name="value">
+        ''' The value to normalize. Supported types include <see cref="String"/>,
+        ''' <see cref="Boolean"/>, and numeric primitives.
+        ''' </param>
+        ''' <returns>
+        ''' A normalized string representation of the value.
+        ''' </returns>
+        Private Shared Function NormalizeIniValue(ByVal value As Object) As String
+            If value Is Nothing Then
+                Return String.Empty
+            End If
+
+            If TypeOf value Is Boolean Then
+                Return CBool(value).ToString().ToLowerInvariant()
+            End If
+
+            If TypeOf value Is Integer OrElse
+       TypeOf value Is Long OrElse
+       TypeOf value Is Double OrElse
+       TypeOf value Is Decimal Then
+                Return System.Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)
+            End If
+
+            Return value.ToString().Trim()
+        End Function
+
+
+
+        ''' <summary>
+        ''' Determines whether an INI key should be written to disk based on its value.
+        ''' </summary>
+        ''' <param name="key">
+        ''' The INI key name being evaluated.
+        ''' </param>
+        ''' <param name="value">
+        ''' The value associated with the INI key. Empty or whitespace-only strings are considered invalid.
+        ''' Boolean "False" values for keys not in the defaults skiplist are also skipped.
+        ''' </param>
+        ''' <param name="defaults">
+        ''' Dictionary of keys with explicit default values. Boolean keys in this dictionary default to True;
+        ''' boolean keys NOT in this dictionary default to False and should be skipped when False.
+        ''' </param>
+        ''' <returns>
+        ''' <c>True</c> if the value should be written; otherwise, <c>False</c>.
+        ''' </returns>
+        Private Shared Function ShouldWriteKey(ByVal key As String, ByVal value As String, ByVal defaults As Dictionary(Of String, Object)) As Boolean
+            ' Skip empty or whitespace-only values
+            If String.IsNullOrWhiteSpace(value) Then
+                Return False
+            End If
+
+            ' For boolean "False" values not in the skiplist, skip writing (they default to False implicitly)
+            If String.Equals(value, "False", StringComparison.OrdinalIgnoreCase) Then
+                If Not defaults.ContainsKey(key) Then
+                    Return False
+                End If
+            End If
+
+            Return True
+        End Function
+
 
 
         ''' <summary>
@@ -1959,11 +2227,11 @@ Namespace SharedLibrary
             Dim gridTouched As Boolean = False
 
             Dim form As New Form() With {
-        .Text = "Expert Configuration",
-        .StartPosition = FormStartPosition.CenterScreen,
-        .ClientSize = New Size(900, 520),
-        .Font = New System.Drawing.Font("Segoe UI", 9.0F)
-    }
+                        .Text = "Expert Configuration",
+                        .StartPosition = FormStartPosition.CenterScreen,
+                        .ClientSize = New Size(900, 520),
+                        .Font = New System.Drawing.Font("Segoe UI", 9.0F)
+                    }
 
             ' Icon / logo
             Try
@@ -1973,17 +2241,29 @@ Namespace SharedLibrary
             End Try
 
             Dim dgv As New DataGridView() With {
-        .Dock = DockStyle.Fill,
-        .AllowUserToAddRows = False,
-        .AllowUserToDeleteRows = False,
-        .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-        .RowHeadersVisible = False,
-        .SelectionMode = DataGridViewSelectionMode.CellSelect,
-        .MultiSelect = False
-    }
+                        .Dock = DockStyle.Fill,
+                        .AllowUserToAddRows = False,
+                        .AllowUserToDeleteRows = False,
+                        .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                        .RowHeadersVisible = False,
+                        .SelectionMode = DataGridViewSelectionMode.CellSelect,
+                        .MultiSelect = False
+                    }
 
-            Dim colVar As New DataGridViewTextBoxColumn() With {.HeaderText = "Variable", .ReadOnly = True, .Name = "colVar"}
-            Dim colVal As New DataGridViewTextBoxColumn() With {.HeaderText = "Value", .Name = "colVal"}
+            Dim colVar As New System.Windows.Forms.DataGridViewTextBoxColumn() With {
+                    .HeaderText = "Variable",
+                    .ReadOnly = True,
+                    .Name = "colVar",
+                    .FillWeight = 30
+                }
+
+            Dim colVal As New System.Windows.Forms.DataGridViewTextBoxColumn() With {
+                    .HeaderText = "Value",
+                    .Name = "colVal",
+                    .FillWeight = 70
+                }
+
+
             dgv.Columns.AddRange(colVar, colVal)
 
             dgv.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing
@@ -2005,19 +2285,25 @@ Namespace SharedLibrary
             Dim btnSaveClose As New System.Windows.Forms.Button() With {.Text = "Save && Close", .AutoSize = True, .Margin = New Padding(10)}
             Dim btnEditIni As New System.Windows.Forms.Button() With {.Text = "Edit .ini Files", .AutoSize = True, .Margin = New Padding(10)}
             Dim btnCancel As New System.Windows.Forms.Button() With {.Text = "Cancel", .AutoSize = True, .Margin = New Padding(10)}
-            Dim btnImportIni As New System.Windows.Forms.Button() With {.Text = "Import Settings", .AutoSize = True, .Margin = New Padding(10)}
+            Dim btnImportIni As New System.Windows.Forms.Button() With {.Text = "Load Settings From A Source", .AutoSize = True, .Margin = New Padding(10)}
+
+            Dim pnlGridHost As New System.Windows.Forms.Panel() With {
+            .Dock = System.Windows.Forms.DockStyle.Fill,
+            .Padding = New System.Windows.Forms.Padding(15, 15, 15, 15)
+        }
 
 
             Dim pnlButtons As New FlowLayoutPanel() With {
-        .Dock = DockStyle.Bottom,
-        .FlowDirection = FlowDirection.RightToLeft,
-        .AutoSize = True,
-        .Padding = New Padding(16, 12, 16, 14),
-        .WrapContents = False
-    }
+                    .Dock = DockStyle.Bottom,
+                    .FlowDirection = FlowDirection.RightToLeft,
+                    .AutoSize = True,
+                    .Padding = New Padding(15, 15, 15, 15),
+                    .WrapContents = False
+                }
             pnlButtons.Controls.AddRange({btnCancel, btnSaveClose, btnEditIni, btnImportIni})
 
-            form.Controls.Add(dgv)
+            pnlGridHost.Controls.Add(dgv)
+            form.Controls.Add(pnlGridHost)
             form.Controls.Add(pnlButtons)
 
             ' Enable / disable Import Settings button using same eligibility rules
@@ -2200,7 +2486,7 @@ Namespace SharedLibrary
                     End Try
 
                     If ChangesToMainConfig Then
-                        Dim NextStep = ShowCustomYesNoBox("Your import of settings changed the main configuration file. They are not yet reflected in this table. You should close this window and reload the configuration to avoid conflicts (if you cancel, this Expert Configuration window closes without reloading). Proceed?", $"{AN} Expert Configuration", "Yes, close and reload", "No, stay here")
+                        Dim NextStep = ShowCustomYesNoBox("Your import of settings changed the main configuration file. They are not yet reflected in this table. You should close this window and reload the configuration to avoid conflicts (if you cancel, this Expert Configuration window closes without reloading). Proceed?", "Yes, close and reload", "No, stay here")
                         Select Case NextStep
                             Case 1
                                 abortAndReload = True

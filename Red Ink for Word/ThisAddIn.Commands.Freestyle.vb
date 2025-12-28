@@ -46,11 +46,13 @@ Imports System.IO
 Imports System.Text.RegularExpressions
 Imports System.Windows.Forms
 Imports DocumentFormat.OpenXml
+Imports DocumentFormat.OpenXml.Office2010.CustomUI
 Imports DocumentFormat.OpenXml.Presentation
 Imports DocumentFormat.OpenXml.Wordprocessing
 Imports Microsoft.Office.Interop.PowerPoint
 Imports Microsoft.Office.Interop.Word
 Imports NetOffice.PowerPointApi
+Imports SharedLibrary
 Imports SharedLibrary.SharedLibrary
 Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
@@ -520,12 +522,48 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
-
             ' Signature Management for Update INI Key Functionality
             If String.Equals(OtherPrompt.Trim(), "iniupdateignored", StringComparison.OrdinalIgnoreCase) Or String.Equals(OtherPrompt.Trim(), "iniupdateignore", StringComparison.OrdinalIgnoreCase) Then
                 ShowIgnoredParametersDialog()
                 Return
             End If
+
+            ' Signature Management for importing INI keys
+            If String.Equals(OtherPrompt.Trim(), "iniload", StringComparison.OrdinalIgnoreCase) Or String.Equals(OtherPrompt.Trim(), "iniupdateignore", StringComparison.OrdinalIgnoreCase) Then
+
+                If IniImportManager.RunImportFromVariableConfigurationWindow(_context, Nothing) Then
+                        Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                        If answer = 1 Then
+                            ' Mark config as not loaded so InitializeConfig will re-read from disk
+                            _context.INIloaded = False
+                            ' Reload configuration from disk into memory
+                            InitializeConfig(False, True)
+                            ' Refresh the UI with the newly loaded values
+                            _context.MenusAdded = False
+                        End If
+                    End If
+                Return
+            End If
+
+
+            ' Signature Management for importing INI keys
+            If String.Equals(OtherPrompt.Trim(), "inirollback", StringComparison.OrdinalIgnoreCase) Or String.Equals(OtherPrompt.Trim(), "iniupdateignore", StringComparison.OrdinalIgnoreCase) Then
+
+                If IniImportManager.TryRollbackLastBackup(_context, Nothing) Then
+                    Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                    If answer = 1 Then
+                        ' Mark config as not loaded so InitializeConfig will re-read from disk
+                        _context.INIloaded = False
+                        ' Reload configuration from disk into memory
+                        InitializeConfig(False, True)
+                        ' Refresh the UI with the newly loaded values
+                        _context.MenusAdded = False
+                    End If
+                End If
+                Return
+
+            End If
+
 
             ' Check for INI updates and apply if available
             If String.Equals(OtherPrompt.Trim(), "iniupdate", StringComparison.OrdinalIgnoreCase) Then
