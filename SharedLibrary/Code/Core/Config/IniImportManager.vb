@@ -15,7 +15,7 @@
 '     * RunDownloadSampleFiles downloads a central list, downloads referenced sample files,
 '       writes them locally, and optionally updates INI path parameters.
 '     * TryRollbackLastBackup restores the active INI from the latest recognized *.bak and
-'       creates a safety rollback backup first.
+'       creates a safety backup first.
 '
 '  - Import processing (RunImportInternal):
 '     * Source acquisition: URL (HTTPS only, size-limited) or local/UNC file path.
@@ -26,7 +26,7 @@
 '         - Primary/Secondary/OtherParameters -> main INI (activeIniPath).
 '         - AlternateModel/SpecialService -> sectioned INIs (AlternateModelPath / SpecialServicePath),
 '           may update main INI to store those paths and creates missing files.
-'     * Trust enforcement: host-based trust list for HTTPS sources, with additional per-host section marker rules
+'     * Trust enforcement: host-based trust list for HTTPS sources, with additional section marker rules
 '       for restricted-trust hosts.
 '     * Dry run: builds one or more DryRunPlan instances, summarizes changes, and asks for confirmation.
 '     * Commit: writes backups, applies changes via atomic replace when possible, and returns whether the main INI changed.
@@ -36,7 +36,7 @@
 '     * IsRecognizedIniBackupFile limits rollback candidates to module-created full backups (excludes *_removed_*).
 '
 ' Notes:
-'  - This module intentionally restricts import availability (CanUseImportFeature) based on configuration source rules.
+'  - This module restricts import availability (CanUseImportFeature) based on configuration source rules.
 '  - Network access is limited to HTTPS and a maximum download size (MAX_DOWNLOAD_BYTES).
 ' =============================================================================
 
@@ -46,31 +46,54 @@ Option Strict On
 Imports SharedLibrary.SharedLibrary.SharedContext
 Imports SharedLibrary.SharedLibrary.SharedMethods
 
+''' <summary>
+''' Provides configuration import, sample file download, and rollback support for per-application INI configuration.
+''' </summary>
 Public NotInheritable Class IniImportManager
 
     Private Sub New()
     End Sub
 
+    ''' <summary>
+    ''' Maximum number of bytes allowed when downloading import sources or sample files over HTTPS.
+    ''' </summary>
     Private Const MAX_DOWNLOAD_BYTES As System.Int32 = 500 * 1024
 
+    ''' <summary>
+    ''' UI title used for import-related dialogs.
+    ''' </summary>
     Private Shared Property TITLE_IMPORT As System.String = AN & " Get Settings"
+
+    ''' <summary>
+    ''' UI title used for sample-file download dialogs.
+    ''' </summary>
     Private Shared Property TITLE_SAMPLE_FILES As System.String = AN & " Download Sample Files"
 
+    ''' <summary>
+    ''' Validates backup filenames created by this module for rollback selection.
+    ''' </summary>
     Private Shared ReadOnly BAK_SIGNATURE_REGEX As New System.Text.RegularExpressions.Regex(
-    "^" & System.Text.RegularExpressions.Regex.Escape(AN2) & "\.(ini|bak)_\d{8}_\d{6}(_\d{3})?\.bak$",
-    System.Text.RegularExpressions.RegexOptions.IgnoreCase Or System.Text.RegularExpressions.RegexOptions.CultureInvariant
-)
+        "^" & System.Text.RegularExpressions.Regex.Escape(AN2) & "\.(ini|bak)_\d{8}_\d{6}(_\d{3})?\.bak$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase Or System.Text.RegularExpressions.RegexOptions.CultureInvariant
+    )
 
-    ' Set to True to inform user about download failures and malformed lines at the end
+    ''' <summary>
+    ''' When True, user-facing summaries include download/parsing errors for skipped items.
+    ''' </summary>
     Private Const InformOnErrors As System.Boolean = True
 
+    ''' <summary>
+    ''' Controls which interactive steps are shown to the user for an import run.
+    ''' </summary>
     Private Enum ImportMode
         InteractiveAllKinds
         InteractiveWithoutOtherParameters
         DirectOtherParameters
     End Enum
 
-
+    ''' <summary>
+    ''' Represents the semantic category of settings to import.
+    ''' </summary>
     Private Enum ImportKind
         PrimaryModel = 1
         SecondaryModel = 2
@@ -79,12 +102,14 @@ Public NotInheritable Class IniImportManager
         OtherParameters = 5
     End Enum
 
+    ''' <summary>
+    ''' Options for non-interactive "auto import" runs.
+    ''' </summary>
     Private NotInheritable Class AutoImportOptions
         Public Property Source As String
         Public Property ReplaceExisting As Boolean
         Public Property UserConfirmation As Boolean
     End Class
-
 
     ' -----------------------------------------------------------------------------------------
     '  ROLLBACK FEATURE (latest .bak by signature)
@@ -94,6 +119,8 @@ Public NotInheritable Class IniImportManager
     ''' Scans the active configuration directory, finds the latest backup created by this module (by filename signature),
     ''' asks for confirmation, backs up the current active INI, and rolls back to that backup.
     ''' </summary>
+    ''' <param name="context">Shared context used to resolve the active configuration file path.</param>
+    ''' <param name="ownerForm">Owner window for UI dialogs.</param>
     ''' <returns>True if rollback changed the main INI file; otherwise False.</returns>
     Public Shared Function TryRollbackLastBackup(
         context As ISharedContext,
@@ -129,12 +156,9 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' IMPORTANT:
-        ' We return True only if the *main* config file changed.
-        ' (Rolling back other INIs should not force a reload by callers.)
+        ' Return True only if the main configuration file content changes.
         Dim mainIniWasRolledBack As System.Boolean = False
 
-        ' Capture current fingerprint to decide whether rollback actually changed the file
         Dim beforeFingerprint As System.String = Nothing
         Try
             beforeFingerprint = GetFileFingerprint(activeIniPath)
@@ -184,7 +208,6 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' Safety backup of current active INI before rollback
         Dim ts As System.String = System.DateTime.Now.ToString("yyyyMMdd_HHmmss_fff")
         Dim baseName As System.String = System.IO.Path.GetFileNameWithoutExtension(activeIniPath)
         Dim baseExt As System.String = System.IO.Path.GetExtension(activeIniPath)
@@ -197,7 +220,6 @@ Public NotInheritable Class IniImportManager
             Return False
         End Try
 
-        ' Rollback: replace active INI with the chosen backup content (atomic replace if possible)
         Dim tmpPath As System.String = activeIniPath & ".tmp"
 
         Try
@@ -223,13 +245,11 @@ Public NotInheritable Class IniImportManager
             Return False
         End Try
 
-        ' Determine whether the MAIN ini changed (this is what controls the return value)
         Try
             Dim afterFingerprint As System.String = GetFileFingerprint(activeIniPath)
             mainIniWasRolledBack =
                 Not System.String.Equals(beforeFingerprint, afterFingerprint, System.StringComparison.Ordinal)
-        Catch ex As System.Exception
-            ' If verification fails, treat as "not confirmed main change"
+        Catch
             mainIniWasRolledBack = False
         End Try
 
@@ -241,14 +261,16 @@ Public NotInheritable Class IniImportManager
             safetyBackup & System.Environment.NewLine
         )
 
-        ' RETURN RULE:
-        ' True only if main ini changed; False if rollback resulted in identical content (or only other files were affected).
         Return mainIniWasRolledBack
 
     End Function
 
+    ''' <summary>
+    ''' Computes a stable fingerprint for a file based on length, timestamp, and SHA-256 hash.
+    ''' </summary>
+    ''' <param name="path">Path to the file.</param>
+    ''' <returns>Fingerprint string.</returns>
     Private Shared Function GetFileFingerprint(path As System.String) As System.String
-        ' Fast + stable: length + last write ticks + SHA256 (guards against timestamp-only changes)
         Dim fi As New System.IO.FileInfo(path)
         Dim bytes As System.Byte() = System.IO.File.ReadAllBytes(path)
 
@@ -259,23 +281,24 @@ Public NotInheritable Class IniImportManager
         End Using
     End Function
 
+    ''' <summary>
+    ''' Returns True if a file name matches the full-backup naming convention used by this module.
+    ''' </summary>
+    ''' <param name="fileName">Backup file name (no directory).</param>
     Private Shared Function IsRecognizedIniBackupFile(fileName As System.String) As System.Boolean
         If System.String.IsNullOrWhiteSpace(fileName) Then Return False
 
+        ' Only full backups are rollback candidates; removed-content backups are excluded.
         ' Examples produced by this codebase today:
         '   redink.ini_yyyyMMdd_HHmmss_fff.bak          (CommitDryRunPlan)
         '   redink.ini_yyyyMMdd_HHmmss.bak              (sample files backup / older)
         '   redink.ini_removed_yyyyMMdd_HHmmss.bak      (removed-content backup)  -> not a full backup
         '   redink.ini_removed_yyyyMMdd_HHmmss_fff.bak  -> not a full backup
-        '
-        ' We only want the *full* backup variants.
-        If fileName.IndexOf("_removed_", System.StringComparison.OrdinalIgnoreCase) >= 0 Then Return False
+        ' If fileName.IndexOf("_removed_", System.StringComparison.OrdinalIgnoreCase) >= 0 Then Return False
         If Not fileName.EndsWith(".bak", System.StringComparison.OrdinalIgnoreCase) Then Return False
 
-        ' Enforce "our" signature: "{AN2}.ini_<timestamp>.bak" or "{AN2}.ini_<timestamp>_fff.bak"
         Return BAK_SIGNATURE_REGEX.IsMatch(fileName)
     End Function
-
 
     ' =========================================================================================
     '  SAMPLE FILE DOWNLOAD FEATURE
@@ -293,20 +316,19 @@ Public NotInheritable Class IniImportManager
         Public Property DefaultDir As System.String
         Public Property DefaultFileName As System.String
 
-        ' Computed at runtime
         Public Property DownloadedContent As System.String
         Public Property TargetPath As System.String
-        Public Property TargetPathForConfig As System.String ' unexpanded form for storing in config
+        Public Property TargetPathForConfig As System.String
         Public Property WillOverwrite As System.Boolean
         Public Property NeedsConfigUpdate As System.Boolean
         Public Property ConfigValueToStore As System.String
     End Class
 
     ''' <summary>
-    ''' Entry point: Downloads sample files from the central list and saves them locally.
+    ''' Downloads sample files from the central list, writes them locally, and optionally updates INI path parameters.
     ''' </summary>
-    ''' <param name="context">The shared context.</param>
-    ''' <param name="ownerForm">The owner form for dialogs.</param>
+    ''' <param name="context">Shared context used to resolve the active configuration file path.</param>
+    ''' <param name="ownerForm">Owner window for UI dialogs.</param>
     ''' <returns>True if the main configuration file was updated.</returns>
     Public Shared Function RunDownloadSampleFiles(
         context As ISharedContext,
@@ -316,13 +338,11 @@ Public NotInheritable Class IniImportManager
         Dim mainIniChanged As System.Boolean = False
         Dim errors As New System.Collections.Generic.List(Of System.String)()
 
-        ' Validate context
         If context Is Nothing Then
             ShowCustomMessageBox("Internal error: context is missing.")
             Return False
         End If
 
-        ' Get main config path
         Dim activeIniPath As System.String = Nothing
         Try
             activeIniPath = GetActiveConfigFilePath(context)
@@ -336,7 +356,6 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' Check if feature can be used
         Dim disableReason As System.String = Nothing
         If Not CanUseImportFeature(context, activeIniPath, disableReason) Then
             ShowCustomMessageBox(disableReason)
@@ -348,14 +367,12 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' Extract current app from RDV (e.g., "Word (V231312)" -> "Word")
         Dim currentApp As System.String = ExtractAppFromRDV(context.RDV)
         If System.String.IsNullOrWhiteSpace(currentApp) Then
             ShowCustomMessageBox("Could not determine the current application.")
             Return False
         End If
 
-        ' Download the sample files list
         Dim listText As System.String = Nothing
         Try
             Debug.WriteLine("Downloading sample files list from: " & SampleFilesListURL)
@@ -371,7 +388,6 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' Parse the list
         Dim allEntries As System.Collections.Generic.List(Of SampleFileEntry) =
             ParseSampleFilesList(listText, currentApp, errors)
 
@@ -386,11 +402,9 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' Try to download each file and determine target paths
         Dim validEntries As New System.Collections.Generic.List(Of SampleFileEntry)()
 
         For Each entry As SampleFileEntry In allEntries
-            ' Try download
             Try
                 Dim sourceUri As New System.Uri(entry.SourceURL)
                 entry.DownloadedContent = DownloadHttpsTextWithLimit(sourceUri, MAX_DOWNLOAD_BYTES)
@@ -404,15 +418,12 @@ Public NotInheritable Class IniImportManager
                 Continue For
             End Try
 
-            ' Determine target path
             If Not TryDetermineTargetPath(entry, activeIniPath, errors) Then
                 Continue For
             End If
 
-            ' Check if file exists (will overwrite)
             entry.WillOverwrite = System.IO.File.Exists(entry.TargetPath)
 
-            ' Determine if config update is needed
             DetermineConfigUpdateNeeded(entry, activeIniPath)
 
             validEntries.Add(entry)
@@ -429,7 +440,6 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' Build summary for user
         Dim sbSummary As New System.Text.StringBuilder()
         sbSummary.AppendLine("The following sample files will be downloaded:")
         sbSummary.AppendLine()
@@ -473,37 +483,27 @@ Public NotInheritable Class IniImportManager
 
         sbSummary.AppendLine("How do you want to proceed?")
 
-        ' Ask user: 1 = Replace existing, 2 = Skip existing, 0 = Abort
         Dim userChoice As System.Int32
         If overwriteFiles.Count > 0 Then
-
             userChoice = ShowCustomYesNoBox(sbSummary.ToString(), "Replace existing files", "Skip existing files", TITLE_SAMPLE_FILES)
-
         Else
-            ' No files to overwrite, simpler choice
-            userChoice = ShowCustomYesNoBox(
-                sbSummary.ToString(),
-                "Proceed",
-                "Abort", TITLE_SAMPLE_FILES
-            )
-            ' Map to expected values: 1 = proceed, 0 = abort
+            userChoice = ShowCustomYesNoBox(sbSummary.ToString(), "Proceed", "Abort", TITLE_SAMPLE_FILES)
             If userChoice = 0 Then
                 Return False
             End If
-            userChoice = 2 ' Treat as "skip existing" (none exist anyway)
+            userChoice = 2
         End If
 
         If userChoice = 0 Then
-            Return False ' User aborted
+            Return False
         End If
 
         Dim replaceExisting As System.Boolean = (userChoice = 1)
 
-        ' Filter entries based on user choice
         Dim entriesToProcess As New System.Collections.Generic.List(Of SampleFileEntry)()
         For Each entry As SampleFileEntry In validEntries
             If entry.WillOverwrite AndAlso Not replaceExisting Then
-                Continue For ' Skip this one
+                Continue For
             End If
             entriesToProcess.Add(entry)
         Next
@@ -513,18 +513,15 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' Collect config updates needed
         Dim configUpdates As New System.Collections.Generic.Dictionary(Of System.String, System.String)(
             System.StringComparer.OrdinalIgnoreCase)
 
         For Each entry As SampleFileEntry In entriesToProcess
             If entry.NeedsConfigUpdate AndAlso Not System.String.IsNullOrWhiteSpace(entry.ConfigValueToStore) Then
-                ' Last one wins
                 configUpdates(entry.ParameterForPath) = entry.ConfigValueToStore
             End If
         Next
 
-        ' If config updates are needed, confirm with user
         If configUpdates.Count > 0 Then
             Dim sbConfig As New System.Text.StringBuilder()
             sbConfig.AppendLine("The following configuration parameters will be added or updated:")
@@ -548,7 +545,6 @@ Public NotInheritable Class IniImportManager
             End If
         End If
 
-        ' Create backup of main config before any changes
         Dim ts As System.String = System.DateTime.Now.ToString("yyyyMMdd_HHmmss")
 
         If configUpdates.Count > 0 Then
@@ -564,16 +560,13 @@ Public NotInheritable Class IniImportManager
             End Try
         End If
 
-        ' Process each file
         For Each entry As SampleFileEntry In entriesToProcess
             Try
-                ' Ensure directory exists
                 Dim targetDir As System.String = System.IO.Path.GetDirectoryName(entry.TargetPath)
                 If Not System.String.IsNullOrWhiteSpace(targetDir) AndAlso Not System.IO.Directory.Exists(targetDir) Then
                     System.IO.Directory.CreateDirectory(targetDir)
                 End If
 
-                ' Backup existing file if overwriting
                 If entry.WillOverwrite Then
                     Dim fileBaseName As System.String = System.IO.Path.GetFileNameWithoutExtension(entry.TargetPath)
                     Dim configBaseExt As System.String = System.IO.Path.GetExtension(activeIniPath)
@@ -581,7 +574,6 @@ Public NotInheritable Class IniImportManager
                     System.IO.File.Copy(entry.TargetPath, fileBackup, overwrite:=False)
                 End If
 
-                ' Write the file
                 System.IO.File.WriteAllText(entry.TargetPath, entry.DownloadedContent, System.Text.Encoding.UTF8)
 
             Catch ex As System.Exception
@@ -589,7 +581,6 @@ Public NotInheritable Class IniImportManager
             End Try
         Next
 
-        ' Apply config updates
         If configUpdates.Count > 0 Then
             Try
                 Dim existingLines As System.Collections.Generic.List(Of System.String) = ReadAllLinesPreserve(activeIniPath)
@@ -606,7 +597,6 @@ Public NotInheritable Class IniImportManager
 
                 ApplyMainIniKeyReplaceAppend(plan, existingLines, configUpdates, replaceExisting:=True)
 
-                ' Write directly (backup already created)
                 Dim tmpPath As System.String = activeIniPath & ".tmp"
                 System.IO.File.WriteAllText(
                     tmpPath,
@@ -631,7 +621,6 @@ Public NotInheritable Class IniImportManager
             End Try
         End If
 
-        ' Final message
         Dim sbFinal As New System.Text.StringBuilder()
         sbFinal.AppendLine("Sample files download completed.")
 
@@ -657,6 +646,8 @@ Public NotInheritable Class IniImportManager
     ''' <summary>
     ''' Extracts the application name from the RDV string (e.g., "Word (V231312)" -> "Word").
     ''' </summary>
+    ''' <param name="rdv">RDV identifier string.</param>
+    ''' <returns>Application name or Nothing.</returns>
     Private Shared Function ExtractAppFromRDV(rdv As System.String) As System.String
         If System.String.IsNullOrWhiteSpace(rdv) Then Return Nothing
 
@@ -671,8 +662,12 @@ Public NotInheritable Class IniImportManager
     End Function
 
     ''' <summary>
-    ''' Parses the sample files list text into entries, filtering by current app.
+    ''' Parses the sample files list, filters entries by the current application, and records parse errors.
     ''' </summary>
+    ''' <param name="listText">Raw list text.</param>
+    ''' <param name="currentApp">Current application name used for filtering.</param>
+    ''' <param name="errors">Collector for parse errors.</param>
+    ''' <returns>Filtered list of sample file entries.</returns>
     Private Shared Function ParseSampleFilesList(
         listText As System.String,
         currentApp As System.String,
@@ -687,11 +682,9 @@ Public NotInheritable Class IniImportManager
 
             Dim trimmed As System.String = line.Trim()
 
-            ' Skip empty lines and comments
             If System.String.IsNullOrWhiteSpace(trimmed) Then Continue For
             If trimmed.StartsWith(";", System.StringComparison.Ordinal) Then Continue For
 
-            ' Parse: FriendlyName; SourceURL; App; ParameterForPath; IsFullPath; DefaultDir; DefaultFileName
             Dim parts As System.String() = trimmed.Split(New System.Char() {";"c}, System.StringSplitOptions.None)
 
             If parts.Length < 7 Then
@@ -707,7 +700,6 @@ Public NotInheritable Class IniImportManager
             Dim defaultDir As System.String = parts(5).Trim()
             Dim defaultFileName As System.String = parts(6).Trim()
 
-            ' Validate required fields
             If System.String.IsNullOrWhiteSpace(friendlyName) OrElse
                System.String.IsNullOrWhiteSpace(sourceURL) OrElse
                System.String.IsNullOrWhiteSpace(parameterForPath) OrElse
@@ -717,8 +709,7 @@ Public NotInheritable Class IniImportManager
                 Continue For
             End If
 
-            ' Parse IsFullPath
-            Dim isFullPath As System.Boolean = False
+            Dim isFullPath As System.Boolean
             If System.String.Equals(isFullPathStr, "True", System.StringComparison.OrdinalIgnoreCase) Then
                 isFullPath = True
             ElseIf System.String.Equals(isFullPathStr, "False", System.StringComparison.OrdinalIgnoreCase) Then
@@ -728,7 +719,6 @@ Public NotInheritable Class IniImportManager
                 Continue For
             End If
 
-            ' Parse apps and check if current app matches
             Dim apps As System.String() = appList.Split(New System.Char() {","c}, System.StringSplitOptions.RemoveEmptyEntries)
             Dim appMatches As System.Boolean = False
 
@@ -741,7 +731,6 @@ Public NotInheritable Class IniImportManager
 
             If Not appMatches Then Continue For
 
-            ' Validate URL
             If Not sourceURL.StartsWith("https://", System.StringComparison.OrdinalIgnoreCase) Then
                 errors.Add("Invalid URL (must be HTTPS): " & sourceURL)
                 Continue For
@@ -764,8 +753,12 @@ Public NotInheritable Class IniImportManager
     End Function
 
     ''' <summary>
-    ''' Determines the target path for a sample file entry.
+    ''' Resolves the download target path for a sample file entry based on config and defaults.
     ''' </summary>
+    ''' <param name="entry">Entry to update.</param>
+    ''' <param name="activeIniPath">Active main INI file path.</param>
+    ''' <param name="errors">Collector for path resolution errors.</param>
+    ''' <returns>True if a target path could be determined; otherwise False.</returns>
     Private Shared Function TryDetermineTargetPath(
         entry As SampleFileEntry,
         activeIniPath As System.String,
@@ -773,7 +766,6 @@ Public NotInheritable Class IniImportManager
     ) As System.Boolean
 
         Try
-            ' Check if ParameterForPath exists in config
             Dim existingValue As System.String = TryReadIniKeyValue(activeIniPath, entry.ParameterForPath)
             Dim expandedExisting As System.String = Nothing
 
@@ -785,7 +777,6 @@ Public NotInheritable Class IniImportManager
                 End Try
             End If
 
-            ' Expand default dir
             Dim expandedDefaultDir As System.String = Nothing
             Try
                 expandedDefaultDir = ExpandEnvironmentVariables(entry.DefaultDir)
@@ -794,34 +785,25 @@ Public NotInheritable Class IniImportManager
             End Try
 
             If entry.IsFullPath Then
-                ' IsFullPath = True
                 If Not System.String.IsNullOrWhiteSpace(expandedExisting) Then
-                    ' Parameter exists - check if it contains a filename
                     Dim existingFileName As System.String = System.IO.Path.GetFileName(expandedExisting)
 
-                    If Not System.String.IsNullOrWhiteSpace(existingFileName) AndAlso
-                       existingFileName.Contains(".") Then
-                        ' Has filename - use as-is
+                    If Not System.String.IsNullOrWhiteSpace(existingFileName) AndAlso existingFileName.Contains(".") Then
                         entry.TargetPath = expandedExisting
                         entry.TargetPathForConfig = existingValue
                     Else
-                        ' No filename - combine with default filename
                         entry.TargetPath = System.IO.Path.Combine(expandedExisting, entry.DefaultFileName)
                         entry.TargetPathForConfig = System.IO.Path.Combine(existingValue, entry.DefaultFileName)
                     End If
                 Else
-                    ' Parameter doesn't exist - use DefaultDir + DefaultFileName
                     entry.TargetPath = System.IO.Path.Combine(expandedDefaultDir, entry.DefaultFileName)
                     entry.TargetPathForConfig = System.IO.Path.Combine(entry.DefaultDir, entry.DefaultFileName)
                 End If
             Else
-                ' IsFullPath = False - parameter is directory only
                 If Not System.String.IsNullOrWhiteSpace(expandedExisting) Then
-                    ' Parameter exists - use it as directory
                     entry.TargetPath = System.IO.Path.Combine(expandedExisting, entry.DefaultFileName)
-                    entry.TargetPathForConfig = existingValue ' Don't update, already correct
+                    entry.TargetPathForConfig = existingValue
                 Else
-                    ' Parameter doesn't exist - use DefaultDir
                     entry.TargetPath = System.IO.Path.Combine(expandedDefaultDir, entry.DefaultFileName)
                     entry.TargetPathForConfig = entry.DefaultDir
                 End If
@@ -835,18 +817,20 @@ Public NotInheritable Class IniImportManager
         End Try
 
     End Function
+
     ''' <summary>
-    ''' Determines if the config needs to be updated for this entry.
+    ''' Determines whether a sample file entry requires a configuration update and populates ConfigValueToStore.
     ''' </summary>
+    ''' <param name="entry">Entry to update.</param>
+    ''' <param name="activeIniPath">Active main INI file path.</param>
     Private Shared Sub DetermineConfigUpdateNeeded(
-    entry As SampleFileEntry,
-    activeIniPath As System.String
-)
+        entry As SampleFileEntry,
+        activeIniPath As System.String
+    )
 
         Dim existingValue As System.String =
-        TryReadIniKeyValue(activeIniPath, entry.ParameterForPath)
+            TryReadIniKeyValue(activeIniPath, entry.ParameterForPath)
 
-        ' Expand existing value (for comparison only)
         Dim expandedExisting As System.String = Nothing
         If Not System.String.IsNullOrWhiteSpace(existingValue) Then
             Try
@@ -856,20 +840,15 @@ Public NotInheritable Class IniImportManager
             End Try
         End If
 
-        ' Expand target path (for comparison only)
         Dim expandedTarget As System.String = entry.TargetPath
 
         If entry.IsFullPath Then
-            ' ------------------------------------------------------------
-            ' FULL PATH: store full unexpanded path incl. filename
-            ' ------------------------------------------------------------
-
             If System.String.IsNullOrWhiteSpace(expandedExisting) OrElse
-           Not System.String.Equals(
-               NormalizePath(expandedExisting),
-               NormalizePath(expandedTarget),
-               System.StringComparison.OrdinalIgnoreCase
-           ) Then
+               Not System.String.Equals(
+                   NormalizePath(expandedExisting),
+                   NormalizePath(expandedTarget),
+                   System.StringComparison.OrdinalIgnoreCase
+               ) Then
 
                 entry.NeedsConfigUpdate = True
                 entry.ConfigValueToStore = entry.TargetPathForConfig
@@ -878,12 +857,8 @@ Public NotInheritable Class IniImportManager
             End If
 
         Else
-            ' ------------------------------------------------------------
-            ' DIRECTORY ONLY: store directory, never filename
-            ' ------------------------------------------------------------
-
             Dim expandedTargetDir As System.String =
-            System.IO.Path.GetDirectoryName(expandedTarget)
+                System.IO.Path.GetDirectoryName(expandedTarget)
 
             If System.String.IsNullOrWhiteSpace(expandedTargetDir) Then
                 entry.NeedsConfigUpdate = False
@@ -891,14 +866,14 @@ Public NotInheritable Class IniImportManager
             End If
 
             If System.String.IsNullOrWhiteSpace(expandedExisting) OrElse
-           Not System.String.Equals(
-               NormalizePath(expandedExisting),
-               NormalizePath(expandedTargetDir),
-               System.StringComparison.OrdinalIgnoreCase
-           ) Then
+               Not System.String.Equals(
+                   NormalizePath(expandedExisting),
+                   NormalizePath(expandedTargetDir),
+                   System.StringComparison.OrdinalIgnoreCase
+               ) Then
 
                 entry.NeedsConfigUpdate = True
-                entry.ConfigValueToStore = entry.TargetPathForConfig ' unexpanded dir
+                entry.ConfigValueToStore = entry.TargetPathForConfig
             Else
                 entry.NeedsConfigUpdate = False
             End If
@@ -906,6 +881,11 @@ Public NotInheritable Class IniImportManager
 
     End Sub
 
+    ''' <summary>
+    ''' Normalizes a path for case-insensitive comparison and stable directory formatting.
+    ''' </summary>
+    ''' <param name="path">Input path.</param>
+    ''' <returns>Normalized path.</returns>
     Private Shared Function NormalizePath(path As System.String) As System.String
         If System.String.IsNullOrWhiteSpace(path) Then Return path
 
@@ -916,84 +896,109 @@ Public NotInheritable Class IniImportManager
         End Try
     End Function
 
-
-
     ' ENTRY POINTS
 
-    ' Entry point only for providers (no other parameters)
+    ''' <summary>
+    ''' Runs an interactive import limited to provider settings (excludes "OtherParameters").
+    ''' </summary>
+    ''' <param name="context">Shared context.</param>
+    ''' <param name="ownerForm">Owner window for UI dialogs.</param>
+    ''' <returns>True if the main INI file changed; otherwise False.</returns>
     Public Shared Function RunInteractiveImportProvidersOnly(
-    context As ISharedContext,
-    ownerForm As System.Windows.Forms.Form
-) As Boolean
+        context As ISharedContext,
+        ownerForm As System.Windows.Forms.Form
+    ) As Boolean
 
         Return RunImportInternal(
-        context,
-        ownerForm,
-        ImportMode.InteractiveWithoutOtherParameters,
-        Nothing
-    )
+            context,
+            ownerForm,
+            ImportMode.InteractiveWithoutOtherParameters,
+            Nothing
+        )
 
     End Function
 
-    ' Entry point only for other parameters
+    ''' <summary>
+    ''' Runs an interactive import limited to "OtherParameters".
+    ''' </summary>
+    ''' <param name="context">Shared context.</param>
+    ''' <param name="ownerForm">Owner window for UI dialogs.</param>
+    ''' <returns>True if the main INI file changed; otherwise False.</returns>
     Public Shared Function RunInteractiveImportOtherParameters(
-    context As ISharedContext,
-    ownerForm As System.Windows.Forms.Form
-) As Boolean
+        context As ISharedContext,
+        ownerForm As System.Windows.Forms.Form
+    ) As Boolean
 
         Return RunImportInternal(
-        context,
-        ownerForm,
-        ImportMode.DirectOtherParameters,
-        Nothing
-    )
+            context,
+            ownerForm,
+            ImportMode.DirectOtherParameters,
+            Nothing
+        )
 
     End Function
 
-    ' Entry point for full interactive import (all kinds)
+    ''' <summary>
+    ''' Runs the full interactive import flow where the user selects the import kind.
+    ''' </summary>
+    ''' <param name="context">Shared context.</param>
+    ''' <param name="ownerForm">Owner window for UI dialogs.</param>
+    ''' <returns>True if the main INI file changed; otherwise False.</returns>
     Public Shared Function RunImportFromVariableConfigurationWindow(
-    context As ISharedContext,
-    ownerForm As System.Windows.Forms.Form
-) As Boolean
+        context As ISharedContext,
+        ownerForm As System.Windows.Forms.Form
+    ) As Boolean
         Return RunImportInternal(context, ownerForm, ImportMode.InteractiveAllKinds, Nothing)
     End Function
 
-    ' Entry point for auto import of other parameters (with option to replace existing parameters and user confirmation)
+    ''' <summary>
+    ''' Runs a non-interactive import of "OtherParameters" from a provided URL/path, with optional overwrite and confirmation.
+    ''' </summary>
+    ''' <param name="context">Shared context.</param>
+    ''' <param name="ownerForm">Owner window for UI dialogs.</param>
+    ''' <param name="source">HTTPS URL or local/UNC path.</param>
+    ''' <param name="replaceExisting">True to replace existing keys; False to only add missing keys.</param>
+    ''' <param name="userConfirmation">True to prompt the user for overwrite behavior.</param>
+    ''' <returns>True if the main INI file changed; otherwise False.</returns>
     Public Shared Function RunAutoImportOtherParameters(
-    context As ISharedContext,
-    ownerForm As System.Windows.Forms.Form,
-    source As String,
-    replaceExisting As Boolean,
-    userConfirmation As Boolean
-) As Boolean
+        context As ISharedContext,
+        ownerForm As System.Windows.Forms.Form,
+        source As String,
+        replaceExisting As Boolean,
+        userConfirmation As Boolean
+    ) As Boolean
 
         Dim opts As New AutoImportOptions With {
-        .Source = source,
-        .ReplaceExisting = replaceExisting,
-        .UserConfirmation = userConfirmation
-    }
+            .Source = source,
+            .ReplaceExisting = replaceExisting,
+            .UserConfirmation = userConfirmation
+        }
 
         Return RunImportInternal(
-        context,
-        ownerForm,
-        ImportMode.DirectOtherParameters,
-        opts
-    )
+            context,
+            ownerForm,
+            ImportMode.DirectOtherParameters,
+            opts
+        )
     End Function
 
-
+    ''' <summary>
+    ''' Implements the shared import flow used by all import entry points.
+    ''' </summary>
+    ''' <param name="context">Shared context.</param>
+    ''' <param name="ownerForm">Owner window for UI dialogs.</param>
+    ''' <param name="mode">Import interaction mode.</param>
+    ''' <param name="autoOptions">Options for non-interactive runs; Nothing for interactive runs.</param>
+    ''' <returns>True if the main INI file changed; otherwise False.</returns>
     Private Shared Function RunImportInternal(
-                context As ISharedContext,
-                ownerForm As System.Windows.Forms.Form,
-                mode As ImportMode,
-                autoOptions As AutoImportOptions
-                ) As Boolean
-
+        context As ISharedContext,
+        ownerForm As System.Windows.Forms.Form,
+        mode As ImportMode,
+        autoOptions As AutoImportOptions
+    ) As Boolean
 
         Dim mainIniChanged As System.Boolean = False
-
         Dim trustWarningShown As System.Boolean = False
-
 
         If context Is Nothing Then
             ShowCustomMessageBox("Internal error: context is missing.")
@@ -1013,7 +1018,6 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' Enforce: only when redink.ini is local per-application (not registry-priority and not Excel/Outlook using Word)
         Dim disableReason As System.String = Nothing
         If Not CanUseImportFeature(context, activeIniPath, disableReason) Then
             ShowCustomMessageBox(disableReason)
@@ -1025,7 +1029,6 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' 1) Ask for URL or file path (or use autoOptions.Source)
         Dim sourceText As System.String = Nothing
         Dim sourceLabel As System.String = Nothing
 
@@ -1035,7 +1038,7 @@ Public NotInheritable Class IniImportManager
             End If
         Else
             If Not TryGetImportSourceText(ownerForm, sourceText, sourceLabel, trustWarningShown) Then
-                Return False ' user aborted or failed
+                Return False
             End If
         End If
 
@@ -1044,21 +1047,17 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' 2) Show content to user (viewer) - only in interactive mode
         If autoOptions Is Nothing Then
             Dim editedText As System.String = Nothing
 
             If Not ShowTextAsViewer(ownerForm, sourceText, "The following settings will be imported (press 'Save' to proceed)", editedText) OrElse String.IsNullOrEmpty(editedText) Then
                 ShowCustomMessageBox("Import aborted.")
-                Return False ' user cancelled
+                Return False
             End If
 
             sourceText = editedText
         End If
 
-
-
-        ' 3) Decide import kind
         Dim kind As ImportKind
 
         Dim hostForm As System.Windows.Forms.Form = TryCast(ownerForm, System.Windows.Forms.Form)
@@ -1082,7 +1081,7 @@ Public NotInheritable Class IniImportManager
                         Return False
                     End If
 
-                Case Else ' ImportMode.InteractiveAllKinds
+                Case Else
                     If Not TryChooseImportKind(ownerForm, kind, False) Then
                         Return False
                     End If
@@ -1095,25 +1094,19 @@ Public NotInheritable Class IniImportManager
             End If
         End Try
 
-
-
-        ' 4) Normalize import text:
-        '    - If kind is Primary/Secondary/OtherParameters: drop section headers and only keep non-section lines
         Dim normalizedImportText As System.String = NormalizeImportTextForKind(sourceText, kind)
 
-        ' 5) Placeholder capture and substitution
         Dim substitutedText As System.String = normalizedImportText
         Dim placeholderWarnings As New System.Collections.Generic.List(Of System.String)()
 
         If Not TryResolvePlaceholders(ownerForm, substitutedText, placeholderWarnings) Then
-            Return False ' user aborted the placeholder dialog
+            Return False
         End If
 
         If placeholderWarnings.Count > 0 Then
             ShowCustomMessageBox(System.String.Join(System.Environment.NewLine & System.Environment.NewLine, placeholderWarnings))
         End If
 
-        ' 6) Determine target ini + optional section name
         Dim mainIniPath As System.String = activeIniPath
         Dim altIniPath As System.String = Nothing
         Dim svcIniPath As System.String = Nothing
@@ -1124,11 +1117,11 @@ Public NotInheritable Class IniImportManager
             Dim pathUpdated As System.Boolean = False
 
             If Not TryEnsureSectionedIniPath(ownerForm,
-                                 context,
-                                 mainIniPath,
-                                 isAlternate:=True,
-                                 targetIniPath:=altIniPath,
-                                 mainIniWasUpdated:=pathUpdated) Then
+                                             context,
+                                             mainIniPath,
+                                             isAlternate:=True,
+                                             targetIniPath:=altIniPath,
+                                             mainIniWasUpdated:=pathUpdated) Then
                 Return False
             End If
 
@@ -1145,17 +1138,18 @@ Public NotInheritable Class IniImportManager
             Dim pathUpdated As System.Boolean = False
 
             If Not TryEnsureSectionedIniPath(ownerForm,
-                     context,
-                     mainIniPath,
-                     isAlternate:=False,
-                     targetIniPath:=svcIniPath,
-                     mainIniWasUpdated:=pathUpdated) Then
+                                             context,
+                                             mainIniPath,
+                                             isAlternate:=False,
+                                             targetIniPath:=svcIniPath,
+                                             mainIniWasUpdated:=pathUpdated) Then
                 Return False
             End If
 
             If pathUpdated Then
                 mainIniChanged = True
             End If
+
             targetIniPath = svcIniPath
             If Not TryGetSectionNameFromImportText(ownerForm, substitutedText, targetSectionName, "special service") Then
                 Return False
@@ -1165,23 +1159,12 @@ Public NotInheritable Class IniImportManager
             targetIniPath = mainIniPath
         End If
 
-        ' 7) Parse imported key/value lines (for redink updates) or section body (for sectioned)
         Dim importedLines As System.Collections.Generic.List(Of System.String) = SplitToLinesPreserveNonEmpty(substitutedText)
 
         If importedLines.Count = 0 Then
             ShowCustomMessageBox("The import content is empty after processing.")
             Return False
         End If
-
-
-        ' 7a) Trusted-host enforcement (per-host section rules)
-        '     - Fully trusted hosts: no warning
-        '     - Unknown hosts: warning already handled at download step (and only once via trustWarningShown)
-        '     - Restricted trusted hosts: warn (once) if:
-        '           * used for non-sectioned import (main config / other parameters)
-        '           * no sections found
-        '           * ANY section name does not contain an allowed marker (case-insensitive)
-        '       User can abort or proceed.
 
         Dim sourceUri As System.Uri = Nothing
         If Not System.String.IsNullOrWhiteSpace(sourceLabel) Then
@@ -1193,8 +1176,8 @@ Public NotInheritable Class IniImportManager
             Dim host As System.String = sourceUri.Host
 
             Dim isFullyTrusted As System.Boolean =
-        System.Linq.Enumerable.Any(TRUSTED_HOSTS_FOR_GETSETTINGS,
-                                  Function(h) System.String.Equals(h, host, System.StringComparison.OrdinalIgnoreCase))
+                System.Linq.Enumerable.Any(TRUSTED_HOSTS_FOR_GETSETTINGS,
+                                          Function(h) System.String.Equals(h, host, System.StringComparison.OrdinalIgnoreCase))
 
             If Not isFullyTrusted Then
 
@@ -1206,40 +1189,36 @@ Public NotInheritable Class IniImportManager
                     Dim warningText As New System.Text.StringBuilder()
 
                     Dim trustedMarkerText As System.String =
-                            If(allowedMarkers IsNot Nothing AndAlso allowedMarkers.Length > 0,
-                               System.String.Join(", ",
-                                   System.Linq.Enumerable.Select(
-                                       allowedMarkers,
-                                       Function(m As System.String) "'" & m & "'"
-                                   )
-                               ),
-                               "(no trusted section markers configured)"
-                            )
+                        If(allowedMarkers IsNot Nothing AndAlso allowedMarkers.Length > 0,
+                           System.String.Join(", ",
+                               System.Linq.Enumerable.Select(
+                                   allowedMarkers,
+                                   Function(m As System.String) "'" & m & "'"
+                               )
+                           ),
+                           "(no trusted section markers configured)"
+                        )
 
-
-                    ' Restricted host used for non-sectioned imports
                     If kind <> ImportKind.AlternateModel AndAlso kind <> ImportKind.SpecialService Then
                         needWarning = True
                         warningText.AppendLine("Warning: The configuration source '" & host & "' is a host with restricted trust.")
                         warningText.AppendLine()
-                        warningText.AppendLine("You are about to import settings into the main configuration file, but this source is 'trusted' only for importing settings for alternate AI models or Special Services.")
+                        warningText.AppendLine("You are about to import settings into the main configuration file, but this source is trusted only for alternate AI models or Special Services.")
                         warningText.AppendLine()
                         warningText.AppendLine("Proceed anyway?")
                     Else
-                        ' Sectioned import: validate section headings
                         Dim segments = ParseIniSegments(importedLines)
 
                         If segments Is Nothing OrElse segments.Count = 0 Then
                             needWarning = True
                             warningText.AppendLine("Warning: The configuration source '" & host & "' is a host with restricted trust.")
                             warningText.AppendLine()
-                            warningText.AppendLine($"You are about to import settings for an AI model or Special Service for which this source has not been trusted (this host is only trusted for markers {trustedMarkerText} in the Section names). There may be an error in the source file.")
+                            warningText.AppendLine($"You are about to import settings for an AI model or Special Service for which this source has not been trusted (this host is only trusted for markers {trustedMarkerText} in the Section names).")
                             warningText.AppendLine()
                             warningText.AppendLine("Proceed anyway?")
                         Else
                             Dim invalidSections As New System.Collections.Generic.List(Of System.String)()
 
-                            ' If no markers defined (Nothing or empty), treat as "no section is validated" => warn
                             Dim markersOk As System.Boolean = (allowedMarkers IsNot Nothing AndAlso allowedMarkers.Length > 0)
 
                             For Each sectionName As System.String In segments.Keys
@@ -1248,12 +1227,12 @@ Public NotInheritable Class IniImportManager
 
                                 If markersOk Then
                                     sectionAllowed =
-                                System.Linq.Enumerable.Any(allowedMarkers,
-                                    Function(marker As System.String) As System.Boolean
-                                        If System.String.IsNullOrWhiteSpace(marker) Then Return False
-                                        Return sectionName.IndexOf(marker, System.StringComparison.OrdinalIgnoreCase) >= 0
-                                    End Function
-                                )
+                                        System.Linq.Enumerable.Any(allowedMarkers,
+                                            Function(marker As System.String) As System.Boolean
+                                                If System.String.IsNullOrWhiteSpace(marker) Then Return False
+                                                Return sectionName.IndexOf(marker, System.StringComparison.OrdinalIgnoreCase) >= 0
+                                            End Function
+                                        )
                                 End If
 
                                 If Not sectionAllowed Then
@@ -1284,7 +1263,7 @@ Public NotInheritable Class IniImportManager
                         trustWarningShown = True
 
                         Dim decisionTrust As System.Int32 =
-                    ShowCustomYesNoBox(warningText.ToString(), "Yes, continue", "No, abort import")
+                            ShowCustomYesNoBox(warningText.ToString(), "Yes, continue", "No, abort import")
 
                         If decisionTrust <> 1 Then
                             Return False
@@ -1292,19 +1271,16 @@ Public NotInheritable Class IniImportManager
                     End If
 
                 End If
-                ' else: unknown host -> warning already handled in download step (and suppressed by trustWarningShown)
             End If
 
         End If
 
-
-        ' 8) Auto mode: optional user confirmation for replace vs add-only
         If autoOptions IsNot Nothing AndAlso autoOptions.UserConfirmation Then
             Dim msg As System.String =
-        "How should existing keys be handled?" & System.Environment.NewLine & System.Environment.NewLine &
-        "Yes = Replace existing keys" & System.Environment.NewLine &
-        "No = Only add missing keys" & System.Environment.NewLine &
-        "Cancel = Abort import"
+                "How should existing keys be handled?" & System.Environment.NewLine & System.Environment.NewLine &
+                "Yes = Replace existing keys" & System.Environment.NewLine &
+                "No = Only add missing keys" & System.Environment.NewLine &
+                "Cancel = Abort import"
 
             Dim decisionAuto As System.Int32 = ShowCustomYesNoBox(msg, "Replace", "Add only")
             If decisionAuto = 0 Then Return False
@@ -1312,8 +1288,6 @@ Public NotInheritable Class IniImportManager
             autoOptions.ReplaceExisting = (decisionAuto = 1)
         End If
 
-
-        ' 9) Build dry-run plan(s)
         Dim plans As New System.Collections.Generic.List(Of DryRunPlan)
         Dim allRemovedLines As New System.Collections.Generic.List(Of System.String)
 
@@ -1326,7 +1300,6 @@ Public NotInheritable Class IniImportManager
                     Throw New System.Exception("No valid sections found.")
                 End If
 
-                ' Build ONE combined plan and commit once -> ONE full backup, no overwriting of other sections.
                 Dim combined As DryRunPlan = BuildSectionedCombinedPlan(context, kind, targetIniPath, segments)
 
                 If combined.WillCreateRemovedBackup Then
@@ -1337,13 +1310,13 @@ Public NotInheritable Class IniImportManager
                 plans.Add(combined)
 
             Else
-                ' Non-sectioned import: unchanged behavior
                 Dim replaceExisting As System.Boolean = True
                 If autoOptions IsNot Nothing Then
                     replaceExisting = autoOptions.ReplaceExisting
                 End If
 
-                Dim singlePlan As DryRunPlan = BuildDryRunPlan(context, kind, targetIniPath, targetSectionName, importedLines, replaceExisting)
+                Dim singlePlan As DryRunPlan =
+                    BuildDryRunPlan(context, kind, targetIniPath, targetSectionName, importedLines, replaceExisting)
 
                 If singlePlan.WillCreateRemovedBackup Then
                     allRemovedLines.AddRange(singlePlan.RemovedLinesBackup)
@@ -1363,7 +1336,6 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' 10) Composite dry-run summary
         Dim sb As New System.Text.StringBuilder()
 
         sb.AppendLine("Dry run – review before importing")
@@ -1375,7 +1347,7 @@ Public NotInheritable Class IniImportManager
             If p.Kind = ImportKind.AlternateModel OrElse p.Kind = ImportKind.SpecialService Then
 
                 Dim names As System.Collections.Generic.List(Of String) =
-            If(p.SectionNames, New System.Collections.Generic.List(Of String)())
+                    If(p.SectionNames, New System.Collections.Generic.List(Of String)())
 
                 For Each sectionName As String In names
                     sb.AppendLine("Section: [" & sectionName & "]")
@@ -1406,22 +1378,21 @@ Public NotInheritable Class IniImportManager
 
                 sb.AppendLine()
             Else
-                ' existing non-sectioned output (unchanged)
                 If Not System.String.IsNullOrWhiteSpace(p.TargetSectionName) Then
                     sb.AppendLine("Section: [" & p.TargetSectionName & "]")
                 End If
 
                 If p.OverwrittenKeys IsNot Nothing AndAlso p.OverwrittenKeys.Count > 0 Then
                     sb.AppendLine(
-                "Keys that will be overwritten (" &
-                p.OverwrittenKeys.Count.ToString() &
-                "): " &
-                System.String.Join(", ", p.OverwrittenKeys)
-            )
+                        "Keys that will be overwritten (" &
+                        p.OverwrittenKeys.Count.ToString() &
+                        "): " &
+                        System.String.Join(", ", p.OverwrittenKeys)
+                    )
                 Else
                     If p.Kind = ImportKind.PrimaryModel OrElse
-               p.Kind = ImportKind.SecondaryModel OrElse
-               p.Kind = ImportKind.OtherParameters Then
+                       p.Kind = ImportKind.SecondaryModel OrElse
+                       p.Kind = ImportKind.OtherParameters Then
 
                         sb.AppendLine("No existing keys will be overwritten (new keys will be appended at the end of the file).")
                     End If
@@ -1432,39 +1403,32 @@ Public NotInheritable Class IniImportManager
         Next
 
         If allRemovedLines IsNot Nothing AndAlso allRemovedLines.Count > 0 Then
-            sb.AppendLine(
-        "A full backup of the target file will be created, and all removed content will be stored in one backup file."
-    )
+            sb.AppendLine("A full backup of the target file will be created, and all removed content will be stored in one backup file.")
         Else
-            sb.AppendLine(
-        "A full backup of the target file will be created."
-    )
+            sb.AppendLine("A full backup of the target file will be created.")
         End If
 
         sb.AppendLine()
         sb.AppendLine("Proceed with import?")
-
 
         If autoOptions Is Nothing Then
             Dim decision As System.Int32 = ShowCustomYesNoBox(sb.ToString(), "Yes, continue", "No, abort import")
             If decision <> 1 Then Return False
         End If
 
-        ' 11) Commit all plans (in order)
         For Each p As DryRunPlan In plans
             CommitDryRunPlan(p)
         Next
 
         For Each p As DryRunPlan In plans
             If System.String.Equals(p.TargetIniPath,
-                            mainIniPath,
-                            System.StringComparison.OrdinalIgnoreCase) Then
+                                    mainIniPath,
+                                    System.StringComparison.OrdinalIgnoreCase) Then
                 mainIniChanged = True
                 Exit For
             End If
         Next
 
-        ' Write ONE combined removed-content backup
         If allRemovedLines.Count > 0 Then
             Dim ts As System.String = System.DateTime.Now.ToString("yyyyMMdd_HHmmss")
             Dim baseName As System.String = System.IO.Path.GetFileNameWithoutExtension(targetIniPath)
@@ -1472,13 +1436,13 @@ Public NotInheritable Class IniImportManager
             Dim dir As System.String = System.IO.Path.GetDirectoryName(targetIniPath)
 
             Dim removedBackup As System.String =
-        System.IO.Path.Combine(dir, baseName & baseExt & "_removed_" & ts & ".bak")
+                System.IO.Path.Combine(dir, baseName & baseExt & "_removed_" & ts & ".bak")
 
             System.IO.File.WriteAllText(
-        removedBackup,
-        System.String.Join(System.Environment.NewLine, allRemovedLines),
-        System.Text.Encoding.UTF8
-    )
+                removedBackup,
+                System.String.Join(System.Environment.NewLine, allRemovedLines),
+                System.Text.Encoding.UTF8
+            )
         End If
 
         If Not mainIniChanged Then ShowCustomMessageBox("Import completed. No reloading or restarting required.")
@@ -1487,10 +1451,17 @@ Public NotInheritable Class IniImportManager
 
     End Function
 
-
     ' =========================================================================================
     '  FEATURE ENABLEMENT RULES
     ' =========================================================================================
+
+    ''' <summary>
+    ''' Determines whether the import feature can be used for the current configuration context and active INI path.
+    ''' </summary>
+    ''' <param name="context">Shared context.</param>
+    ''' <param name="activeIniPath">Active INI path resolved at runtime.</param>
+    ''' <param name="disableReason">If disabled, contains a user-friendly reason.</param>
+    ''' <returns>True if import is allowed; otherwise False.</returns>
     Public Shared Function CanUseImportFeature(context As ISharedContext,
                                                activeIniPath As System.String,
                                                ByRef disableReason As System.String) As System.Boolean
@@ -1507,20 +1478,14 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' Rule 1: If redink.ini loaded from registry path with priority => disable.
-        ' We cannot reliably infer registry-priority solely from a file path without your internal flags.
-        ' Best effort: if you have a context flag indicating registry-priority path in effect, check it here.
-        ' If you do not, you should expose one; otherwise you risk enabling import incorrectly.
         Try
             If RegPath_IniPrio Then
                 disableReason = "Import is not available when the configuration is controlled via registry/network setup."
                 Return False
             End If
         Catch
-            ' If flag not available, ignore; but you should add it.
         End Try
 
-        ' Rule 2: If Excel/Outlook uses Word's path => disable in Excel/Outlook.
         Dim rdv As System.String = Nothing
         Try
             rdv = context.RDV
@@ -1551,7 +1516,6 @@ Public NotInheritable Class IniImportManager
                 Return False
             End If
 
-            ' Only enable if active path equals this app's own default path (local per-application)
             If Not System.String.IsNullOrWhiteSpace(defaultPathThisApp) AndAlso
                System.IO.File.Exists(defaultPathThisApp) Then
 
@@ -1569,12 +1533,21 @@ Public NotInheritable Class IniImportManager
     ' =========================================================================================
     '  SOURCE ACQUISITION (URL or FILE)
     ' =========================================================================================
+
+    ''' <summary>
+    ''' Prompts the user for an import source (HTTPS URL or local/UNC path) and loads the source text.
+    ''' </summary>
+    ''' <param name="ownerForm">Owner window for UI dialogs.</param>
+    ''' <param name="sourceText">Loaded source text.</param>
+    ''' <param name="sourceLabel">URL or path label used for reporting and trust logic.</param>
+    ''' <param name="trustWarningShown">Tracks whether a trust warning has already been shown for the current run.</param>
+    ''' <returns>True if text was loaded; otherwise False.</returns>
     Private Shared Function TryGetImportSourceText(
-    ownerForm As System.Windows.Forms.Form,
-    ByRef sourceText As System.String,
-    ByRef sourceLabel As System.String,
-    ByRef trustWarningShown As System.Boolean
-) As System.Boolean
+        ownerForm As System.Windows.Forms.Form,
+        ByRef sourceText As System.String,
+        ByRef sourceLabel As System.String,
+        ByRef trustWarningShown As System.Boolean
+    ) As System.Boolean
 
         sourceText = Nothing
         sourceLabel = Nothing
@@ -1591,8 +1564,7 @@ Public NotInheritable Class IniImportManager
         End If
 
         Try
-            Input = ShowCustomInputBox("Enter the source URL (https://...) or file / UNC path:", TITLE_IMPORT, True)
-
+            input = ShowCustomInputBox("Enter the source URL (https://...) or file / UNC path:", TITLE_IMPORT, True)
         Finally
             If hadOwner Then
                 ownerForm.Enabled = True
@@ -1600,7 +1572,6 @@ Public NotInheritable Class IniImportManager
                 ownerForm.Activate()
             End If
         End Try
-
 
         If System.String.IsNullOrWhiteSpace(input) Then
             ShowCustomMessageBox("No source provided.")
@@ -1622,25 +1593,24 @@ Public NotInheritable Class IniImportManager
             Dim host As System.String = u.Host
 
             Dim isFullyTrusted As System.Boolean =
-            System.Linq.Enumerable.Any(TRUSTED_HOSTS_FOR_GETSETTINGS,
-                                      Function(h) System.String.Equals(h, host, System.StringComparison.OrdinalIgnoreCase))
+                System.Linq.Enumerable.Any(TRUSTED_HOSTS_FOR_GETSETTINGS,
+                                          Function(h) System.String.Equals(h, host, System.StringComparison.OrdinalIgnoreCase))
 
             Dim isRestrictedTrusted As System.Boolean = RESTRICTED_TRUSTED_HOSTS_FOR_GETSETTINGS.ContainsKey(host)
 
             Dim isAllowedWithoutWarning As System.Boolean = (isFullyTrusted OrElse isRestrictedTrusted)
 
-            ' Unknown host -> show warning ONCE, allow abort
             If Not isAllowedWithoutWarning AndAlso Not trustWarningShown Then
                 trustWarningShown = True
 
                 Dim warnDecision As System.Int32 = ShowCustomYesNoBox(
-                "Warning: This URL host is not on the built-in trust list:" & System.Environment.NewLine &
-                host & System.Environment.NewLine & System.Environment.NewLine &
-                "Importing configuration from unknown hosts can be dangerous." & System.Environment.NewLine & System.Environment.NewLine &
-                "Do you want to continue?",
-                "Yes, continue",
-                "No, abort import"
-            )
+                    "Warning: This URL host is not on the built-in trust list:" & System.Environment.NewLine &
+                    host & System.Environment.NewLine & System.Environment.NewLine &
+                    "Importing configuration from unknown hosts can be dangerous." & System.Environment.NewLine & System.Environment.NewLine &
+                    "Do you want to continue?",
+                    "Yes, continue",
+                    "No, abort import"
+                )
 
                 If warnDecision <> 1 Then
                     Return False
@@ -1660,7 +1630,6 @@ Public NotInheritable Class IniImportManager
             Return True
 
         Else
-            ' Local / UNC path
             Dim path As System.String = input
 
             Try
@@ -1680,7 +1649,6 @@ Public NotInheritable Class IniImportManager
                     Return False
                 End If
             Catch
-                ' ignore
             End Try
 
             Try
@@ -1696,6 +1664,11 @@ Public NotInheritable Class IniImportManager
 
     End Function
 
+    ''' <summary>
+    ''' Checks whether a host is included in the trusted-host list.
+    ''' </summary>
+    ''' <param name="host">Host name.</param>
+    ''' <returns>True if the host is trusted; otherwise False.</returns>
     Private Shared Function IsHostAllowed(host As System.String) As System.Boolean
         If System.String.IsNullOrWhiteSpace(host) Then Return False
         For Each h As System.String In TRUSTED_HOSTS_FOR_GETSETTINGS
@@ -1704,6 +1677,12 @@ Public NotInheritable Class IniImportManager
         Return False
     End Function
 
+    ''' <summary>
+    ''' Downloads UTF-8 text from an HTTPS URL with a hard maximum size limit.
+    ''' </summary>
+    ''' <param name="u">HTTPS URL.</param>
+    ''' <param name="maxBytes">Maximum allowed download size.</param>
+    ''' <returns>Downloaded text.</returns>
     Private Shared Function DownloadHttpsTextWithLimit(u As System.Uri, maxBytes As System.Int32) As System.String
 
         If u Is Nothing Then Throw New System.ArgumentNullException(NameOf(u))
@@ -1711,13 +1690,11 @@ Public NotInheritable Class IniImportManager
             Throw New System.Exception("Only HTTPS is allowed.")
         End If
 
-        ' Explicitly enable TLS
         Try
             System.Net.ServicePointManager.SecurityProtocol =
                 System.Net.SecurityProtocolType.Tls12 Or
-                CType(0, System.Net.SecurityProtocolType) ' keep compiler happy; no-op
+                CType(0, System.Net.SecurityProtocolType)
         Catch
-            ' ignore
         End Try
 
         Dim req As System.Net.HttpWebRequest = CType(System.Net.WebRequest.Create(u), System.Net.HttpWebRequest)
@@ -1750,13 +1727,22 @@ Public NotInheritable Class IniImportManager
 
     End Function
 
+    ''' <summary>
+    ''' Loads import source text from a provided HTTPS URL or local/UNC path.
+    ''' </summary>
+    ''' <param name="ownerForm">Owner window for UI dialogs.</param>
+    ''' <param name="providedSource">HTTPS URL or local/UNC path.</param>
+    ''' <param name="sourceText">Loaded source text.</param>
+    ''' <param name="sourceLabel">URL or path label used for reporting.</param>
+    ''' <param name="trustWarningShown">Tracks whether a trust warning has already been shown for the current run.</param>
+    ''' <returns>True if text was loaded; otherwise False.</returns>
     Private Shared Function TryGetImportSourceTextFromProvidedSource(
-ownerForm As System.Windows.Forms.Form,
-providedSource As System.String,
-ByRef sourceText As System.String,
-ByRef sourceLabel As System.String,
-ByRef trustWarningShown As System.Boolean
-) As System.Boolean
+        ownerForm As System.Windows.Forms.Form,
+        providedSource As System.String,
+        ByRef sourceText As System.String,
+        ByRef sourceLabel As System.String,
+        ByRef trustWarningShown As System.Boolean
+    ) As System.Boolean
 
         sourceText = Nothing
         sourceLabel = Nothing
@@ -1781,25 +1767,24 @@ ByRef trustWarningShown As System.Boolean
             Dim host As System.String = u.Host
 
             Dim isFullyTrusted As System.Boolean =
-            System.Linq.Enumerable.Any(TRUSTED_HOSTS_FOR_GETSETTINGS,
-                                      Function(h) System.String.Equals(h, host, System.StringComparison.OrdinalIgnoreCase))
+                System.Linq.Enumerable.Any(TRUSTED_HOSTS_FOR_GETSETTINGS,
+                                          Function(h) System.String.Equals(h, host, System.StringComparison.OrdinalIgnoreCase))
 
             Dim isRestrictedTrusted As System.Boolean = RESTRICTED_TRUSTED_HOSTS_FOR_GETSETTINGS.ContainsKey(host)
 
             Dim isAllowedWithoutWarning As System.Boolean = (isFullyTrusted OrElse isRestrictedTrusted)
 
-            ' Unknown host -> show warning ONCE, allow abort
             If Not isAllowedWithoutWarning AndAlso Not trustWarningShown Then
                 trustWarningShown = True
 
                 Dim warnDecision As System.Int32 = ShowCustomYesNoBox(
-                "Warning: This URL host is not on the built-in trust list:" & System.Environment.NewLine &
-                host & System.Environment.NewLine & System.Environment.NewLine &
-                "Importing configuration from unknown hosts can be dangerous." & System.Environment.NewLine & System.Environment.NewLine &
-                "Do you want to continue?",
-                "Yes, continue",
-                "No, abort import"
-            )
+                    "Warning: This URL host is not on the built-in trust list:" & System.Environment.NewLine &
+                    host & System.Environment.NewLine & System.Environment.NewLine &
+                    "Importing configuration from unknown hosts can be dangerous." & System.Environment.NewLine & System.Environment.NewLine &
+                    "Do you want to continue?",
+                    "Yes, continue",
+                    "No, abort import"
+                )
                 If warnDecision <> 1 Then
                     Return False
                 End If
@@ -1835,7 +1820,6 @@ ByRef trustWarningShown As System.Boolean
                     Return False
                 End If
             Catch
-                ' ignore
             End Try
 
             Try
@@ -1851,24 +1835,31 @@ ByRef trustWarningShown As System.Boolean
 
     End Function
 
+    ''' <summary>
+    ''' Shows a text file preview/editor and returns updated text only when the user saves.
+    ''' </summary>
+    ''' <param name="ownerForm">Owner window.</param>
+    ''' <param name="text">Initial text.</param>
+    ''' <param name="title">Viewer title.</param>
+    ''' <param name="finalText">Final text after save; Nothing if not saved.</param>
+    ''' <returns>True if user saved; otherwise False.</returns>
     Private Shared Function ShowTextAsViewer(
-    ownerForm As System.Windows.Forms.Form,
-    text As System.String,
-    title As System.String,
-    ByRef finalText As System.String
-) As Boolean
+        ownerForm As System.Windows.Forms.Form,
+        text As System.String,
+        title As System.String,
+        ByRef finalText As System.String
+    ) As Boolean
 
-        ' Normalize to CRLF so Windows editors display properly
         Dim normalized As String = text
         If normalized IsNot Nothing Then
             normalized = normalized.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf).Replace(vbLf, vbCrLf)
         End If
 
         Dim tmp As System.String =
-        System.IO.Path.Combine(
-            System.IO.Path.GetTempPath(),
-            "RedInk_ImportPreview_" & System.Guid.NewGuid().ToString("N") & ".txt"
-        )
+            System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                "RedInk_ImportPreview_" & System.Guid.NewGuid().ToString("N") & ".txt"
+            )
 
         System.IO.File.WriteAllText(tmp, normalized, System.Text.Encoding.UTF8)
 
@@ -1886,12 +1877,12 @@ ByRef trustWarningShown As System.Boolean
             Dim wasSaved As System.Nullable(Of System.Boolean) = Nothing
 
             ShowTextFileEditor(
-            tmp,
-            title,
-            False,
-            Nothing,
-            wasSaved
-        )
+                tmp,
+                title,
+                False,
+                Nothing,
+                wasSaved
+            )
 
             If wasSaved.HasValue AndAlso wasSaved.Value Then
                 finalText = System.IO.File.ReadAllText(tmp, System.Text.Encoding.UTF8)
@@ -1911,39 +1902,43 @@ ByRef trustWarningShown As System.Boolean
             Try
                 System.IO.File.Delete(tmp)
             Catch
-                ' ignore cleanup errors
             End Try
         End Try
 
     End Function
 
-
     ' =========================================================================================
     '  IMPORT KIND SELECTION
     ' =========================================================================================
 
-
+    ''' <summary>
+    ''' Prompts the user to choose the kind of settings to import.
+    ''' </summary>
+    ''' <param name="ownerForm">Owner window.</param>
+    ''' <param name="kind">Selected import kind.</param>
+    ''' <param name="excludeOtherParameters">If True, hides the "OtherParameters" option.</param>
+    ''' <returns>True if a choice was made; otherwise False.</returns>
     Private Shared Function TryChooseImportKind(
-    ownerForm As System.Windows.Forms.Form,
-    ByRef kind As ImportKind,
-    excludeOtherParameters As System.Boolean
-) As System.Boolean
+        ownerForm As System.Windows.Forms.Form,
+        ByRef kind As ImportKind,
+        excludeOtherParameters As System.Boolean
+    ) As System.Boolean
 
         kind = ImportKind.PrimaryModel
 
         Dim options As New List(Of String) From {
-        "For the primary model",
-        "For the secondary model",
-        "For an alternate model",
-        "For a special service"
-    }
+            "For the primary model",
+            "For the secondary model",
+            "For an alternate model",
+            "For a special service"
+        }
 
         If Not excludeOtherParameters Then
             options.Add("For other parameters")
         End If
 
         Dim choice As String =
-        ShowSelectionForm("Which settings do you want to import?", TITLE_IMPORT, options)
+            ShowSelectionForm("Which settings do you want to import?", TITLE_IMPORT, options)
 
         If String.IsNullOrWhiteSpace(choice) Then Return False
 
@@ -1962,20 +1957,22 @@ ByRef trustWarningShown As System.Boolean
         Return True
     End Function
 
-
-
+    ''' <summary>
+    ''' Normalizes import text for kinds that import into the main INI by removing section headers.
+    ''' </summary>
+    ''' <param name="sourceText">Original import text.</param>
+    ''' <param name="kind">Import kind.</param>
+    ''' <returns>Normalized import text.</returns>
     Private Shared Function NormalizeImportTextForKind(sourceText As System.String, kind As ImportKind) As System.String
         If System.String.IsNullOrWhiteSpace(sourceText) Then Return ""
 
         If kind = ImportKind.PrimaryModel OrElse kind = ImportKind.SecondaryModel OrElse kind = ImportKind.OtherParameters Then
-            ' Drop any [section] headers entirely, keep all other lines unchanged.
             Dim lines As System.Collections.Generic.List(Of System.String) = SplitToLinesPreserve(sourceText)
             Dim kept As New System.Collections.Generic.List(Of System.String)()
 
             For Each line As System.String In lines
                 Dim t As System.String = line.Trim()
                 If t.StartsWith("[") AndAlso t.EndsWith("]") AndAlso t.Length >= 2 Then
-                    ' drop header
                     Continue For
                 End If
                 kept.Add(line)
@@ -1990,6 +1987,14 @@ ByRef trustWarningShown As System.Boolean
     ' =========================================================================================
     '  PLACEHOLDERS [[...]] -> prompt user
     ' =========================================================================================
+
+    ''' <summary>
+    ''' Prompts the user for values for each [[...]] placeholder and substitutes non-empty entries.
+    ''' </summary>
+    ''' <param name="ownerForm">Owner window.</param>
+    ''' <param name="text">Input/output text containing placeholders.</param>
+    ''' <param name="warnings">Collector for warnings about placeholders left unresolved.</param>
+    ''' <returns>True if processing should continue; otherwise False.</returns>
     Private Shared Function TryResolvePlaceholders(ownerForm As System.Windows.Forms.Form,
                                                   ByRef text As System.String,
                                                   warnings As System.Collections.Generic.List(Of System.String)) As System.Boolean
@@ -2031,8 +2036,6 @@ ByRef trustWarningShown As System.Boolean
         End If
 
         Try
-
-
             If ShowCustomVariableInputForm("The settings require your to enter individual values. Please enter them (leave empty to keep a placeholder and edit later): ",
                                            TITLE_IMPORT,
                                            params) = False Then
@@ -2047,8 +2050,6 @@ ByRef trustWarningShown As System.Boolean
             End If
         End Try
 
-
-        ' Replace if non-empty, else keep placeholder and warn
         For Each p As InputParameter In params
             Dim name As System.String = System.Convert.ToString(p.Name)
             Dim value As System.String = System.Convert.ToString(p.Value)
@@ -2056,8 +2057,6 @@ ByRef trustWarningShown As System.Boolean
             If System.String.IsNullOrWhiteSpace(name) Then Continue For
 
             If Not System.String.IsNullOrWhiteSpace(value) Then
-                ' Replace all occurrences, preserving original placeholder text format [[name]] case-insensitively
-                ' We'll replace using regex with escaped key inside.
                 Dim keyRx As New System.Text.RegularExpressions.Regex("\[\[" & System.Text.RegularExpressions.Regex.Escape(name) & "\]\]",
                                                                      System.Text.RegularExpressions.RegexOptions.IgnoreCase)
                 text = keyRx.Replace(text, value)
@@ -2071,16 +2070,28 @@ ByRef trustWarningShown As System.Boolean
     End Function
 
     ' =========================================================================================
-    '  ENSURE AlternateModelPath / SpecialServicePath exist in redink.ini (ask user, confirm, optional create file)
+    '  ENSURE AlternateModelPath / SpecialServicePath exist in redink.ini
     ' =========================================================================================
+
+    ''' <summary>
+    ''' Resolves the sectioned INI path for alternate models or special services and ensures the file exists.
+    ''' If not configured, prompts the user for a path and stores it into the main INI.
+    ''' </summary>
+    ''' <param name="ownerForm">Owner window.</param>
+    ''' <param name="context">Shared context.</param>
+    ''' <param name="mainIniPath">Main INI path.</param>
+    ''' <param name="isAlternate">True for AlternateModelPath; False for SpecialServicePath.</param>
+    ''' <param name="targetIniPath">Resolved target INI path (expanded for access).</param>
+    ''' <param name="mainIniWasUpdated">True if the main INI was updated with the path key.</param>
+    ''' <returns>True if the target INI path is available; otherwise False.</returns>
     Private Shared Function TryEnsureSectionedIniPath(
-                                        ownerForm As System.Windows.Forms.Form,
-                                        context As ISharedContext,
-                                        mainIniPath As System.String,
-                                        isAlternate As System.Boolean,
-                                        ByRef targetIniPath As System.String,
-                                        Optional ByRef mainIniWasUpdated As System.Boolean = False
-                                    ) As System.Boolean
+        ownerForm As System.Windows.Forms.Form,
+        context As ISharedContext,
+        mainIniPath As System.String,
+        isAlternate As System.Boolean,
+        ByRef targetIniPath As System.String,
+        Optional ByRef mainIniWasUpdated As System.Boolean = False
+    ) As System.Boolean
 
         targetIniPath = Nothing
         mainIniWasUpdated = False
@@ -2103,7 +2114,6 @@ ByRef trustWarningShown As System.Boolean
             End Try
         End If
 
-        ' If already configured, use it. If missing, create silently.
         If Not System.String.IsNullOrWhiteSpace(expandedCurrent) Then
             targetIniPath = expandedCurrent
 
@@ -2117,7 +2127,6 @@ ByRef trustWarningShown As System.Boolean
             Return True
         End If
 
-        ' Not configured yet -> ask user for a path (default: same directory as main ini)
         Dim baseDir As System.String = System.IO.Path.GetDirectoryName(mainIniPath)
         Dim suggested As System.String = System.IO.Path.Combine(baseDir, defaultFileName)
 
@@ -2134,12 +2143,12 @@ ByRef trustWarningShown As System.Boolean
 
         Try
             chosenPath =
-            ShowCustomInputBox(
-                "Please confirm or change the file path for " & settingKey & " (if unsure, just confirm):",
-                TITLE_IMPORT,
-                True,
-                suggested
-            )
+                ShowCustomInputBox(
+                    "Please confirm or change the file path for " & settingKey & " (if unsure, just confirm):",
+                    TITLE_IMPORT,
+                    True,
+                    suggested
+                )
 
             If System.String.IsNullOrWhiteSpace(chosenPath) Then
                 ShowCustomMessageBox("No path provided. Import aborted.")
@@ -2156,7 +2165,6 @@ ByRef trustWarningShown As System.Boolean
 
         chosenPath = chosenPath.Trim()
 
-        ' Expand (for access), but store the unexpanded form the user entered
         Dim expandedChosen As System.String = chosenPath
         Try
             expandedChosen = ExpandEnvironmentVariables(chosenPath)
@@ -2165,7 +2173,6 @@ ByRef trustWarningShown As System.Boolean
 
         targetIniPath = expandedChosen
 
-        ' Create silently if missing (never ask, never abort just because it doesn't exist)
         Try
             EnsureIniFileExists(targetIniPath)
         Catch ex As System.Exception
@@ -2173,7 +2180,6 @@ ByRef trustWarningShown As System.Boolean
             Return False
         End Try
 
-        ' Store the path into main redink.ini
         Dim valueToStore As System.String = chosenPath
 
         Try
@@ -2189,6 +2195,10 @@ ByRef trustWarningShown As System.Boolean
 
     End Function
 
+    ''' <summary>
+    ''' Ensures that an INI file exists at the given path and creates its directory if required.
+    ''' </summary>
+    ''' <param name="path">Target file path.</param>
     Private Shared Sub EnsureIniFileExists(path As System.String)
         Dim dir As System.String = System.IO.Path.GetDirectoryName(path)
         If Not System.String.IsNullOrWhiteSpace(dir) AndAlso Not System.IO.Directory.Exists(dir) Then
@@ -2197,18 +2207,27 @@ ByRef trustWarningShown As System.Boolean
 
         If Not System.IO.File.Exists(path) Then
             System.IO.File.WriteAllText(
-            path,
-            "; created by Red Ink Settings Importer on " &
-            System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") &
-            System.Environment.NewLine,
-            System.Text.Encoding.UTF8
-        )
+                path,
+                "; created by Red Ink Settings Importer on " &
+                System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") &
+                System.Environment.NewLine,
+                System.Text.Encoding.UTF8
+            )
         End If
     End Sub
 
     ' =========================================================================================
     '  SECTION NAME EXTRACTION (Alternate/Special)
     ' =========================================================================================
+
+    ''' <summary>
+    ''' Extracts the first section name from import text, or prompts the user if none exists.
+    ''' </summary>
+    ''' <param name="ownerForm">Owner window.</param>
+    ''' <param name="text">Import text.</param>
+    ''' <param name="sectionName">The resolved section name.</param>
+    ''' <param name="friendlyType">Friendly kind description used in the prompt.</param>
+    ''' <returns>True if a section name is available; otherwise False.</returns>
     Private Shared Function TryGetSectionNameFromImportText(ownerForm As System.Windows.Forms.Form,
                                                            text As System.String,
                                                            ByRef sectionName As System.String,
@@ -2221,7 +2240,6 @@ ByRef trustWarningShown As System.Boolean
             Return False
         End If
 
-        ' Find first section header [ ... ]
         Dim lines As System.Collections.Generic.List(Of System.String) = SplitToLinesPreserve(text)
         For Each line As System.String In lines
             Dim t As System.String = line.Trim()
@@ -2232,7 +2250,6 @@ ByRef trustWarningShown As System.Boolean
         Next
 
         If System.String.IsNullOrWhiteSpace(sectionName) Then
-            ' Ask user for a section name
 
             Dim wasTopMost As Boolean = False
             Dim hadOwner As Boolean = (ownerForm IsNot Nothing)
@@ -2245,7 +2262,11 @@ ByRef trustWarningShown As System.Boolean
             End If
 
             Try
-                sectionName = ShowCustomInputBox($"You wish to import settings that require a Section header (a user friendly name of the model or service, e.g., 'LexiSearch' or 'Gemini 3 Pro with minimum reasoning'). It can be changed later. Please enter a section name for the {friendlyType}:", TITLE_IMPORT, True, "Name")
+                sectionName = ShowCustomInputBox(
+                    $"You wish to import settings that require a Section header (a user friendly name of the model or service, e.g., 'LexiSearch' or 'Gemini 3 Pro with minimum reasoning'). It can be changed later. Please enter a section name for the {friendlyType}:",
+                    TITLE_IMPORT,
+                    True,
+                    "Name")
             Finally
                 If hadOwner Then
                     ownerForm.Enabled = True
@@ -2253,7 +2274,6 @@ ByRef trustWarningShown As System.Boolean
                     ownerForm.Activate()
                 End If
             End Try
-
 
             If System.String.IsNullOrWhiteSpace(sectionName) Then
                 ShowCustomMessageBox("No section name provided. Import aborted.")
@@ -2270,8 +2290,9 @@ ByRef trustWarningShown As System.Boolean
     '  DRY RUN PLAN + COMMIT
     ' =========================================================================================
 
-    ' 1) Extend DryRunPlan (display-only tracking for sectioned imports)
-
+    ''' <summary>
+    ''' Represents a planned INI update, including generated content and backup/audit information.
+    ''' </summary>
     Private NotInheritable Class DryRunPlan
         Public Property TargetIniPath As System.String
         Public Property Kind As ImportKind
@@ -2280,11 +2301,14 @@ ByRef trustWarningShown As System.Boolean
         Public Property RemovedLinesBackup As System.Collections.Generic.List(Of System.String)
         Public Property OverwrittenKeys As System.Collections.Generic.List(Of System.String)
         Public Property WillCreateRemovedBackup As System.Boolean
+
         Public Property SectionNames As System.Collections.Generic.List(Of System.String)
         Public Property AddedKeysBySection As System.Collections.Generic.Dictionary(Of System.String, System.Collections.Generic.List(Of System.String))
         Public Property OverwrittenKeysBySection As System.Collections.Generic.Dictionary(Of System.String, System.Collections.Generic.List(Of System.String))
 
-
+        ''' <summary>
+        ''' Builds a user-facing summary text for a single plan.
+        ''' </summary>
         Public Function GetUserSummary() As System.String
             Dim sb As New System.Text.StringBuilder()
 
@@ -2311,21 +2335,15 @@ ByRef trustWarningShown As System.Boolean
                    Kind = ImportKind.SecondaryModel OrElse
                    Kind = ImportKind.OtherParameters Then
 
-                    sb.AppendLine(
-                        "No existing keys will be overwritten (new keys will be appended at the end of the file)."
-                    )
+                    sb.AppendLine("No existing keys will be overwritten (new keys will be appended at the end of the file).")
                     sb.AppendLine()
                 End If
             End If
 
             If WillCreateRemovedBackup Then
-                sb.AppendLine(
-                    "A full backup of the target file and a backup of the removed content will always be created in the same directory."
-                )
+                sb.AppendLine("A full backup of the target file and a backup of the removed content will always be created in the same directory.")
             Else
-                sb.AppendLine(
-                    "A full backup of the target file will always be created in the same directory."
-                )
+                sb.AppendLine("A full backup of the target file will always be created in the same directory.")
             End If
 
             sb.AppendLine()
@@ -2336,47 +2354,44 @@ ByRef trustWarningShown As System.Boolean
 
     End Class
 
+    ''' <summary>
+    ''' Builds a dry-run plan for a target INI file based on import kind and imported content.
+    ''' </summary>
     Private Shared Function BuildDryRunPlan(context As ISharedContext,
-                                        kind As ImportKind,
-                                        targetIniPath As System.String,
-                                        targetSectionName As System.String,
-                                        importedLines As System.Collections.Generic.List(Of System.String),
-                                        Optional replaceExisting As System.Boolean = True) As DryRunPlan
-
+                                           kind As ImportKind,
+                                           targetIniPath As System.String,
+                                           targetSectionName As System.String,
+                                           importedLines As System.Collections.Generic.List(Of System.String),
+                                           Optional replaceExisting As System.Boolean = True) As DryRunPlan
 
         If System.String.IsNullOrWhiteSpace(targetIniPath) Then Throw New System.ArgumentNullException(NameOf(targetIniPath))
         If importedLines Is Nothing OrElse importedLines.Count = 0 Then Throw New System.Exception("No imported lines.")
 
         Dim existingLines As System.Collections.Generic.List(Of System.String) = ReadAllLinesPreserve(targetIniPath)
 
-        ' 2) Initialize the new properties in BuildDryRunPlan (so Nothing checks are easy)
-
         Dim plan As New DryRunPlan() With {
-                .TargetIniPath = targetIniPath,
-                .Kind = kind,
-                .TargetSectionName = targetSectionName,
-                .NewFileLines = New System.Collections.Generic.List(Of System.String)(existingLines),
-                .RemovedLinesBackup = New System.Collections.Generic.List(Of System.String)(),
-                .OverwrittenKeys = New System.Collections.Generic.List(Of System.String)(),
-                .WillCreateRemovedBackup = False,
-                .SectionNames = New System.Collections.Generic.List(Of System.String)(),
-                .AddedKeysBySection = New System.Collections.Generic.Dictionary(Of System.String, System.Collections.Generic.List(Of System.String))(System.StringComparer.OrdinalIgnoreCase),
-                .OverwrittenKeysBySection = New System.Collections.Generic.Dictionary(Of System.String, System.Collections.Generic.List(Of System.String))(System.StringComparer.OrdinalIgnoreCase)
-            }
+            .TargetIniPath = targetIniPath,
+            .Kind = kind,
+            .TargetSectionName = targetSectionName,
+            .NewFileLines = New System.Collections.Generic.List(Of System.String)(existingLines),
+            .RemovedLinesBackup = New System.Collections.Generic.List(Of System.String)(),
+            .OverwrittenKeys = New System.Collections.Generic.List(Of System.String)(),
+            .WillCreateRemovedBackup = False,
+            .SectionNames = New System.Collections.Generic.List(Of System.String)(),
+            .AddedKeysBySection = New System.Collections.Generic.Dictionary(Of System.String, System.Collections.Generic.List(Of System.String))(System.StringComparer.OrdinalIgnoreCase),
+            .OverwrittenKeysBySection = New System.Collections.Generic.Dictionary(Of System.String, System.Collections.Generic.List(Of System.String))(System.StringComparer.OrdinalIgnoreCase)
+        }
 
         If kind = ImportKind.AlternateModel OrElse kind = ImportKind.SpecialService Then
-            ' Replace entire section (Option A)
             Dim newSectionLines As System.Collections.Generic.List(Of System.String) = BuildSectionLines(targetSectionName, importedLines)
             ApplySectionReplace(plan, existingLines, newSectionLines)
             Return plan
         End If
 
-        ' redink.ini modifications: parse imported key/value lines; apply secondary model logic if needed
         Dim kv As System.Collections.Generic.Dictionary(Of System.String, System.String) = ParseKeyValueLines(importedLines)
 
         If kind = ImportKind.SecondaryModel Then
             kv = ConvertKeysToSecondary(kv)
-            ' ensure SecondAPI=True
             If Not kv.ContainsKey("SecondAPI") Then
                 kv.Add("SecondAPI", "True")
             Else
@@ -2390,6 +2405,9 @@ ByRef trustWarningShown As System.Boolean
 
     End Function
 
+    ''' <summary>
+    ''' Builds a dry-run plan that replaces/appends a single key/value in the main INI.
+    ''' </summary>
     Private Shared Function BuildDryRunPlanForSingleKey(mainIniPath As System.String, key As System.String, value As System.String) As DryRunPlan
         Dim existingLines As System.Collections.Generic.List(Of System.String) = ReadAllLinesPreserve(mainIniPath)
 
@@ -2409,6 +2427,11 @@ ByRef trustWarningShown As System.Boolean
         ApplyMainIniKeyReplaceAppend(plan, existingLines, kv)
         Return plan
     End Function
+
+    ''' <summary>
+    ''' Commits a dry-run plan by writing backups and replacing the target file content (atomic replace when possible).
+    ''' </summary>
+    ''' <param name="plan">Plan to commit.</param>
     Private Shared Sub CommitDryRunPlan(plan As DryRunPlan)
 
         If plan Is Nothing Then Throw New System.ArgumentNullException(NameOf(plan))
@@ -2426,56 +2449,44 @@ ByRef trustWarningShown As System.Boolean
             Throw New System.Exception("Target directory does not exist: " & targetDir)
         End If
 
-        ' ------------------------------------------------------------------
-        ' Full backup first (only if file already exists)
-        ' ------------------------------------------------------------------
         Dim ts As System.String = System.DateTime.Now.ToString("yyyyMMdd_HHmmss_fff")
 
         Dim baseName As System.String = System.IO.Path.GetFileNameWithoutExtension(targetPath)
         Dim extensionWithDot As System.String = System.IO.Path.GetExtension(targetPath)
 
         Dim fullBackup As System.String =
-        System.IO.Path.Combine(targetDir, baseName & extensionWithDot & "_" & ts & ".bak")
+            System.IO.Path.Combine(targetDir, baseName & extensionWithDot & "_" & ts & ".bak")
 
         If System.IO.File.Exists(targetPath) Then
             System.IO.File.Copy(targetPath, fullBackup, overwrite:=False)
         End If
 
-        ' ------------------------------------------------------------------
-        ' Removed-content backup (if applicable)
-        ' ------------------------------------------------------------------
         If plan.WillCreateRemovedBackup AndAlso
-       plan.RemovedLinesBackup IsNot Nothing AndAlso
-       plan.RemovedLinesBackup.Count > 0 Then
+           plan.RemovedLinesBackup IsNot Nothing AndAlso
+           plan.RemovedLinesBackup.Count > 0 Then
 
             Dim removedBackup As System.String =
-            System.IO.Path.Combine(targetDir, baseName & extensionWithDot & "_removed_" & ts & ".bak")
+                System.IO.Path.Combine(targetDir, baseName & extensionWithDot & "_removed_" & ts & ".bak")
 
             System.IO.File.WriteAllText(
-            removedBackup,
-            System.String.Join(System.Environment.NewLine, plan.RemovedLinesBackup),
-            System.Text.Encoding.UTF8
-        )
+                removedBackup,
+                System.String.Join(System.Environment.NewLine, plan.RemovedLinesBackup),
+                System.Text.Encoding.UTF8
+            )
         End If
 
-        ' ------------------------------------------------------------------
-        ' Write temp file
-        ' ------------------------------------------------------------------
         Dim tmpPath As System.String =
-        System.IO.Path.Combine(
-            targetDir,
-            baseName & "_tmp_" & System.Guid.NewGuid().ToString("N") & extensionWithDot
-        )
+            System.IO.Path.Combine(
+                targetDir,
+                baseName & "_tmp_" & System.Guid.NewGuid().ToString("N") & extensionWithDot
+            )
 
         System.IO.File.WriteAllText(
-        tmpPath,
-        System.String.Join(System.Environment.NewLine, plan.NewFileLines),
-        System.Text.Encoding.UTF8
-    )
+            tmpPath,
+            System.String.Join(System.Environment.NewLine, plan.NewFileLines),
+            System.Text.Encoding.UTF8
+        )
 
-        ' ------------------------------------------------------------------
-        ' Atomic replace if possible, else fallback move
-        ' ------------------------------------------------------------------
         Try
             If System.IO.File.Exists(targetPath) Then
                 System.IO.File.Replace(tmpPath, targetPath, Nothing, True)
@@ -2483,12 +2494,10 @@ ByRef trustWarningShown As System.Boolean
                 System.IO.File.Move(tmpPath, targetPath)
             End If
         Catch
-            ' Fallback (still safe because temp is on same volume)
             If System.IO.File.Exists(targetPath) Then
                 Try
                     System.IO.File.Delete(targetPath)
                 Catch
-                    ' ignore
                 End Try
             End If
 
@@ -2497,37 +2506,15 @@ ByRef trustWarningShown As System.Boolean
 
     End Sub
 
-
-
-    Private Shared Sub MergePlanAuditData(
-    target As DryRunPlan,
-    addedRemovedLines As System.Collections.Generic.List(Of System.String),
-    addedOverwrittenKeys As System.Collections.Generic.List(Of System.String)
-)
-        If target Is Nothing Then Return
-
-        If addedRemovedLines IsNot Nothing AndAlso addedRemovedLines.Count > 0 Then
-            target.WillCreateRemovedBackup = True
-            target.RemovedLinesBackup.AddRange(addedRemovedLines)
-        End If
-
-        If addedOverwrittenKeys IsNot Nothing AndAlso addedOverwrittenKeys.Count > 0 Then
-            target.OverwrittenKeys = UniquePreserveOrder(
-            New System.Collections.Generic.List(Of System.String)(
-                target.OverwrittenKeys.Concat(addedOverwrittenKeys)
-            )
-        )
-        End If
-    End Sub
-
-    ' 3) Replace BuildSectionedCombinedPlan with a version that computes ADDED + OVERWRITTEN per section (display only)
-
+    ''' <summary>
+    ''' Computes a combined sectioned-import plan that replaces/imports multiple sections in a single target file.
+    ''' </summary>
     Private Shared Function BuildSectionedCombinedPlan(
-    context As ISharedContext,
-    kind As ImportKind,
-    targetIniPath As System.String,
-    segments As System.Collections.Generic.Dictionary(Of System.String, System.Collections.Generic.List(Of System.String))
-) As DryRunPlan
+        context As ISharedContext,
+        kind As ImportKind,
+        targetIniPath As System.String,
+        segments As System.Collections.Generic.Dictionary(Of System.String, System.Collections.Generic.List(Of System.String))
+    ) As DryRunPlan
 
         If segments Is Nothing OrElse segments.Count = 0 Then Throw New System.Exception("No valid sections found.")
         If System.String.IsNullOrWhiteSpace(targetIniPath) Then Throw New System.ArgumentNullException(NameOf(targetIniPath))
@@ -2550,7 +2537,6 @@ ByRef trustWarningShown As System.Boolean
 
             sectionNames.Add(sectionName)
 
-            ' Keys in the incoming section body (ignore comments/blank/headers)
             Dim importKeys As New System.Collections.Generic.HashSet(Of System.String)(System.StringComparer.OrdinalIgnoreCase)
             If sectionBodyLines IsNot Nothing Then
                 For Each l As String In sectionBodyLines
@@ -2561,9 +2547,8 @@ ByRef trustWarningShown As System.Boolean
                 Next
             End If
 
-            ' Keys currently present in that section in the "current" file snapshot
             Dim currentFileLines As System.Collections.Generic.List(Of System.String) =
-            If(combinedPlan Is Nothing, ReadAllLinesPreserve(targetIniPath), combinedPlan.NewFileLines)
+                If(combinedPlan Is Nothing, ReadAllLinesPreserve(targetIniPath), combinedPlan.NewFileLines)
 
             Dim currentSectionKeys As New System.Collections.Generic.HashSet(Of System.String)(System.StringComparer.OrdinalIgnoreCase)
             Dim startIndex As Integer = -1
@@ -2618,12 +2603,10 @@ ByRef trustWarningShown As System.Boolean
         combinedPlan.OverwrittenKeys = UniquePreserveOrder(overwrittenAll)
         combinedPlan.WillCreateRemovedBackup = (removedAll.Count > 0)
 
-        ' NEW: display-only section breakdown
         combinedPlan.SectionNames = sectionNames
         combinedPlan.AddedKeysBySection = addedBySection
         combinedPlan.OverwrittenKeysBySection = overwrittenBySection
 
-        ' Don’t show "[Section1, Section2]" anymore (UI will render the breakdown)
         combinedPlan.TargetSectionName = Nothing
 
         Return combinedPlan
@@ -2633,12 +2616,20 @@ ByRef trustWarningShown As System.Boolean
     ' =========================================================================================
     '  APPLY: redink.ini key overwrite (remove old lines, append new at end)
     ' =========================================================================================
+
+    ''' <summary>
+    ''' Applies key updates to a main INI file by removing existing key lines (optional) and appending new lines at the end.
+    ''' </summary>
+    ''' <param name="plan">Plan to update.</param>
+    ''' <param name="existingLines">Existing file lines.</param>
+    ''' <param name="newKeyValues">Key/value pairs to apply.</param>
+    ''' <param name="replaceExisting">True to replace existing key lines; False to only add new keys.</param>
     Private Shared Sub ApplyMainIniKeyReplaceAppend(
-    plan As DryRunPlan,
-    existingLines As List(Of String),
-    newKeyValues As Dictionary(Of String, String),
-    Optional replaceExisting As Boolean = True
-)
+        plan As DryRunPlan,
+        existingLines As List(Of String),
+        newKeyValues As Dictionary(Of String, String),
+        Optional replaceExisting As Boolean = True
+    )
 
         Dim keys As New System.Collections.Generic.HashSet(Of System.String)(newKeyValues.Keys, System.StringComparer.OrdinalIgnoreCase)
 
@@ -2654,19 +2645,16 @@ ByRef trustWarningShown As System.Boolean
                 If replaceExisting Then
                     removed.Add(line)
                     overwritten.Add(parsedKey)
-                    Continue For ' remove it
+                    Continue For
                 Else
-                    ' Keep existing line, do NOT overwrite
                     newLines.Add(line)
                     Continue For
                 End If
             End If
 
-
             newLines.Add(line)
         Next
 
-        ' Append a blank line before appended block if file doesn't end with blank line
         If newLines.Count > 0 Then
             Dim last As System.String = newLines(newLines.Count - 1)
             If last IsNot Nothing AndAlso last.Trim().Length > 0 Then
@@ -2674,7 +2662,6 @@ ByRef trustWarningShown As System.Boolean
             End If
         End If
 
-        ' Append new key/value lines at end (keep exactly "key = value" style)
         Dim existingKeys As New System.Collections.Generic.HashSet(Of System.String)(System.StringComparer.OrdinalIgnoreCase)
         For Each line As System.String In newLines
             Dim k0 As System.String = Nothing
@@ -2687,14 +2674,12 @@ ByRef trustWarningShown As System.Boolean
             If replaceExisting Then
                 newLines.Add(kvp.Key & " = " & kvp.Value)
             Else
-                ' add only if key does not already exist
                 If Not existingKeys.Contains(kvp.Key) Then
                     newLines.Add(kvp.Key & " = " & kvp.Value)
                     existingKeys.Add(kvp.Key)
                 End If
             End If
         Next
-
 
         plan.NewFileLines = newLines
 
@@ -2710,6 +2695,11 @@ ByRef trustWarningShown As System.Boolean
 
     End Sub
 
+    ''' <summary>
+    ''' Returns a case-insensitive unique list preserving original order.
+    ''' </summary>
+    ''' <param name="items">Input items.</param>
+    ''' <returns>Unique items in original order.</returns>
     Private Shared Function UniquePreserveOrder(items As System.Collections.Generic.List(Of System.String)) As System.Collections.Generic.List(Of System.String)
         Dim seen As New System.Collections.Generic.HashSet(Of System.String)(System.StringComparer.OrdinalIgnoreCase)
         Dim res As New System.Collections.Generic.List(Of System.String)()
@@ -2721,8 +2711,15 @@ ByRef trustWarningShown As System.Boolean
     End Function
 
     ' =========================================================================================
-    '  APPLY: section replace (Option A)
+    '  APPLY: section replace
     ' =========================================================================================
+
+    ''' <summary>
+    ''' Replaces the target section in-place if it exists; otherwise appends the section at end of file.
+    ''' </summary>
+    ''' <param name="plan">Plan to update (TargetSectionName must be set).</param>
+    ''' <param name="existingLines">Existing file lines.</param>
+    ''' <param name="newSectionLines">New section lines including section header.</param>
     Private Shared Sub ApplySectionReplace(plan As DryRunPlan,
                                           existingLines As System.Collections.Generic.List(Of System.String),
                                           newSectionLines As System.Collections.Generic.List(Of System.String))
@@ -2738,24 +2735,19 @@ ByRef trustWarningShown As System.Boolean
         Dim newFile As New System.Collections.Generic.List(Of System.String)()
 
         If startIndex >= 0 AndAlso endIndex >= startIndex Then
-            ' Section exists -> replace in place, preserve order relevance
-            ' Removed backup: include the exact lines being removed
             Dim removed As New System.Collections.Generic.List(Of System.String)()
             For i As System.Int32 = startIndex To endIndex
                 removed.Add(existingLines(i))
             Next
 
-            ' Copy before section
             For i As System.Int32 = 0 To startIndex - 1
                 newFile.Add(existingLines(i))
             Next
 
-            ' Insert new section
             For Each l As System.String In newSectionLines
                 newFile.Add(l)
             Next
 
-            ' Ensure exactly ONE blank line before the next unaffected section
             If endIndex + 1 < existingLines.Count Then
                 Dim nextLine As System.String = existingLines(endIndex + 1)
 
@@ -2763,24 +2755,21 @@ ByRef trustWarningShown As System.Boolean
                     Dim trimmed As System.String = nextLine.Trim()
 
                     If trimmed.StartsWith("[") AndAlso trimmed.EndsWith("]") Then
-                        ' Only add a blank line if the new section does not already end with one
-                        If newFile.Count > 0 AndAlso
-               newFile(newFile.Count - 1).Trim().Length > 0 Then
+                        If newFile.Count > 0 AndAlso newFile(newFile.Count - 1).Trim().Length > 0 Then
                             newFile.Add("")
                         End If
                     End If
                 End If
             End If
 
-            ' Copy after section
             For i As System.Int32 = endIndex + 1 To existingLines.Count - 1
                 newFile.Add(existingLines(i))
             Next
 
-
             plan.NewFileLines = newFile
             plan.WillCreateRemovedBackup = True
             plan.RemovedLinesBackup = removed
+
             Dim overwrittenKeys As New System.Collections.Generic.List(Of System.String)()
 
             For Each line As String In removed
@@ -2793,7 +2782,6 @@ ByRef trustWarningShown As System.Boolean
             plan.OverwrittenKeys = UniquePreserveOrder(overwrittenKeys)
 
         Else
-            ' Section not found -> append at end
             newFile = New System.Collections.Generic.List(Of System.String)(existingLines)
 
             If newFile.Count > 0 Then
@@ -2815,6 +2803,13 @@ ByRef trustWarningShown As System.Boolean
 
     End Sub
 
+    ''' <summary>
+    ''' Finds the start and end line indices of a named section within an INI file.
+    ''' </summary>
+    ''' <param name="lines">INI file lines.</param>
+    ''' <param name="sectionName">Section name (without brackets).</param>
+    ''' <param name="startIndex">Index of section header line; -1 if not found.</param>
+    ''' <param name="endIndex">Index of last line belonging to the section.</param>
     Private Shared Sub FindSectionRange(lines As System.Collections.Generic.List(Of System.String),
                                         sectionName As System.String,
                                         ByRef startIndex As System.Int32,
@@ -2840,7 +2835,6 @@ ByRef trustWarningShown As System.Boolean
 
         If startIndex < 0 Then Return
 
-        ' endIndex is last line before next section header (or EOF)
         endIndex = lines.Count - 1
         For i As System.Int32 = startIndex + 1 To lines.Count - 1
             Dim trimmed As System.String = If(lines(i), "").Trim()
@@ -2852,6 +2846,12 @@ ByRef trustWarningShown As System.Boolean
 
     End Sub
 
+    ''' <summary>
+    ''' Builds a section block including header and a blank line, skipping any section headers in imported content.
+    ''' </summary>
+    ''' <param name="sectionName">Section name.</param>
+    ''' <param name="importedLines">Imported lines.</param>
+    ''' <returns>Section block lines.</returns>
     Private Shared Function BuildSectionLines(sectionName As System.String,
                                               importedLines As System.Collections.Generic.List(Of System.String)) As System.Collections.Generic.List(Of System.String)
 
@@ -2859,7 +2859,6 @@ ByRef trustWarningShown As System.Boolean
         res.Add("[" & sectionName & "]")
         res.Add("")
 
-        ' Remove any leading section headers in importedLines (we will write our own)
         For Each line As System.String In importedLines
             Dim t As System.String = line.Trim()
             If t.StartsWith("[") AndAlso t.EndsWith("]") AndAlso t.Length >= 2 Then
@@ -2874,34 +2873,47 @@ ByRef trustWarningShown As System.Boolean
     ' =========================================================================================
     '  PARSING UTILITIES
     ' =========================================================================================
+
+    ''' <summary>
+    ''' Splits text into lines and preserves empty lines; normalizes CR/LF combinations.
+    ''' </summary>
     Private Shared Function SplitToLinesPreserve(text As System.String) As System.Collections.Generic.List(Of System.String)
         Dim res As New System.Collections.Generic.List(Of System.String)()
         If text Is Nothing Then Return res
 
-        ' Normalize to \n then split
         Dim normalized As System.String = text.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf)
         Dim parts As System.String() = normalized.Split(New System.Char() {ControlChars.Lf}, System.StringSplitOptions.None)
         res.AddRange(parts)
         Return res
     End Function
 
+    ''' <summary>
+    ''' Splits text into lines and preserves all lines (including blank/comment lines).
+    ''' </summary>
     Private Shared Function SplitToLinesPreserveNonEmpty(text As System.String) As System.Collections.Generic.List(Of System.String)
         Dim all As System.Collections.Generic.List(Of System.String) = SplitToLinesPreserve(text)
         Dim res As New System.Collections.Generic.List(Of System.String)()
         For Each l As System.String In all
             If l Is Nothing Then Continue For
-            ' keep comment/blank too? For imports we keep everything as-is; but for parsing kv we need kv lines.
-            ' We'll keep all lines; later ParseKeyValueLines will ignore non-kv/comment as needed.
             res.Add(l)
         Next
         Return res
     End Function
 
+    ''' <summary>
+    ''' Reads an INI file as UTF-8 and returns lines preserving original line boundaries.
+    ''' </summary>
     Private Shared Function ReadAllLinesPreserve(path As System.String) As System.Collections.Generic.List(Of System.String)
         Dim text As System.String = System.IO.File.ReadAllText(path, System.Text.Encoding.UTF8)
         Return SplitToLinesPreserve(text)
     End Function
 
+    ''' <summary>
+    ''' Tries to parse an INI key from a line in the form "key = value".
+    ''' </summary>
+    ''' <param name="line">Line text.</param>
+    ''' <param name="key">Parsed key on success.</param>
+    ''' <returns>True if the line contains a key assignment; otherwise False.</returns>
     Private Shared Function TryParseIniKey(line As System.String, ByRef key As System.String) As System.Boolean
         key = Nothing
         If line Is Nothing Then Return False
@@ -2950,12 +2962,14 @@ ByRef trustWarningShown As System.Boolean
             Next
 
         Catch
-            ' Ignore errors, return Nothing
         End Try
 
         Return Nothing
     End Function
 
+    ''' <summary>
+    ''' Parses key/value pairs from INI lines and returns the last occurrence per key.
+    ''' </summary>
     Private Shared Function ParseKeyValueLines(lines As System.Collections.Generic.List(Of System.String)) As System.Collections.Generic.Dictionary(Of System.String, System.String)
         Dim kv As New System.Collections.Generic.Dictionary(Of System.String, System.String)(System.StringComparer.OrdinalIgnoreCase)
 
@@ -2974,25 +2988,29 @@ ByRef trustWarningShown As System.Boolean
 
             If System.String.IsNullOrWhiteSpace(k) Then Continue For
 
-            ' Keep last occurrence from import text (deterministic)
             kv(k) = v
         Next
 
         Return kv
     End Function
 
-
     ' =========================================================================================
     '  MULTI-SEGMENT PARSER (SectionName -> Lines)
     ' =========================================================================================
+
+    ''' <summary>
+    ''' Parses an INI-like text stream into named section segments.
+    ''' </summary>
+    ''' <param name="lines">INI lines including section headers.</param>
+    ''' <returns>Dictionary mapping section name to section body lines.</returns>
     Private Shared Function ParseIniSegments(
-    lines As System.Collections.Generic.List(Of System.String)
-) As System.Collections.Generic.Dictionary(Of System.String, System.Collections.Generic.List(Of System.String))
+        lines As System.Collections.Generic.List(Of System.String)
+    ) As System.Collections.Generic.Dictionary(Of System.String, System.Collections.Generic.List(Of System.String))
 
         Dim result As New System.Collections.Generic.Dictionary(
-        Of System.String,
-        System.Collections.Generic.List(Of System.String)
-    )(System.StringComparer.OrdinalIgnoreCase)
+            Of System.String,
+            System.Collections.Generic.List(Of System.String)
+        )(System.StringComparer.OrdinalIgnoreCase)
 
         Dim currentSection As System.String = Nothing
         Dim currentLines As System.Collections.Generic.List(Of System.String) = Nothing
@@ -3012,7 +3030,11 @@ ByRef trustWarningShown As System.Boolean
         Return result
     End Function
 
-
+    ''' <summary>
+    ''' Converts main-model INI keys into secondary-model keys by applying a "_2" suffix, except for already suffixed keys.
+    ''' </summary>
+    ''' <param name="kv">Input key/value pairs.</param>
+    ''' <returns>Converted key/value pairs.</returns>
     Private Shared Function ConvertKeysToSecondary(kv As System.Collections.Generic.Dictionary(Of System.String, System.String)) As System.Collections.Generic.Dictionary(Of System.String, System.String)
         Dim out As New System.Collections.Generic.Dictionary(Of System.String, System.String)(System.StringComparer.OrdinalIgnoreCase)
 
@@ -3034,7 +3056,11 @@ ByRef trustWarningShown As System.Boolean
         Return out
     End Function
 
-
+    ''' <summary>
+    ''' Expands supported placeholders in sample list URLs.
+    ''' </summary>
+    ''' <param name="sourceUrl">Source URL text.</param>
+    ''' <returns>Expanded URL text.</returns>
     Private Shared Function ExpandSourceUrlPlaceholders(
         sourceUrl As System.String
     ) As System.String
@@ -3059,7 +3085,5 @@ ByRef trustWarningShown As System.Boolean
 
         Return result
     End Function
-
-
 
 End Class

@@ -106,11 +106,7 @@
       - AppsUrl / AppsUrlDir  : Base URL and subdirectory for resources
       - VersionQualifier      : Version string suffix (" Develop", " Preview", or "")
       - DefaultUpdateIntervalDays : Update check frequency (varies by environment)
-    
-    The DEVELOP block is intentionally defined in a separate file 
-    (SharedMethods.OwnBuild.UpdateURLs.vb) so developers can customize local build 
-    settings without modifying repository-tracked code.
-    
+     
     Important Notes:
     ----------------
     - Ensure DefineConstants in project configurations include the appropriate symbol

@@ -396,7 +396,7 @@ Namespace SharedLibrary
                                                                 .UseShellExecute = True
                                                             })
                                                      Catch ex As System.Exception
-                                                         MessageBox.Show("Unable to open browser.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                                                         ShowCustomMessageBox($"Unable to open browser. Try opening {GetMoreStuffURL} on your own.")
                                                      End Try
                                                  End Sub
 

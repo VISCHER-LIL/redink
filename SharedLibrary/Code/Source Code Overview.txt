@@ -268,15 +268,6 @@
 '                                       LicenseFromConfig.
 '                                     - LicenseTypeInfo class with GetLicenseTypes(versionDate).
 '                                     - IntelligentMergeCallback delegate.
-'   SharedMethods.Constants.OwnBuild.UpdateURLs.vb
-'                                   - Build-specific URL constants (partial class extension).
-'                                     Uses conditional compilation (#If DEVELOP/PREVIEW) to define:
-'                                     - AppsUrl: Base URL for application resources
-'                                     - AppsUrlDir: Build-specific subdirectory ("/develop/",
-'                                       "/apps/preview/", "/apps/ga/")
-'                                     - VersionQualifier: Version suffix (" Develop", " Preview", "")
-'                                     Separated to allow local build customization without
-'                                     affecting shared repository code.
 '   SharedMethods.Constants.OwnBuild.Security.vb
 '                                   - Security-related constants (partial class extension).
 '                                     Provides optional hardcoded values for:

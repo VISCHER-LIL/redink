@@ -419,7 +419,7 @@ Namespace SharedLibrary
             Catch ex As DeploymentException
                 WriteUpdateLog("[CheckAndInstallUpdates] DeploymentException", ex)
                 UIInvokeMessage(
-                    $"Error during update (you may try a manual install via {AppsUrl}): {ex.Message}",
+                    $"Error during update (you may try a manual install via {SharedMethods.AppsUrl}): {ex.Message}",
                     $"{SharedMethods.AN} Updater")
             Catch ex As Exception
                 WriteUpdateLog("[CheckAndInstallUpdates] Unexpected Exception", ex)
@@ -1108,7 +1108,7 @@ Namespace SharedLibrary
                             $"{SharedMethods.AN} Updater")
                     Else
                         UIInvokeMessage(
-                            "The update could not be completed. A required trust confirmation may have been refused or blocked by policy. You can always try a manual install by visiting " & AppsUrl & ".",
+                            "The update could not be completed. A required trust confirmation may have been refused or blocked by policy. You can always try a manual install by visiting " & SharedMethods.AppsUrl & ".",
                             $"{SharedMethods.AN} Updater")
                     End If
                 End Using
@@ -1116,7 +1116,7 @@ Namespace SharedLibrary
             Catch ex As Exception
                 WriteUpdateLog("[RunVstoInstaller] interactive failed", ex)
                 UIInvokeMessage(
-                    $"The update could not be completed: {ex.Message}. Please inform your administrator. You can always try a manual install by visiting {AppsUrl}.",
+                    $"The update could not be completed: {ex.Message}. Please inform your administrator. You can always try a manual install by visiting {SharedMethods.AppsUrl}.",
                     $"{SharedMethods.AN} Updater")
             Finally
                 CloseUpdatingSplash()
