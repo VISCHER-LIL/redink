@@ -38,6 +38,8 @@ Namespace SharedLibrary
         ' 4. Search and update SharedLibrary / Core / Config / ShareMethods.LoadConfig.vb (search for a pre-existing Property usage)
         ' 5. Search and update SharedLibrary / Core / Config / ShareMethods.Settings.vb (search for a pre-existing Property usage)
         ' 6. Search and update SharedLibrary / Core / Definitions / SharedMethods.Constants.vb (if you need to update Property usage)
+        ' 7. Add a default value in Sharedlibrary / Core / Constants if there is one and include it in the exclusion list of UpdateAppConfig() (no one needed for Boolean = False or empty strings)
+        ' 8. Update the IsBooleanSetting() in SharedLibrary / Core / Config / ShareMethods.Settings.vb
 
         Public Interface ISharedContext
 
