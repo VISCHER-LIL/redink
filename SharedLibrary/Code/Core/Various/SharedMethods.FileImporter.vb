@@ -1,5 +1,33 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
+' =============================================================================
+' File: SharedMethods.FileImporter.vb
+' Purpose: Provides helper functions to read text from common document formats
+'          (plain text, RTF, Word documents, and PDF), returning either extracted
+'          text or an error string (depending on caller preference).
+'
+' Architecture:
+'  - Text files: Normalizes the input path, validates existence, then reads UTF-8
+'    (with BOM detection) via `StreamReader`.
+'  - RTF: Loads the file contents and uses a hidden `RichTextBox` to convert RTF
+'    markup to plain text.
+'  - Word: Uses Office interop; attempts to attach to an existing Word instance,
+'    otherwise creates an invisible instance; opens the document read-only and
+'    returns `doc.Content.Text`.
+'  - PDF: Uses UglyToad.PdfPig to iterate pages and extract text with multiple
+'    fallback strategies; optionally runs OCR via an LLM call when heuristics
+'    indicate that the PDF likely contains scanned images / poor text layer.
+'
+' External Dependencies:
+'  - Microsoft.Office.Interop.Word (Word automation / COM interop)
+'  - System.Windows.Forms.RichTextBox (RTF-to-text conversion)
+'  - UglyToad.PdfPig (PDF parsing and text extraction)
+'  - SharedLibrary.SharedContext.ISharedContext (OCR model/config access)
+'  - Internal helpers used here: `ShowCustomYesNoBox`, `ShowCustomMessageBox`,
+'    `LLM`, `GetSpecialTaskModel`, `RestoreDefaults`, and related configuration
+'    fields (`originalConfigLoaded`, `originalConfig`).
+' =============================================================================
 
 Option Strict On
 Option Explicit On
@@ -13,6 +41,14 @@ Imports SharedLibrary.SharedLibrary.SharedContext
 Namespace SharedLibrary
     Partial Public Class SharedMethods
 
+        ''' <summary>
+        ''' Reads a text file as UTF-8 (with BOM detection) and returns its contents.
+        ''' </summary>
+        ''' <param name="filePath">Path to the file to read.</param>
+        ''' <param name="ReturnErrorInsteadOfEmpty">
+        ''' If <c>True</c>, returns an error message string on failure; otherwise returns an empty string.
+        ''' </param>
+        ''' <returns>The file contents, or an error string / empty string depending on <paramref name="ReturnErrorInsteadOfEmpty"/>.</returns>
         Public Shared Function ReadTextFile(filePath As String, Optional ReturnErrorInsteadOfEmpty As Boolean = True) As String
             Try
                 ' Normalize and check the path
@@ -31,6 +67,14 @@ Namespace SharedLibrary
             End Try
         End Function
 
+        ''' <summary>
+        ''' Reads an RTF file and returns its plain-text representation.
+        ''' </summary>
+        ''' <param name="rtfPath">Path to the RTF file to read.</param>
+        ''' <param name="ReturnErrorInsteadOfEmpty">
+        ''' If <c>True</c>, returns an error message string on failure; otherwise returns an empty string.
+        ''' </param>
+        ''' <returns>The extracted plain text, or an error string / empty string depending on <paramref name="ReturnErrorInsteadOfEmpty"/>.</returns>
         Public Shared Function ReadRtfAsText(ByVal rtfPath As String, Optional ReturnErrorInsteadOfEmpty As Boolean = True) As String
             Try
                 Dim rtfContent As String = File.ReadAllText(rtfPath)
@@ -44,9 +88,18 @@ Namespace SharedLibrary
             End Try
         End Function
 
+        ''' <summary>
+        ''' Reads a Word document via Office interop and returns the document's text content.
+        ''' </summary>
+        ''' <param name="docPath">Path to the Word document to open.</param>
+        ''' <param name="ReturnErrorInsteadOfEmpty">
+        ''' If <c>True</c>, returns an error message string on failure; otherwise returns an empty string.
+        ''' </param>
+        ''' <returns>The extracted text, or an error string / empty string depending on <paramref name="ReturnErrorInsteadOfEmpty"/>.</returns>
         Public Shared Function ReadWordDocument(ByVal docPath As String, Optional ReturnErrorInsteadOfEmpty As Boolean = True) As String
             Dim app As Microsoft.Office.Interop.Word.Application = Nothing
             Dim doc As Document = Nothing
+            Dim createdNewInstance As Boolean = False
 
             Try
                 Try
@@ -55,6 +108,7 @@ Namespace SharedLibrary
                 Catch ex As System.Exception
                     ' If Word is not running, create a new Word application.
                     app = New Microsoft.Office.Interop.Word.Application With {.Visible = False}
+                    createdNewInstance = True
                 End Try
 
                 ' Open the Word document in read-only mode                
@@ -80,13 +134,25 @@ Namespace SharedLibrary
                 Return If(ReturnErrorInsteadOfEmpty, $"Error reading Word document: {ex.Message}", "")
 
             Finally
-                ' Only quit the application if it was newly created
-                If app IsNot Nothing AndAlso app.Visible = False Then
+                ' Only quit the application if it was newly created by this method
+                If app IsNot Nothing AndAlso createdNewInstance Then
                     app.Quit()
                 End If
             End Try
         End Function
 
+        ''' <summary>
+        ''' Reads a PDF using PdfPig and returns extracted text; optionally performs OCR via an LLM call
+        ''' when heuristics indicate the PDF contains little or low-quality extractable text.
+        ''' </summary>
+        ''' <param name="pdfPath">Path to the PDF file to read.</param>
+        ''' <param name="ReturnErrorInsteadOfEmpty">
+        ''' If <c>True</c>, returns an error message string on failure; otherwise returns an empty string.
+        ''' </param>
+        ''' <param name="DoOCR">If <c>True</c>, enables OCR heuristics and (if confirmed) OCR execution.</param>
+        ''' <param name="AskUser">If <c>True</c>, prompts the user before performing OCR.</param>
+        ''' <param name="context">Shared context used for OCR-capable model configuration and LLM invocation.</param>
+        ''' <returns>The extracted text (or OCR output if performed), or an error string / empty string depending on <paramref name="ReturnErrorInsteadOfEmpty"/>.</returns>
         Public Shared Async Function ReadPdfAsText(ByVal pdfPath As String,
                                             Optional ByVal ReturnErrorInsteadOfEmpty As Boolean = True,
                                             Optional ByVal DoOCR As Boolean = False,
@@ -295,6 +361,12 @@ Namespace SharedLibrary
         End Function
 
 
+        ''' <summary>
+        ''' Extracts plain text content from a single PDF page using multiple strategies:
+        ''' content-order extraction, word/line reconstruction, and finally a letter-gap heuristic.
+        ''' </summary>
+        ''' <param name="page">The PDF page to extract text from.</param>
+        ''' <returns>Extracted page text (may be empty).</returns>
         Private Shared Function ExtractPageTextFromPdf(page As UglyToad.PdfPig.Content.Page) As String
             ' 1) Try PdfPig’s content-order extractor (good spacing/reading order on many PDFs)
             Try
@@ -375,6 +447,12 @@ Namespace SharedLibrary
             Return sb.ToString()
         End Function
 
+        ''' <summary>
+        ''' Performs OCR on a PDF by invoking an LLM call with the PDF path as a binary object input.
+        ''' </summary>
+        ''' <param name="pdfPath">Path to the PDF file to OCR.</param>
+        ''' <param name="context">Shared context containing model and API configuration.</param>
+        ''' <returns>OCR result text, or an empty string if OCR is not available or fails.</returns>
         Private Shared Async Function PerformOCR(ByVal pdfPath As String, context As ISharedContext) As Task(Of String)
 
             If System.String.IsNullOrWhiteSpace(context.INI_APICall_Object) Then

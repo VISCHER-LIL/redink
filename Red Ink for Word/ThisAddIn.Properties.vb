@@ -24,6 +24,7 @@ Option Strict On
 Imports System.Globalization
 Imports SharedLibrary.SharedLibrary
 Imports SharedLibrary.SharedLibrary.SharedContext
+Imports SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
@@ -181,6 +182,15 @@ Partial Public Class ThisAddIn
         End Get
         Set(value As Boolean)
             _context.INI_Clean = value
+        End Set
+    End Property
+
+    Public Shared Property INI_Ignore As Boolean
+        Get
+            Return _context.INI_Ignore
+        End Get
+        Set(value As Boolean)
+            _context.INI_Ignore = value
         End Set
     End Property
 
@@ -714,6 +724,23 @@ Partial Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_ApplyDocStyle As String
+        Get
+            Return _context.SP_ApplyDocStyle
+        End Get
+        Set(value As String)
+            _context.SP_ApplyDocStyle = value
+        End Set
+    End Property
+
+    Public Shared Property SP_ApplyDocStyle_NumberingHint As String
+        Get
+            Return _context.SP_ApplyDocStyle_NumberingHint
+        End Get
+        Set(value As String)
+            _context.SP_ApplyDocStyle_NumberingHint = value
+        End Set
+    End Property
     Public Shared Property SP_DocCheck_Clause As String
         Get
             Return _context.SP_DocCheck_Clause
@@ -1035,6 +1062,15 @@ Partial Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property SP_Ignore As String
+        Get
+            Return _context.SP_Ignore
+        End Get
+        Set(value As String)
+            _context.SP_Ignore = value
+        End Set
+    End Property
+
     Public Shared Property SP_WriteNeatly As String
         Get
             Return _context.SP_WriteNeatly
@@ -1223,8 +1259,6 @@ Partial Public Class ThisAddIn
             _context.INI_ChatCap = value
         End Set
     End Property
-
-
 
     Public Shared ReadOnly Property RDV As String = "Word (" & Version & ")"
     Public Shared Property DecodedAPI As String
@@ -1775,6 +1809,24 @@ Partial Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_DocStylePath As String
+        Get
+            Return _context.INI_DocStylePath
+        End Get
+        Set(value As String)
+            _context.INI_DocStylePath = value
+        End Set
+    End Property
+
+    Public Shared Property INI_DocStylePathLocal As String
+        Get
+            Return _context.INI_DocStylePathLocal
+        End Get
+        Set(value As String)
+            _context.INI_DocStylePathLocal = value
+        End Set
+    End Property
+
     Public Shared Property PromptLibrary() As List(Of String)
         Get
             Return _context.PromptLibrary
@@ -1880,6 +1932,79 @@ Partial Public Class ThisAddIn
             _context.SP_Add_MergePrompt = value
         End Set
     End Property
+
+    Public Shared Property Ignore As String
+        Get
+            Return _context.Ignore
+        End Get
+        Set(value As String)
+            _context.Ignore = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIniSilentMode As Integer
+        Get
+            Return _context.INI_UpdateIniSilentMode
+        End Get
+        Set(value As Integer)
+            _context.INI_UpdateIniSilentMode = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIniSilentLog As Boolean
+        Get
+            Return _context.INI_UpdateIniSilentLog
+        End Get
+        Set(value As Boolean)
+            _context.INI_UpdateIniSilentLog = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIni As Boolean
+        Get
+            Return _context.INI_UpdateIni
+        End Get
+        Set(value As Boolean)
+            _context.INI_UpdateIni = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIniAllowRemote As Boolean
+        Get
+            Return _context.INI_UpdateIniAllowRemote
+        End Get
+        Set(value As Boolean)
+            _context.INI_UpdateIniAllowRemote = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIniNoSignature As Boolean
+        Get
+            Return _context.INI_UpdateIniNoSignature
+        End Get
+        Set(value As Boolean)
+            _context.INI_UpdateIniNoSignature = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateSource As String
+        Get
+            Return _context.INI_UpdateSource
+        End Get
+        Set(value As String)
+            _context.INI_UpdateSource = value
+        End Set
+    End Property
+
+    Public Shared Property INI_UpdateIniIgnoreOverride As String
+        Get
+            Return _context.INI_UpdateIniIgnoreOverride
+        End Get
+        Set(value As String)
+            _context.INI_UpdateIniIgnoreOverride = value
+        End Set
+    End Property
+
 
     ' Return Original when OverrideValue is empty or not interpretable.
     ' Overload for String originals.

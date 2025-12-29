@@ -38,7 +38,7 @@
     <TargetFrameworkProfile />
     <BootstrapperEnabled>true</BootstrapperEnabled>
     <TargetCulture>en</TargetCulture>
-    <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
+    <AutoIncrementApplicationRevision>false</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
     <UpdateIntervalUnits>days</UpdateIntervalUnits>
@@ -48,21 +48,21 @@
     <LoadBehavior>3</LoadBehavior>
   </PropertyGroup>
   <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
-    <ApplicationVersion>1.0.0.700</ApplicationVersion>
+    <ApplicationVersion>1.1.0.700</ApplicationVersion>
     <PublishUrl>..\clickonce\apps\develop\word\</PublishUrl>
     <InstallUrl>https://redink.ai/apps/develop/word/</InstallUrl>
     <ProductName>Red Ink for Word %28Develop%29</ProductName>
     <FriendlyName>Red Ink for Word %28Develop%29</FriendlyName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
-    <ApplicationVersion>1.0.0.201</ApplicationVersion>
+    <ApplicationVersion>1.1.0.200</ApplicationVersion>
     <PublishUrl>..\clickonce\apps\preview\word\</PublishUrl>
     <InstallUrl>https://redink.ai/apps/preview/word/</InstallUrl>
     <ProductName>Red Ink for Word %28Preview%29</ProductName>
     <FriendlyName>Red Ink for Word %28Preview%29</FriendlyName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(RedInkEnvironment)' == 'GA'">
-    <ApplicationVersion>1.0.0.1</ApplicationVersion>
+    <ApplicationVersion>1.0.0.0</ApplicationVersion>
     <PublishUrl>..\clickonce\apps\ga\word\</PublishUrl>
     <InstallUrl>https://redink.ai/apps/ga/word/</InstallUrl>
     <ProductName>Red Ink for Word</ProductName>
@@ -600,6 +600,7 @@
     <Compile Include="ThisAddIn.Commands.Freestyle.vb" />
     <Compile Include="ThisAddIn.Commands.vb" />
     <Compile Include="ThisAddIn.ContextSearch.vb" />
+    <Compile Include="ThisAddIn.DocStyle.vb" />
     <Compile Include="ThisAddIn.DocCheck.vb" />
     <Compile Include="ThisAddIn.FileHelpers.vb" />
     <Compile Include="ThisAddIn.FindClause.vb" />

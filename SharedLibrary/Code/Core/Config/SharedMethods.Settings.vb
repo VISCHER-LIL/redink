@@ -1,10 +1,64 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
+' =============================================================================
+' File: SharedMethods.Settings.vb
+' Purpose:
+'   Provides Windows Forms UI and helper methods to view and modify runtime configuration values stored
+'   on `ISharedContext` and to persist configuration changes to disk and/or `My.Settings`.
+'
+' Architecture / Responsibilities:
+'   - Settings UI (curated subset):
+'       `ShowSettingsWindow` builds a modal settings dialog dynamically from two dictionaries:
+'         - `Settings`:     settingKey -> label template (may contain "{model}" and "{model2}")
+'         - `SettingsTips`: settingKey -> tooltip text
+'       The UI creates a control per key (TextBox or CheckBox) based on `IsBooleanSetting`.
+'
+'   - Expert configuration UI (arbitrary variables):
+'       `ShowExpertConfiguration` materializes a variable name/value dictionary from the current `ISharedContext`,
+'       shows it via `ShowVariableConfigurationWindow`, then maps edited values back into `ISharedContext`.
+'       `ShowVariableConfigurationWindow` displays an editable two-column grid (variable/value) and can open
+'       selected `.ini` files via `ShowTextFileEditor`.
+'
+'   - In-memory configuration access:
+'       `GetSettingValue` and `SetSettingValue` provide string-based mapping between UI setting keys and
+'       concrete properties on `ISharedContext`. `SetSettingValue` performs parsing for numeric/Boolean keys
+'       and updates derived context flags (`INI_PromptLib`, `Ignore`).
+'
+'   - Model switching:
+'       `SwitchModels` swaps primary and secondary ("_2") configuration values directly on `ISharedContext`.
+'
+'   - Persisting configuration:
+'       `UpdateAppConfig` rewrites configuration content using a read/transform/write approach:
+'         1) Resolves the active `.ini` input file path using:
+'              - Registry setting (`RegPath_IniPath`) and precedence (`RegPath_IniPrio`)
+'              - Per-application default path (`GetDefaultINIPath(context.RDV)`)
+'              - Word default path fallback (`GetDefaultINIPath("Word")`)
+'         2) Reads the resolved `IniFilePath` and updates known keys from an `expectedKeys` dictionary.
+'         3) Skips selected keys when their values equal defaults (`KeysToSkipWhenDefault`).
+'         4) Persists a small, explicit subset of keys to `My.Settings` instead of the `.ini`
+'            (`SaveToMySettings` / `pendingMySettings`).
+'         5) Writes the updated configuration to a temporary file and replaces the local default `.ini`
+'            (`DefaultPath`) by moving the temporary file into place.
+'
+'       `ResetLocalAppConfig` rewrites the per-application default `.ini` file to contain only a defined
+'       set of keys, preserving comment/empty lines where encountered.
+'
+'       `GetActiveConfigFilePath` exposes the resolved active configuration file path using the same path
+'       precedence rules used by `UpdateAppConfig`.
+'
+' External dependencies (within `SharedMethods` / SharedLibrary):
+'   - Configuration bootstrap and persistence helpers: `InitializeConfig`, `GetDefaultINIPath`, `RemoveCR`,
+'     registry helpers (`GetFromRegistry`, `RegPath_Base`, `RegPath_IniPath`, `RegPath_IniPrio`).
+'   - UI helpers: `ShowCustomMessageBox`, `ShowCustomYesNoBox`, `ShowSelectionForm`, `ShowTextFileEditor`,
+'     and related forms/modules.
+'   - Update workflow integration: `UpdateHandler` (invoked from the settings UI when applicable).
+' =============================================================================
+
 
 Option Strict On
 Option Explicit On
 
-Imports System.ComponentModel
 Imports System.Deployment.Application
 Imports System.Drawing
 Imports System.IO
@@ -16,7 +70,6 @@ Imports System.Threading
 Imports System.Windows.Forms
 Imports Markdig.Extensions
 Imports Microsoft.Office.Interop
-Imports Microsoft.Office.Interop.Word
 Imports Microsoft.Office.Tools
 Imports SharedLibrary.SharedLibrary.SharedContext
 
@@ -24,6 +77,16 @@ Namespace SharedLibrary
 
     Partial Public Class SharedMethods
 
+        ''' <summary>
+        ''' Shows a modal settings dialog that allows temporarily editing a subset of configuration values.
+        ''' Values are read from and written to <paramref name="context"/> via <see cref="GetSettingValue"/> and
+        ''' <see cref="SetSettingValue"/>.
+        ''' </summary>
+        ''' <param name="Settings">
+        ''' Map of setting key to label text template. Templates may contain "{model}" and "{model2}" placeholders.
+        ''' </param>
+        ''' <param name="SettingsTips">Map of setting key to tooltip text.</param>
+        ''' <param name="context">Shared context containing the current in-memory configuration values.</param>
         Public Shared Sub ShowSettingsWindow(Settings As Dictionary(Of String, String), SettingsTips As Dictionary(Of String, String), ByRef context As ISharedContext)
 
             InitializeConfig(context, False, False)
@@ -68,7 +131,7 @@ Namespace SharedLibrary
             Dim controlXOffset As Integer = maxLabelWidth + 20
 
             ' (1) Widen input fields a bit more
-            Dim defaultControlWidth As Integer = 400   ' CHANGED (was 380 / earlier 350)
+            Dim defaultControlWidth As Integer = 400
 
             Dim lineSpacing As Integer = CInt(TextRenderer.MeasureText("Sample", standardFont).Height * 1.5)
 
@@ -76,7 +139,7 @@ Namespace SharedLibrary
             Dim scrollPanel As New Panel() With {
                 .AutoScroll = True,
                 .Location = New System.Drawing.Point(10, descriptionLabel.Bottom + 20),
-                .Width = controlXOffset + defaultControlWidth + 10 + SystemInformation.VerticalScrollBarWidth + 8 ' CHANGED (+ scrollbar allowance)
+                .Width = controlXOffset + defaultControlWidth + 10 + SystemInformation.VerticalScrollBarWidth + 8
             }
             settingsForm.Controls.Add(scrollPanel)
 
@@ -127,13 +190,85 @@ Namespace SharedLibrary
             Dim workArea = Screen.FromPoint(Cursor.Position).WorkingArea
             Dim reservedBelow As Integer = 180   ' space for buttons + margins
             Dim dynamicCap As Integer = Math.Max(450, CInt(workArea.Height * 0.7) - reservedBelow) ' ensure at least a bit taller than old 400
-            Dim maxPanelHeight As Integer = dynamicCap   ' CHANGED (replaces fixed 400)
+            Dim maxPanelHeight As Integer = dynamicCap
 
             scrollPanel.Height = If(contentHeight > maxPanelHeight, maxPanelHeight, contentHeight)
 
-            ' (4) Buttons below panel (unchanged logic, but buttonYPos now reflects possibly taller panel)
-            Dim buttonYPos As Integer = scrollPanel.Bottom + 20
+            ' (4) Buttons below panel 
+
+            ' Top of button row
+            Dim topButtonYPos As Integer = scrollPanel.Bottom + 20
+            ' Height of one button row (derived once, reused)
+            Dim buttonRowHeight As Integer = TextRenderer.MeasureText("Sample", standardFont).Height + 10
+            ' Dim buttonYPos As Integer = scrollPanel.Bottom + 20
+            Dim buttonYPos As Integer = topButtonYPos + buttonRowHeight + 10
+
             Dim buttonSpacing As Integer = 10
+
+            ' --- INI Importer Buttons -------------------------------------------------
+
+            Dim getMoreStuffButton As New System.Windows.Forms.Button()
+            getMoreStuffButton.Text = "Get More"
+            Dim getMoreStuffSize As System.Drawing.Size = TextRenderer.MeasureText(getMoreStuffButton.Text, standardFont)
+            getMoreStuffButton.Size = New System.Drawing.Size(getMoreStuffSize.Width + 20, getMoreStuffSize.Height + 10)
+            getMoreStuffButton.Location = New System.Drawing.Point(10, topButtonYPos)
+            settingsForm.Controls.Add(getMoreStuffButton)
+
+            Dim getMoreStuffButtonToolTip As New System.Windows.Forms.ToolTip()
+            getMoreStuffButtonToolTip.SetToolTip(
+                    getMoreStuffButton,
+                    $"Will open {GetMoreStuffURL} to show you additional AI models, Special Services and other settings you can load into your configuration."
+                )
+
+            Dim loadProviderSettingsButton As New System.Windows.Forms.Button()
+            loadProviderSettingsButton.Text = "Get Model/Special Service"
+            Dim loadProviderSettingsSize As System.Drawing.Size = TextRenderer.MeasureText(loadProviderSettingsButton.Text, standardFont)
+            loadProviderSettingsButton.Size = New System.Drawing.Size(loadProviderSettingsSize.Width + 20, loadProviderSettingsSize.Height + 10)
+            loadProviderSettingsButton.Location = New System.Drawing.Point(getMoreStuffButton.Right + buttonSpacing, topButtonYPos)
+            settingsForm.Controls.Add(loadProviderSettingsButton)
+
+            Dim loadProviderSettingsToolTip As New System.Windows.Forms.ToolTip()
+            loadProviderSettingsToolTip.SetToolTip(
+                    loadProviderSettingsButton,
+                    $"Allows you to configure AI models and Special Services based on an URL (or file) you provide. See '{getMoreStuffButton.Text}' for URLs."
+                )
+
+            Dim loadOtherSettingsButton As New System.Windows.Forms.Button()
+            loadOtherSettingsButton.Text = "Get Settings"
+            Dim loadOtherSettingsSize As System.Drawing.Size = TextRenderer.MeasureText(loadOtherSettingsButton.Text, standardFont)
+            loadOtherSettingsButton.Size = New System.Drawing.Size(loadOtherSettingsSize.Width + 20, loadOtherSettingsSize.Height + 10)
+            loadOtherSettingsButton.Location = New System.Drawing.Point(loadProviderSettingsButton.Right + buttonSpacing, topButtonYPos)
+            settingsForm.Controls.Add(loadOtherSettingsButton)
+
+            Dim loadOtherSettingsToolTip As New System.Windows.Forms.ToolTip()
+            loadOtherSettingsToolTip.SetToolTip(
+                        loadOtherSettingsButton,
+                        $"Allows you to add configuration settings for {AN} based on an URL (or file) you provide. See '{getMoreStuffButton.Text}' for URLs."
+                    )
+
+            Dim downloadSampleFilesButton As New System.Windows.Forms.Button()
+            downloadSampleFilesButton.Text = "Get Sample Files"
+            Dim downloadSampleFilesSize As System.Drawing.Size = TextRenderer.MeasureText(downloadSampleFilesButton.Text, standardFont)
+            downloadSampleFilesButton.Size = New System.Drawing.Size(downloadSampleFilesSize.Width + 20, downloadSampleFilesSize.Height + 10)
+            downloadSampleFilesButton.Location = New System.Drawing.Point(loadOtherSettingsButton.Right + buttonSpacing, topButtonYPos)
+            settingsForm.Controls.Add(downloadSampleFilesButton)
+
+            Dim downloadSampleFilesToolTip As New System.Windows.Forms.ToolTip()
+            downloadSampleFilesToolTip.SetToolTip(
+                            downloadSampleFilesButton,
+                            $"Downloads from {AppsUrl} sample files you can use with {AN} and update your configuration, if necessary."
+                        )
+
+
+            Dim activeIniPath As String = GetActiveConfigFilePath(context)
+            If Not IniImportManager.CanUseImportFeature(context, activeIniPath, "") Then
+                getMoreStuffButton.Enabled = False
+                loadProviderSettingsButton.Enabled = False
+                loadOtherSettingsButton.Enabled = False
+                downloadSampleFilesButton.Enabled = False
+            End If
+
+            ' ------------------------------------------------------------------------
 
             Dim switchButton As New System.Windows.Forms.Button()
             switchButton.Text = "Switch Model"
@@ -190,7 +325,7 @@ Namespace SharedLibrary
                     delLocalConfigToolTip.SetToolTip(delLocalConfigButton, $"This will deactivate the local configuration in '{AN2}.ini' (by renaming it to '.bak', overwriting any existing such file), and have the configuration file of your 'Word' add-in (if available) and otherwise the central one applied going forward.")
                 End If
             Else
-                delLocalConfigToolTip.SetToolTip(delLocalConfigButton, $"This will reset all parameters that are not mandatory by removing them from your local configuration file '{AN2}.ini'. A copy will be saved beforhand to '.bak', overwriting any existing such file.")
+                delLocalConfigToolTip.SetToolTip(delLocalConfigButton, $"This will reset all parameters that are not mandatory by removing them from your local configuration file '{AN2}.ini'. A copy will be saved beforehand to '.bak', overwriting any existing such file.")
             End If
 
             Dim okButton As New System.Windows.Forms.Button()
@@ -219,12 +354,12 @@ Namespace SharedLibrary
             Dim updateButton As New System.Windows.Forms.Button()
             updateButton.Text = "Check for Updates"
             If Not String.IsNullOrWhiteSpace(context.INI_UpdatePath) Then
-                updateButton.Text = "Do local update"
+                updateButton.Text = "Do Local Update"
             End If
             Dim updateButtonSize As System.Drawing.Size = TextRenderer.MeasureText(updateButton.Text, standardFont)
             updateButton.Size = New System.Drawing.Size(updateButtonSize.Width + 20, updateButtonSize.Height + 10)
             updateButton.Location = New System.Drawing.Point(aboutButton.Right + buttonSpacing, cancelButton.Top)
-            If ApplicationDeployment.IsNetworkDeployed OrElse Not String.IsNullOrWhiteSpace(context.INI_UpdatePath) Then
+            If ApplicationDeployment.IsNetworkDeployed OrElse Not String.IsNullOrWhiteSpace(context.INI_UpdatePath) OrElse (context.INI_UpdateIniSilentMode = 0 AndAlso context.INI_UpdateIni) Then
                 settingsForm.Controls.Add(updateButton)
                 RightSide = updateButton.Right
             End If
@@ -253,7 +388,67 @@ Namespace SharedLibrary
             End If
             Dim CapturedContext As ISharedContext = context
 
-            ' (All existing handlers remain unchanged below) --------------------------------
+
+            AddHandler getMoreStuffButton.Click, Sub(sender, e)
+                                                     Try
+                                                         System.Diagnostics.Process.Start(New System.Diagnostics.ProcessStartInfo With {
+                                                                .FileName = GetMoreStuffURL,
+                                                                .UseShellExecute = True
+                                                            })
+                                                     Catch ex As System.Exception
+                                                         ShowCustomMessageBox($"Unable to open browser. Try opening {GetMoreStuffURL} on your own.")
+                                                     End Try
+                                                 End Sub
+
+            AddHandler loadProviderSettingsButton.Click, Sub(sender, e)
+                                                             If IniImportManager.RunInteractiveImportProvidersOnly(CapturedContext, settingsForm) Then
+                                                                 Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                                                                 If answer = 1 Then
+                                                                     ' Mark config as not loaded so InitializeConfig will re-read from disk
+                                                                     CapturedContext.INIloaded = False
+                                                                     ' Reload configuration from disk into memory
+                                                                     InitializeConfig(CapturedContext, False, True)
+                                                                     ' Refresh the UI with the newly loaded values
+                                                                     RefreshFormValues(settingControls, labelControls, CapturedContext, Settings)
+                                                                     switchButton.Enabled = CapturedContext.INI_SecondAPI
+                                                                     CapturedContext.MenusAdded = False
+                                                                 End If
+                                                             End If
+                                                         End Sub
+
+            AddHandler loadOtherSettingsButton.Click, Sub(sender, e)
+                                                          If IniImportManager.RunInteractiveImportOtherParameters(CapturedContext, settingsForm) Then
+                                                              Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                                                              If answer = 1 Then
+                                                                  ' Mark config as not loaded so InitializeConfig will re-read from disk
+                                                                  CapturedContext.INIloaded = False
+                                                                  ' Reload configuration from disk into memory
+                                                                  InitializeConfig(CapturedContext, False, True)
+                                                                  ' Refresh the UI with the newly loaded values
+                                                                  RefreshFormValues(settingControls, labelControls, CapturedContext, Settings)
+                                                                  switchButton.Enabled = CapturedContext.INI_SecondAPI
+                                                                  CapturedContext.MenusAdded = False
+                                                              End If
+                                                          End If
+                                                      End Sub
+
+            AddHandler downloadSampleFilesButton.Click, Sub(sender, e)
+
+                                                            If IniImportManager.RunDownloadSampleFiles(CapturedContext, settingsForm) Then
+                                                                Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                                                                If answer = 1 Then
+                                                                    ' Mark config as not loaded so InitializeConfig will re-read from disk
+                                                                    CapturedContext.INIloaded = False
+                                                                    ' Reload configuration from disk into memory
+                                                                    InitializeConfig(CapturedContext, False, True)
+                                                                    ' Refresh the UI with the newly loaded values
+                                                                    RefreshFormValues(settingControls, labelControls, CapturedContext, Settings)
+                                                                    switchButton.Enabled = CapturedContext.INI_SecondAPI
+                                                                    CapturedContext.MenusAdded = False
+                                                                End If
+                                                            End If
+                                                        End Sub
+
             AddHandler switchButton.Click, Sub(sender, e)
                                                If CapturedContext.INI_SecondAPI Then
                                                    For Each settingKey In settingControls.Keys
@@ -387,10 +582,10 @@ Namespace SharedLibrary
                                               ShowAboutWindow(settingsForm, CapturedContext)
                                           End Sub
 
-            If ApplicationDeployment.IsNetworkDeployed OrElse Not String.IsNullOrWhiteSpace(CapturedContext.INI_UpdatePath) Then
+            If ApplicationDeployment.IsNetworkDeployed OrElse Not String.IsNullOrWhiteSpace(CapturedContext.INI_UpdatePath) OrElse (context.INI_UpdateIniSilentMode = 0 AndAlso context.INI_UpdateIni) Then
                 AddHandler updateButton.Click, Sub(sender, e)
                                                    Dim updater As New UpdateHandler()
-                                                   updater.CheckAndInstallUpdates(CapturedContext.RDV, CapturedContext.INI_UpdatePath)
+                                                   updater.CheckAndInstallUpdates(CapturedContext.RDV, CapturedContext.INI_UpdatePath, CapturedContext)
                                                End Sub
             End If
 
@@ -467,12 +662,17 @@ Namespace SharedLibrary
             settingsForm.ShowDialog()
         End Sub
 
-
-
+        ''' <summary>
+        ''' Unloads an Excel COM add-in from the currently running Excel instance (if available).
+        ''' If no running Excel instance exists, a new hidden instance is created and used.
+        ''' </summary>
+        ''' <param name="addinName">
+        ''' Substring matched (case-insensitively) against <see cref="Excel.AddIn.FullName"/> to select the add-in.
+        ''' </param>
         Public Shared Sub UnloadExcelAddin(addinName As String)
             Dim excelApp As Excel.Application = Nothing
+            Dim foundAddin As Boolean = False
             Try
-
                 ' Start or get running instance of Excel
                 excelApp = TryCast(System.Runtime.InteropServices.Marshal.GetActiveObject("Excel.Application"), Excel.Application)
                 If excelApp Is Nothing Then
@@ -481,26 +681,42 @@ Namespace SharedLibrary
                 End If
 
                 For Each addin As Excel.AddIn In excelApp.AddIns2
-                    If addin.FullName.ToLower().Contains(addinName.ToLower()) Then
-                        Debug.WriteLine("Unloading add-in: " & addin.FullName)
-                        addin.Installed = False  ' Unload the add-in
-                        Marshal.ReleaseComObject(excelApp)
-                        excelApp = Nothing
-                        GC.Collect()
-                        GC.WaitForPendingFinalizers()
-                        Debug.WriteLine("Waiting for Excel to release file lock...")
-                        Thread.Sleep(1000)
-                        Exit For
-                    End If
+                    Try
+                        If addin.FullName.ToLower().Contains(addinName.ToLower()) Then
+                            Debug.WriteLine("Unloading add-in: " & addin.FullName)
+                            addin.Installed = False  ' Unload the add-in
+                            foundAddin = True
+                            Exit For
+                        End If
+                    Finally
+                        ' Release each AddIn COM object
+                        Marshal.ReleaseComObject(addin)
+                    End Try
                 Next
+
+                If foundAddin Then
+                    GC.Collect()
+                    GC.WaitForPendingFinalizers()
+                    Debug.WriteLine("Waiting for Excel to release file lock...")
+                    Thread.Sleep(1000)
+                End If
 
             Catch ex As Exception
                 Debug.WriteLine("Error unloading Excel add-In: " & ex.Message)
             Finally
-                If excelApp IsNot Nothing Then System.Runtime.InteropServices.Marshal.ReleaseComObject(excelApp)
+                If excelApp IsNot Nothing Then
+                    Marshal.ReleaseComObject(excelApp)
+                    excelApp = Nothing
+                End If
             End Try
         End Sub
 
+        ''' <summary>
+        ''' Unloads a Word COM add-in from the currently running Word instance (if available).
+        ''' </summary>
+        ''' <param name="addInName">
+        ''' Add-in name matched (case-insensitively) against <see cref="Microsoft.Office.Interop.Word.AddIn.Name"/>.
+        ''' </param>
         Public Shared Sub UnloadWordAddin(addInName As String)
             Try
                 ' Attempt to get the active (running) Word Application instance.
@@ -526,6 +742,14 @@ Namespace SharedLibrary
 
 
 
+        ''' <summary>
+        ''' Refreshes the settings form UI by updating labels (including "{model}" / "{model2}" placeholders)
+        ''' and reloading current values from <paramref name="context"/>.
+        ''' </summary>
+        ''' <param name="settingControls">Map of setting key to input control (<see cref="TextBox"/> or <see cref="CheckBox"/>).</param>
+        ''' <param name="labelControls">Map of setting key to its label control.</param>
+        ''' <param name="context">Shared context providing the in-memory configuration values.</param>
+        ''' <param name="Settings">Map of setting key to label text template.</param>
         Public Shared Sub RefreshFormValues(settingControls As Dictionary(Of String, System.Windows.Forms.Control),
                               labelControls As Dictionary(Of String, System.Windows.Forms.Label), ByRef context As ISharedContext, Settings As Dictionary(Of String, String))
             ' Update the labels and input controls dynamically
@@ -548,18 +772,30 @@ Namespace SharedLibrary
             Next
         End Sub
 
+        ''' <summary>
+        ''' Determines whether a setting key is represented as a Boolean input in the settings UI.
+        ''' </summary>
+        ''' <param name="settingKey">Setting key to check.</param>
+        ''' <returns><c>True</c> if the key is listed as Boolean; otherwise, <c>False</c>.</returns>
         Public Shared Function IsBooleanSetting(settingKey As String) As Boolean
             ' Determine if a setting is a Boolean based on its key
             Dim booleanSettings As New List(Of String) From {
         "DoubleS", "NoEmDash", "Clean", "MarkdownBubbles", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
         "KeepFormat2", "KeepParaFormatInline", "ReplaceText2", "DoMarkupOutlook", "DoMarkupWord",
         "APIDebug", "ISearch_Approve", "ISearch", "Lib", "ContextMenu", "SecondAPI", "APIEncrypted", "APIEncrypted_2",
-        "OAuth2", "OAuth2_2", "PromptLib"
+        "OAuth2", "OAuth2_2", "PromptLib", "Ignore",
+        "UpdateIni", "UpdateIniAllowRemote", "UpdateIniNoSignature", "UpdateIniSilentLog"
             }
             Return booleanSettings.Contains(settingKey)
         End Function
 
 
+        ''' <summary>
+        ''' Returns the current string representation of a named setting as stored on <paramref name="context"/>.
+        ''' </summary>
+        ''' <param name="settingName">Setting key to read.</param>
+        ''' <param name="context">Shared context containing the in-memory configuration values.</param>
+        ''' <returns>The setting value as a string, or an empty string if the key is not handled.</returns>
         Public Shared Function GetSettingValue(settingName As String, ByRef context As ISharedContext) As String
             ' Return the value of the setting based on its name
             Select Case settingName
@@ -641,6 +877,8 @@ Namespace SharedLibrary
                     Return context.INI_DoubleS.ToString()
                 Case "Clean"
                     Return context.INI_Clean.ToString()
+                Case "Ignore"
+                    Return context.INI_Ignore.ToString()
                 Case "NoEmDash"
                     Return context.INI_NoDash.ToString()
                 Case "MarkdownBubbles"
@@ -715,6 +953,10 @@ Namespace SharedLibrary
                     Return context.INI_DocCheckPath
                 Case "DocCheckPathLocal"
                     Return context.INI_DocCheckPathLocal
+                Case "DocStylePath"
+                    Return context.INI_DocStylePath
+                Case "DocStylePathLocal"
+                    Return context.INI_DocStylePathLocal
                 Case "PromptLibPath_Transcript"
                     Return context.INI_PromptLibPath_Transcript
                 Case "SpeechModelPath"
@@ -801,12 +1043,34 @@ Namespace SharedLibrary
                     Return context.INI_OAuth2.ToString()
                 Case "OAuth2_2"
                     Return context.INI_OAuth2_2.ToString()
+                Case "UpdateIni"
+                    Return context.INI_UpdateIni.ToString()
+                Case "UpdateIniAllowRemote"
+                    Return context.INI_UpdateIniAllowRemote.ToString()
+                Case "UpdateIniNoSignature"
+                    Return context.INI_UpdateIniNoSignature.ToString()
+                Case "UpdateSource"
+                    Return context.INI_UpdateSource
+                Case "UpdateIniIgnoreOverride"
+                    Return context.INI_UpdateIniIgnoreOverride
+                Case "UpdateIniSilentMode"
+                    Return context.INI_UpdateIniSilentMode.ToString()
+                Case "UpdateIniSilentLog"
+                    Return context.INI_UpdateIniSilentLog.ToString()
                 Case Else
                     Return ""
             End Select
         End Function
 
 
+        ''' <summary>
+        ''' Sets a named setting value on <paramref name="context"/> by mapping a string key to a specific context field.
+        ''' Some settings are parsed into numeric or Boolean types based on the key.
+        ''' After assignment, derived context flags are refreshed (<c>INI_PromptLib</c> and <c>Ignore</c>).
+        ''' </summary>
+        ''' <param name="settingName">Setting key to write.</param>
+        ''' <param name="value">String representation of the value to assign (parsed for numeric/Boolean keys).</param>
+        ''' <param name="context">Shared context that receives the updated in-memory configuration values.</param>
         Public Shared Sub SetSettingValue(settingName As String, value As String, ByRef context As ISharedContext)
             ' Set the value of the setting based on its name
 
@@ -883,6 +1147,8 @@ Namespace SharedLibrary
                     context.INI_DoubleS = Boolean.Parse(value)
                 Case "Clean"
                     context.INI_Clean = Boolean.Parse(value)
+                Case "Ignore"
+                    context.INI_Ignore = Boolean.Parse(value)
                 Case "NoEmDash"
                     context.INI_NoDash = Boolean.Parse(value)
                 Case "MarkdownBubbles"
@@ -959,6 +1225,10 @@ Namespace SharedLibrary
                     context.INI_DocCheckPath = value
                 Case "DocCheckPathLocal"
                     context.INI_DocCheckPathLocal = value
+                Case "DocStylePath"
+                    context.INI_DocStylePath = value
+                Case "DocStylePathLocal"
+                    context.INI_DocStylePathLocal = value
                 Case "SpeechModelPath"
                     context.INI_SpeechModelPath = value
                 Case "LocalModelPath"
@@ -1035,16 +1305,36 @@ Namespace SharedLibrary
                     context.INI_RenameLibPath = value
                 Case "RenameLibPathLocal"
                     context.INI_RenameLibPathLocal = value
+                Case "UpdateIni"
+                    context.INI_UpdateIni = Boolean.Parse(value)
+                Case "UpdateIniAllowRemote"
+                    context.INI_UpdateIniAllowRemote = Boolean.Parse(value)
+                Case "UpdateIniNoSignature"
+                    context.INI_UpdateIniNoSignature = Boolean.Parse(value)
+                Case "UpdateSource"
+                    context.INI_UpdateSource = value
+                Case "UpdateIniIgnoreOverride"
+                    context.INI_UpdateIniIgnoreOverride = value
+                Case "UpdateIniSilentMode"
+                    context.INI_UpdateIniSilentMode = Integer.Parse(value)
+                Case "UpdateIniSilentLog"
+                    context.INI_UpdateIniSilentLog = Boolean.Parse(value)
 
                 Case Else
                     MessageBox.Show($"Error in SetSettingValue - could not save the value for '{settingName}'.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             End Select
 
             If context.INI_PromptLibPath.Trim() = "" And context.INI_PromptLibPathLocal.Trim() = "" Then context.INI_PromptLib = False Else context.INI_PromptLib = True
+            If context.INI_Ignore Then context.Ignore = context.SP_Ignore Else context.Ignore = ""
 
         End Sub
 
 
+        ''' <summary>
+        ''' Switches primary and secondary ("_2") configuration values on <paramref name="context"/> by swapping
+        ''' each supported pair of fields.
+        ''' </summary>
+        ''' <param name="context">Shared context whose primary/secondary settings are swapped in-place.</param>
         Public Shared Sub SwitchModels(ByRef context As ISharedContext)
             ' Switch the content of variables with a _2 suffix with their corresponding variables without the _2 suffix
             Dim temp As String
@@ -1149,9 +1439,14 @@ Namespace SharedLibrary
 
         End Sub
 
+        ''' <summary>
+        ''' Writes the current in-memory configuration from <paramref name="context"/> back to an `.ini` file and
+        ''' persists selected keys into <c>My.Settings</c>.
+        ''' The `.ini` content is rewritten by updating existing keys and appending missing keys.
+        ''' </summary>
+        ''' <param name="context">Shared context providing the in-memory configuration values to persist.</param>
         Public Shared Sub UpdateAppConfig(ByRef context As ISharedContext)
             Try
-
 
                 Dim IniFilePath As String = ""
                 Dim RegFilePath As String = ""
@@ -1211,6 +1506,7 @@ Namespace SharedLibrary
                     {"Language2", context.INI_Language2},
                     {"DoubleS", context.INI_DoubleS.ToString()},
                     {"Clean", context.INI_Clean.ToString()},
+                    {"Ignore", context.INI_Ignore.ToString()},
                     {"NoEmDash", context.INI_NoDash.ToString()},
                     {"DefaultPrefix", context.INI_DefaultPrefix},
                     {"MarkdownBubbles", context.INI_MarkdownBubbles.ToString()},
@@ -1306,6 +1602,8 @@ Namespace SharedLibrary
                     {"WebAgentPathLocal", context.INI_WebAgentPathLocal},
                     {"DocCheckPath", context.INI_DocCheckPath},
                     {"DocCheckPathLocal", context.INI_DocCheckPathLocal},
+                    {"DocStylePath", context.INI_DocStylePath},
+                    {"DocStylePathLocal", context.INI_DocStylePathLocal},
                     {"PromptLib_Transcript", context.INI_PromptLibPath_Transcript},
                     {"SP_Translate", context.SP_Translate},
                     {"SP_Correct", context.SP_Correct},
@@ -1313,6 +1611,8 @@ Namespace SharedLibrary
                     {"SP_Explain", context.SP_Explain},
                     {"SP_FindClause", context.SP_FindClause},
                     {"SP_FindClause_Clean", context.SP_FindClause_Clean},
+                    {"SP_ApplyDocStyle", context.SP_ApplyDocStyle},
+                    {"SP_ApplyDocStyle_NumberingHint", context.SP_ApplyDocStyle_NumberingHint},
                     {"SP_DocCheck_Clause", context.SP_DocCheck_Clause},
                     {"SP_DocCheck_MultiClause", context.SP_DocCheck_MultiClause},
                     {"SP_DocCheck_MultiClauseSum", context.SP_DocCheck_MultiClauseSum},
@@ -1348,6 +1648,7 @@ Namespace SharedLibrary
                     {"SP_ContextSearchMulti", context.SP_ContextSearchMulti},
                     {"SP_RangeOfCells", context.SP_RangeOfCells},
                     {"SP_ParseFile", context.SP_ParseFile},
+                    {"SP_Ignore", context.SP_Ignore},
                     {"SP_WriteNeatly", context.SP_WriteNeatly},
                     {"SP_Add_KeepFormulasIntact", context.SP_Add_KeepFormulasIntact},
                     {"SP_Add_KeepHTMLIntact", context.SP_Add_KeepHTMLIntact},
@@ -1371,10 +1672,17 @@ Namespace SharedLibrary
                     {"SP_FindPrompts", context.SP_FindPrompts},
                     {"SP_MergePrompt", context.SP_MergePrompt},
                     {"SP_MergePrompt2", context.SP_MergePrompt2},
-                    {"SP_Add_MergePrompt", context.SP_Add_MergePrompt}
+                    {"SP_Add_MergePrompt", context.SP_Add_MergePrompt},
+                    {"UpdateIni", context.INI_UpdateIni.ToString()},
+                    {"UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote.ToString()},
+                    {"UpdateIniNoSignature", context.INI_UpdateIniNoSignature.ToString()},
+                    {"UpdateSource", context.INI_UpdateSource},
+                    {"UpdateIniIgnoreOverride", context.INI_UpdateIniIgnoreOverride},
+                    {"UpdateIniSilentMode", context.INI_UpdateIniSilentMode.ToString()},
+                    {"UpdateIniSilentLog", context.INI_UpdateIniSilentLog.ToString()}
                 }
 
-                Dim KeysToSkipWhenDefault As New Dictionary(Of String, String) From {
+                Dim KeysToSkipWhenDefault As New Dictionary(Of String, Object) From {
                     {"ISearch_SearchTerm_SP", Default_INI_ISearch_SearchTerm_SP},
                     {"ISearch_Apply_SP", Default_INI_ISearch_Apply_SP},
                     {"ISearch_Apply_SP_Markup", Default_INI_ISearch_Apply_SP_Markup},
@@ -1384,6 +1692,8 @@ Namespace SharedLibrary
                     {"SP_Explain", Default_SP_Explain},
                     {"SP_FindClause", Default_SP_FindClause},
                     {"SP_FindClause_Clean", Default_SP_FindClause_Clean},
+                    {"SP_ApplyDocStyle", Default_SP_ApplyDocStyle},
+                    {"SP_ApplyDocStyle_NumberingHint", Default_SP_ApplyDocStyle_NumberingHint},
                     {"SP_DocCheck_Clause", Default_SP_DocCheck_Clause},
                     {"SP_DocCheck_MultiClause", Default_SP_DocCheck_MultiClause},
                     {"SP_DocCheck_MultiClauseSum", Default_SP_DocCheck_MulticlauseSum},
@@ -1419,6 +1729,7 @@ Namespace SharedLibrary
                     {"SP_ContextSearchMulti", Default_SP_ContextSearchMulti},
                     {"SP_RangeOfCells", Default_SP_RangeOfCells},
                     {"SP_ParseFile", Default_SP_ParseFile},
+                    {"SP_Ignore", Default_SP_Ignore},
                     {"SP_WriteNeatly", Default_SP_WriteNeatly},
                     {"SP_Add_KeepFormulasIntact", Default_SP_Add_KeepFormulasIntact},
                     {"SP_Add_KeepHTMLIntact", Default_SP_Add_KeepHTMLIntact},
@@ -1442,7 +1753,38 @@ Namespace SharedLibrary
                     {"SP_FindPrompts", Default_SP_FindPrompts},
                     {"SP_Add_MergePrompt", Default_SP_Add_MergePrompt},
                     {"SP_MergePrompt", Default_SP_MergePrompt},
-                    {"SP_MergePrompt2", Default_SP_MergePrompt2}
+                    {"SP_MergePrompt2", Default_SP_MergePrompt2},
+                    {"Timeout", DEFAULT_TIMEOUT_LONG},
+                    {"Language1", DEFAULT_LANGUAGE_1},
+                    {"Language2", DEFAULT_LANGUAGE_2},
+                    {"KeepFormatCap", DEFAULT_KEEPFORMAT_CAP},
+                    {"MarkupMethodHelper", DEFAULT_MARKUP_METHOD_HELPER},
+                    {"MarkupMethodWord", DEFAULT_MARKUP_METHOD_WORD},
+                    {"MarkupMethodOutlook", DEFAULT_MARKUP_METHOD_OUTLOOK},
+                    {"MarkupDiffCap", DEFAULT_MARKUP_DIFF_CAP},
+                    {"MarkupRegexCap", DEFAULT_MARKUP_REGEX_CAP},
+                    {"ChatCap", DEFAULT_CHAT_CAP},
+                    {"Lib_Timeout", DEFAULT_TIMEOUT_LIB},
+                    {"UpdateIniSilentMode", DEFAULT_UPDATE_INI_SILENT_MODE},
+                    {"ReplaceText1", DEFAULT_BOOL_REPLACETEXT1},
+                    {"MarkdownConvert", DEFAULT_BOOL_MARKDOWNCONVERT},
+                    {"ReplaceText2", DEFAULT_BOOL_REPLACETEXT2},
+                    {"DoMarkupOutlook", DEFAULT_BOOL_DOMARKUPOUTLOOK},
+                    {"DoMarkupWord", DEFAULT_BOOL_DOMARKUPWORD},
+                    {"ContextMenu", DEFAULT_BOOL_CONTEXTMENU},
+                    {"ISearch", DEFAULT_BOOL_ISEARCH_ENABLED},
+                    {"UpdateIni", DEFAULT_BOOL_UPDATEINI},
+                    {"UpdateIniAllowRemote", DEFAULT_BOOL_UPDATEINI_ALLOWREMOTE},
+                    {"UpdateIniSilentLog", DEFAULT_BOOL_UPDATEINISILENTLOG},
+                    {"ISearch_URL", DEFAULT_ISEARCH_URL},
+                    {"ISearch_ResponseMask1", DEFAULT_ISEARCH_RESPONSE_MASK_1},
+                    {"ISearch_ResponseMask2", DEFAULT_ISEARCH_RESPONSE_MASK_2},
+                    {"ISearch_Name", DEFAULT_ISEARCH_NAME},
+                    {"ISearch_Tries", ISearch_DefTries},
+                    {"ISearch_Results", ISearch_DefResults},
+                    {"ISearch_MaxDepth", ISearch_DefMaxDepth},
+                    {"ISearch_Timeout", ISearch_DefSearchTimeout},
+                    {"UpdateCheckInterval", DefaultUpdateIntervalDays}
                 }
 
                 Dim SaveToMySettings As New Dictionary(Of String, String) From {
@@ -1451,7 +1793,6 @@ Namespace SharedLibrary
                     {"MarkupMethodWordOverride", "MarkupMethodWordOverride"},
                     {"MarkupMethodOutlookOverride", "MarkupMethodOutlookOverride"}
                 }
-
 
                 ' Accumulate settings to persist to My.Settings at the end
                 Dim pendingMySettings As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
@@ -1507,8 +1848,8 @@ Namespace SharedLibrary
 
                     ' If this key is mapped to My.Settings, store there only (respecting default-skip behavior)
                     If SaveToMySettings.ContainsKey(key) Then
-                        If KeysToSkipWhenDefault.ContainsKey(key) AndAlso KeysToSkipWhenDefault(key) = value Then
-                            ' Skip adding default to settings to mirror previous "skip when default" behavior
+                        If IsDefaultValue(key, value, KeysToSkipWhenDefault) Then
+                            ' Skip adding default to settings to mirror previous "skip When Default" behavior
                         Else
                             Dim settingsKey As String = SaveToMySettings(key)
                             pendingMySettings(settingsKey) = value
@@ -1517,20 +1858,32 @@ Namespace SharedLibrary
                         Continue For
                     End If
 
+
                     ' For normal keys: skip adding to file if default matches the skip rule
-                    If KeysToSkipWhenDefault.ContainsKey(key) AndAlso KeysToSkipWhenDefault(key) = value Then
+                    If IsDefaultValue(key, value, KeysToSkipWhenDefault) Then
                         Continue For
                     End If
 
-                    ' Write the key-value pair to the updated content
-                    updatedContent.AppendLine($"{key} = {value}")
+                    ' Write the key-value pair to the updated content, but not for empty keys                    
+                    If ShouldWriteKey(key, value, KeysToSkipWhenDefault) Then
+                        updatedContent.AppendLine($"{key} = {value}")
+                    End If
                 Next
 
                 ' Write the updated content to the temporary ini file
                 System.IO.File.WriteAllText(TempIniFilePath, updatedContent.ToString())
 
                 ' Replace the original file with the updated file
-                System.IO.File.Delete(DefaultPath)
+                ' Ensure the target directory exists
+                Dim targetDir As String = System.IO.Path.GetDirectoryName(DefaultPath)
+                If Not System.IO.Directory.Exists(targetDir) Then
+                    System.IO.Directory.CreateDirectory(targetDir)
+                End If
+
+                ' Delete existing file only if it exists
+                If System.IO.File.Exists(DefaultPath) Then
+                    System.IO.File.Delete(DefaultPath)
+                End If
                 System.IO.File.Move(TempIniFilePath, DefaultPath)
 
                 ' Persist any keys mapped to My.Settings at the end
@@ -1547,7 +1900,7 @@ Namespace SharedLibrary
                 If IniFilePath = DefaultPath Then
                     ShowCustomMessageBox("Your configuration file has been updated.")
                 Else
-                    ShowCustomMessageBox("Your configuration has been saved to a local configuration file (which will be used going forward until deleted).")
+                    ShowCustomMessageBox("Your configuration has been saved To a local configuration file (which will be used going forward until deleted).")
                 End If
 
                 InitializeConfig(context, False, True)
@@ -1558,6 +1911,115 @@ Namespace SharedLibrary
         End Sub
 
 
+        ''' <summary>
+        ''' Determines whether the specified INI key/value pair represents its defined default value
+        ''' and therefore should be skipped when writing the configuration file.
+        ''' </summary>
+        ''' <param name="key">
+        ''' The INI key name to evaluate.
+        ''' </param>
+        ''' <param name="currentValue">
+        ''' The current string value that would be written to the INI file.
+        ''' </param>
+        ''' <param name="defaults">
+        ''' A dictionary mapping INI keys to their strongly-typed default values.
+        ''' </param>
+        ''' <returns>
+        ''' <c>True</c> if the current value matches the default value for the specified key;
+        ''' otherwise, <c>False</c>.
+        ''' </returns>
+        Private Shared Function IsDefaultValue(
+    ByVal key As String,
+    ByVal currentValue As String,
+    ByVal defaults As Dictionary(Of String, Object)
+) As Boolean
+
+            If Not defaults.ContainsKey(key) Then
+                Return False
+            End If
+
+            Dim defaultValue As Object = defaults(key)
+
+            Dim normalizedCurrent As String = NormalizeIniValue(currentValue)
+            Dim normalizedDefault As String = NormalizeIniValue(defaultValue)
+
+            Return String.Equals(normalizedCurrent, normalizedDefault, StringComparison.OrdinalIgnoreCase)
+        End Function
+
+
+        ''' <summary>
+        ''' Normalizes an INI value or default value into a canonical string representation
+        ''' suitable for reliable, culture-invariant comparison.
+        ''' </summary>
+        ''' <param name="value">
+        ''' The value to normalize. Supported types include <see cref="String"/>,
+        ''' <see cref="Boolean"/>, and numeric primitives.
+        ''' </param>
+        ''' <returns>
+        ''' A normalized string representation of the value.
+        ''' </returns>
+        Private Shared Function NormalizeIniValue(ByVal value As Object) As String
+            If value Is Nothing Then
+                Return String.Empty
+            End If
+
+            If TypeOf value Is Boolean Then
+                Return CBool(value).ToString().ToLowerInvariant()
+            End If
+
+            If TypeOf value Is Integer OrElse
+       TypeOf value Is Long OrElse
+       TypeOf value Is Double OrElse
+       TypeOf value Is Decimal Then
+                Return System.Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)
+            End If
+
+            Return value.ToString().Trim()
+        End Function
+
+
+
+        ''' <summary>
+        ''' Determines whether an INI key should be written to disk based on its value.
+        ''' </summary>
+        ''' <param name="key">
+        ''' The INI key name being evaluated.
+        ''' </param>
+        ''' <param name="value">
+        ''' The value associated with the INI key. Empty or whitespace-only strings are considered invalid.
+        ''' Boolean "False" values for keys not in the defaults skiplist are also skipped.
+        ''' </param>
+        ''' <param name="defaults">
+        ''' Dictionary of keys with explicit default values. Boolean keys in this dictionary default to True;
+        ''' boolean keys NOT in this dictionary default to False and should be skipped when False.
+        ''' </param>
+        ''' <returns>
+        ''' <c>True</c> if the value should be written; otherwise, <c>False</c>.
+        ''' </returns>
+        Private Shared Function ShouldWriteKey(ByVal key As String, ByVal value As String, ByVal defaults As Dictionary(Of String, Object)) As Boolean
+            ' Skip empty or whitespace-only values
+            If String.IsNullOrWhiteSpace(value) Then
+                Return False
+            End If
+
+            ' For boolean "False" values not in the skiplist, skip writing (they default to False implicitly)
+            If String.Equals(value, "False", StringComparison.OrdinalIgnoreCase) Then
+                If Not defaults.ContainsKey(key) Then
+                    Return False
+                End If
+            End If
+
+            Return True
+        End Function
+
+
+
+        ''' <summary>
+        ''' Resets the local `.ini` configuration file (at the default INI path for the current RDV) by rewriting it to
+        ''' contain only keys listed in <c>expectedKeys</c>, using current values from <paramref name="context"/>.
+        ''' Comment and empty lines are preserved from the original file where encountered.
+        ''' </summary>
+        ''' <param name="context">Shared context providing the in-memory configuration values to keep.</param>
         Public Shared Sub ResetLocalAppConfig(ByRef context As ISharedContext)
             Try
                 ' Determine the path to the existing .ini file
@@ -1573,7 +2035,7 @@ Namespace SharedLibrary
                 ' Create a temporary file for the updated configuration
                 TempIniFilePath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(IniFilePath), $"{AN2}_temp.ini")
 
-                ' Define all expected keys and their default or in-memory values
+                ' Define all expected keys and their default or in-memory values --> they will remain in case of a reset of the configuration
                 Dim expectedKeys As New Dictionary(Of String, String) From {
                     {"APIKey", context.INI_APIKeyBack},
                     {"Endpoint", context.INI_Endpoint},
@@ -1630,6 +2092,8 @@ Namespace SharedLibrary
                     {"WebAgentPathLocal", context.INI_WebAgentPathLocal},
                     {"DocCheckPath", context.INI_DocCheckPath},
                     {"DocCheckPathLocal", context.INI_DocCheckPathLocal},
+                    {"DocStylePath", context.INI_DocStylePath},
+                    {"DocStylePathLocal", context.INI_DocStylePathLocal},
                     {"PromptLib_Transcript", context.INI_PromptLibPath_Transcript},
                     {"RedactionInstructionsPath", context.INI_RedactionInstructionsPath},
                     {"RedactionInstructionsPathLocal", context.INI_RedactionInstructionsPathLocal},
@@ -1641,7 +2105,14 @@ Namespace SharedLibrary
                     {"DiscussInkyPath", context.INI_DiscussInkyPath},
                     {"DiscussInkyPathLocal", context.INI_DiscussInkyPathLocal},
                     {"UpdateCheckInterval", context.INI_UpdateCheckInterval.ToString()},
-                    {"UpdatePath", context.INI_UpdatePath}
+                    {"UpdatePath", context.INI_UpdatePath},
+                    {"UpdateIni", context.INI_UpdateIni.ToString()},
+                    {"UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote.ToString()},
+                    {"UpdateIniNoSignature", context.INI_UpdateIniNoSignature.ToString()},
+                    {"UpdateSource", context.INI_UpdateSource},
+                    {"UpdateIniIgnoreOverride", context.INI_UpdateIniIgnoreOverride},
+                    {"UpdateIniSilentMode", context.INI_UpdateIniSilentMode.ToString()},
+                    {"UpdateIniSilentLog", context.INI_UpdateIniSilentLog.ToString()}
                 }
 
                 ' Read the original ini file content
@@ -1700,6 +2171,12 @@ Namespace SharedLibrary
         End Sub
 
 
+        ''' <summary>
+        ''' Returns the resolved path of the active configuration file (<c>{AN2}.ini</c>) based on registry and default
+        ''' location precedence.
+        ''' </summary>
+        ''' <param name="context">Shared context providing the current application identifier (<c>RDV</c>).</param>
+        ''' <returns>The active configuration file path with CR characters removed.</returns>
         Public Shared Function GetActiveConfigFilePath(context As ISharedContext) As String
             Dim regPath As String = GetFromRegistry(RegPath_Base, RegPath_IniPath, True)
             Dim defaultPathApp As String = GetDefaultINIPath(context.RDV)
@@ -1721,8 +2198,20 @@ Namespace SharedLibrary
         End Function
 
 
-
-
+        ''' <summary>
+        ''' Shows a modal "Expert Configuration" window containing a grid of variable names and editable values.
+        ''' </summary>
+        ''' <param name="variableNames">List of variable names shown as read-only in the first column.</param>
+        ''' <param name="variableValues">
+        ''' Dictionary of variable name to current value. Values are written back as strings when saved.
+        ''' If <c>Nothing</c>, a new case-insensitive dictionary is created.
+        ''' </param>
+        ''' <param name="context">Shared context used when resolving and editing related `.ini` files.</param>
+        ''' <param name="ownerForm">Optional dialog owner.</param>
+        ''' <returns>
+        ''' The edited dictionary when the dialog is saved; otherwise <c>Nothing</c>.
+        ''' Returns <c>Nothing</c> as well when the user chooses the "reload from disk" flow.
+        ''' </returns>
         Public Shared Function ShowVariableConfigurationWindow(
         variableNames As List(Of String),
         variableValues As Dictionary(Of String, Object),
@@ -1738,11 +2227,11 @@ Namespace SharedLibrary
             Dim gridTouched As Boolean = False
 
             Dim form As New Form() With {
-        .Text = "Expert Configuration",
-        .StartPosition = FormStartPosition.CenterScreen,
-        .ClientSize = New Size(900, 520),
-        .Font = New System.Drawing.Font("Segoe UI", 9.0F)
-    }
+                        .Text = "Expert Configuration",
+                        .StartPosition = FormStartPosition.CenterScreen,
+                        .ClientSize = New Size(900, 520),
+                        .Font = New System.Drawing.Font("Segoe UI", 9.0F)
+                    }
 
             ' Icon / logo
             Try
@@ -1752,17 +2241,29 @@ Namespace SharedLibrary
             End Try
 
             Dim dgv As New DataGridView() With {
-        .Dock = DockStyle.Fill,
-        .AllowUserToAddRows = False,
-        .AllowUserToDeleteRows = False,
-        .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-        .RowHeadersVisible = False,
-        .SelectionMode = DataGridViewSelectionMode.CellSelect,
-        .MultiSelect = False
-    }
+                        .Dock = DockStyle.Fill,
+                        .AllowUserToAddRows = False,
+                        .AllowUserToDeleteRows = False,
+                        .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                        .RowHeadersVisible = False,
+                        .SelectionMode = DataGridViewSelectionMode.CellSelect,
+                        .MultiSelect = False
+                    }
 
-            Dim colVar As New DataGridViewTextBoxColumn() With {.HeaderText = "Variable", .ReadOnly = True, .Name = "colVar"}
-            Dim colVal As New DataGridViewTextBoxColumn() With {.HeaderText = "Value", .Name = "colVal"}
+            Dim colVar As New System.Windows.Forms.DataGridViewTextBoxColumn() With {
+                    .HeaderText = "Variable",
+                    .ReadOnly = True,
+                    .Name = "colVar",
+                    .FillWeight = 30
+                }
+
+            Dim colVal As New System.Windows.Forms.DataGridViewTextBoxColumn() With {
+                    .HeaderText = "Value",
+                    .Name = "colVal",
+                    .FillWeight = 70
+                }
+
+
             dgv.Columns.AddRange(colVar, colVal)
 
             dgv.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing
@@ -1781,33 +2282,93 @@ Namespace SharedLibrary
                                                              If dgv.IsCurrentCellDirty Then dgv.CommitEdit(DataGridViewDataErrorContexts.Commit)
                                                          End Sub
 
-            Dim btnSaveClose As New Button() With {.Text = "Save && Close", .AutoSize = True, .Margin = New Padding(10)}
-            Dim btnEditIni As New Button() With {.Text = "Edit .ini Files", .AutoSize = True, .Margin = New Padding(10)}
-            Dim btnCancel As New Button() With {.Text = "Cancel", .AutoSize = True, .Margin = New Padding(10)}
+            Dim btnSaveClose As New System.Windows.Forms.Button() With {.Text = "Save && Close", .AutoSize = True, .Margin = New Padding(10)}
+            Dim btnEditIni As New System.Windows.Forms.Button() With {.Text = "Edit .ini Files", .AutoSize = True, .Margin = New Padding(10)}
+            Dim btnCancel As New System.Windows.Forms.Button() With {.Text = "Cancel", .AutoSize = True, .Margin = New Padding(10)}
+            Dim btnImportIni As New System.Windows.Forms.Button() With {.Text = "Load Settings From A Source", .AutoSize = True, .Margin = New Padding(10)}
+
+            Dim pnlGridHost As New System.Windows.Forms.Panel() With {
+            .Dock = System.Windows.Forms.DockStyle.Fill,
+            .Padding = New System.Windows.Forms.Padding(15, 15, 15, 15)
+        }
+
 
             Dim pnlButtons As New FlowLayoutPanel() With {
-        .Dock = DockStyle.Bottom,
-        .FlowDirection = FlowDirection.RightToLeft,
-        .AutoSize = True,
-        .Padding = New Padding(16, 12, 16, 14),
-        .WrapContents = False
-    }
-            pnlButtons.Controls.AddRange({btnCancel, btnSaveClose, btnEditIni})
+                    .Dock = DockStyle.Bottom,
+                    .FlowDirection = FlowDirection.RightToLeft,
+                    .AutoSize = True,
+                    .Padding = New Padding(15, 15, 15, 15),
+                    .WrapContents = False
+                }
+            pnlButtons.Controls.AddRange({btnCancel, btnSaveClose, btnEditIni, btnImportIni})
 
-            form.Controls.Add(dgv)
+            pnlGridHost.Controls.Add(dgv)
+            form.Controls.Add(pnlGridHost)
             form.Controls.Add(pnlButtons)
 
-            Dim syncGridToDictionary As Action =
-        Sub()
-            For Each row As DataGridViewRow In dgv.Rows
-                If row.IsNewRow Then Continue For
-                Dim name = CStr(row.Cells("colVar").Value)
-                Dim valueStr = CStr(If(row.Cells("colVal").Value, ""))
-                If Not String.IsNullOrWhiteSpace(name) Then
-                    variableValues(name) = valueStr
+            ' Enable / disable Import Settings button using same eligibility rules
+            Try
+                Dim activeIniPath As String = Nothing
+                Try
+                    activeIniPath = GetActiveConfigFilePath(context)
+                Catch
+                End Try
+
+                Dim disableReason As String = Nothing
+                Dim canImport As Boolean = True
+
+                ' Registry-controlled INI => disable
+                Try
+                    If RegPath_IniPrio Then
+                        canImport = False
+                    End If
+                Catch
+                End Try
+
+                ' Excel / Outlook using Word INI => disable
+                If canImport Then
+                    Dim rdv As String = Nothing
+                    Try
+                        rdv = context.RDV
+                    Catch
+                    End Try
+
+                    If String.Equals(rdv, "Excel", StringComparison.OrdinalIgnoreCase) OrElse
+           String.Equals(rdv, "Outlook", StringComparison.OrdinalIgnoreCase) Then
+
+                        Dim wordPath As String = Nothing
+                        Try
+                            wordPath = GetDefaultINIPath("Word")
+                        Catch
+                        End Try
+
+                        If Not String.IsNullOrWhiteSpace(wordPath) AndAlso
+               String.Equals(activeIniPath, wordPath, StringComparison.OrdinalIgnoreCase) Then
+                            canImport = False
+                        End If
+                    End If
                 End If
-            Next
-        End Sub
+
+                btnImportIni.Enabled = canImport
+            Catch
+                btnImportIni.Enabled = False
+            End Try
+
+
+            ''' <summary>
+            ''' Copies the current grid values into <c>variableValues</c> as strings by variable name.
+            ''' </summary>
+            Dim syncGridToDictionary As Action =
+                            Sub()
+                                For Each row As DataGridViewRow In dgv.Rows
+                                    If row.IsNewRow Then Continue For
+                                    Dim name = CStr(row.Cells("colVar").Value)
+                                    Dim valueStr = CStr(If(row.Cells("colVal").Value, ""))
+                                    If Not String.IsNullOrWhiteSpace(name) Then
+                                        variableValues(name) = valueStr
+                                    End If
+                                Next
+                            End Sub
 
             AddHandler btnEditIni.Click,
         Sub()
@@ -1898,10 +2459,48 @@ Namespace SharedLibrary
                     "Yes, close and reload", "No, stay here")
                 If answer = 1 Then
                     abortAndReload = True
+                    form.DialogResult = DialogResult.OK
                     form.Close()
                 End If
             End If
         End Sub
+
+            AddHandler btnImportIni.Click,
+                Sub()
+                    ' Same Z-order handling as Edit .ini Files
+                    Dim wasTopMost As Boolean = form.TopMost
+                    form.TopMost = False
+                    form.Enabled = False
+                    System.Windows.Forms.Application.DoEvents()
+
+                    Dim ChangesToMainConfig = False
+
+                    Try
+                        ChangesToMainConfig = IniImportManager.RunImportFromVariableConfigurationWindow(context, form)
+                    Catch ex As System.Exception
+                        ShowCustomMessageBox("Import failed: " & ex.Message)
+                    Finally
+                        form.Enabled = True
+                        form.TopMost = wasTopMost
+                        form.Activate()
+                    End Try
+
+                    If ChangesToMainConfig Then
+                        Dim NextStep = ShowCustomYesNoBox("Your import of settings changed the main configuration file. They are not yet reflected in this table. You should close this window and reload the configuration to avoid conflicts (if you cancel, this Expert Configuration window closes without reloading). Proceed?", "Yes, close and reload", "No, stay here")
+                        Select Case NextStep
+                            Case 1
+                                abortAndReload = True
+                                form.DialogResult = DialogResult.OK
+                                form.Close()
+                            Case 0
+                                abortAndReload = False
+                                form.DialogResult = DialogResult.Cancel
+                                form.Close()
+                        End Select
+                    End If
+
+                End Sub
+
 
             AddHandler btnSaveClose.Click,
         Sub()
@@ -1941,6 +2540,13 @@ Namespace SharedLibrary
 
 
 
+        ''' <summary>
+        ''' Shows the expert configuration UI for the current <paramref name="context"/> by building a variable name/value
+        ''' dictionary from many context fields, displaying it in <see cref="ShowVariableConfigurationWindow"/>, and then
+        ''' copying returned values back into <paramref name="context"/>.
+        ''' </summary>
+        ''' <param name="context">Shared context whose configuration values are displayed and (optionally) updated.</param>
+        ''' <param name="ownerform">Owner form for the modal dialog.</param>
         Public Shared Sub ShowExpertConfiguration(ByRef context As ISharedContext, ownerform As Form)
             ' Dictionary to store variable names and their current values
             Dim variableValues As New Dictionary(Of String, Object)
@@ -1961,6 +2567,7 @@ Namespace SharedLibrary
             variableValues.Add("TokenCount", context.INI_TokenCount)
             variableValues.Add("DoubleS", context.INI_DoubleS)
             variableValues.Add("Clean", context.INI_Clean)
+            variableValues.Add("Ignore", context.INI_Ignore)
             variableValues.Add("NoEmDash", context.INI_NoDash)
             variableValues.Add("DefaultPrefix", context.INI_DefaultPrefix)
             variableValues.Add("MarkdownBubbles", context.INI_MarkdownBubbles)
@@ -2062,6 +2669,8 @@ Namespace SharedLibrary
             variableValues.Add("WebAgentPathLocal", context.INI_WebAgentPathLocal)
             variableValues.Add("DocCheckPath", context.INI_DocCheckPath)
             variableValues.Add("DocCheckPathLocal", context.INI_DocCheckPathLocal)
+            variableValues.Add("DocStylePath", context.INI_DocStylePath)
+            variableValues.Add("DocStylePathLocal", context.INI_DocStylePathLocal)
             variableValues.Add("PromptLib_Transcript", context.INI_PromptLibPath_Transcript)
             variableValues.Add("SP_Translate", context.SP_Translate)
             variableValues.Add("SP_Correct", context.SP_Correct)
@@ -2069,6 +2678,8 @@ Namespace SharedLibrary
             variableValues.Add("SP_Explain", context.SP_Explain)
             variableValues.Add("SP_FindClause", context.SP_FindClause)
             variableValues.Add("SP_FindClause_Clean", context.SP_FindClause_Clean)
+            variableValues.Add("SP_ApplyDocStyle", context.SP_ApplyDocStyle)
+            variableValues.Add("SP_ApplyDocStyle_NumberingHint", context.SP_ApplyDocStyle_NumberingHint)
             variableValues.Add("SP_DocCheck_Clause", context.SP_DocCheck_Clause)
             variableValues.Add("SP_DocCheck_MultiClause", context.SP_DocCheck_MultiClause)
             variableValues.Add("SP_DocCheck_MultiClauseSum", context.SP_DocCheck_MultiClauseSum)
@@ -2104,6 +2715,7 @@ Namespace SharedLibrary
             variableValues.Add("SP_ContextSearchMulti", context.SP_ContextSearchMulti)
             variableValues.Add("SP_RangeOfCells", context.SP_RangeOfCells)
             variableValues.Add("SP_ParseFile", context.SP_ParseFile)
+            variableValues.Add("SP_Ignore", context.SP_Ignore)
             variableValues.Add("SP_WriteNeatly", context.SP_WriteNeatly)
             variableValues.Add("SP_Add_KeepFormulasIntact", context.SP_Add_KeepFormulasIntact)
             variableValues.Add("SP_Add_KeepHTMLIntact", context.SP_Add_KeepHTMLIntact)
@@ -2128,6 +2740,13 @@ Namespace SharedLibrary
             variableValues.Add("SP_FindPrompts", context.SP_FindPrompts)
             variableValues.Add("SP_MergePrompt", context.SP_MergePrompt)
             variableValues.Add("SP_MergePrompt2", context.SP_MergePrompt2)
+            variableValues.Add("UpdateIni", context.INI_UpdateIni)
+            variableValues.Add("UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote)
+            variableValues.Add("UpdateIniNoSignature", context.INI_UpdateIniNoSignature)
+            variableValues.Add("UpdateSource", context.INI_UpdateSource)
+            variableValues.Add("UpdateIniIgnoreOverride", context.INI_UpdateIniIgnoreOverride)
+            variableValues.Add("UpdateIniSilentMode", context.INI_UpdateIniSilentMode)
+            variableValues.Add("UpdateIniSilentLog", context.INI_UpdateIniSilentLog)
 
             ' Extract variable names from the dictionary
             Dim variableNames As New List(Of String)(variableValues.Keys)
@@ -2153,6 +2772,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("TokenCount") Then context.INI_TokenCount = CStr(updatedValues("TokenCount"))
                 If updatedValues.ContainsKey("DoubleS") Then context.INI_DoubleS = CBool(updatedValues("DoubleS"))
                 If updatedValues.ContainsKey("Clean") Then context.INI_Clean = CBool(updatedValues("Clean"))
+                If updatedValues.ContainsKey("Ignore") Then context.INI_Ignore = CBool(updatedValues("Ignore"))
                 If updatedValues.ContainsKey("NoEmDash") Then context.INI_NoDash = CBool(updatedValues("NoEmDash"))
                 If updatedValues.ContainsKey("DefaultPrefix") Then context.INI_DefaultPrefix = CStr(updatedValues("DefaultPrefix"))
                 If updatedValues.ContainsKey("MarkdownBubbles") Then context.INI_MarkdownBubbles = CBool(updatedValues("MarkdownBubbles"))
@@ -2210,6 +2830,8 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_Explain") Then context.SP_Explain = CStr(updatedValues("SP_Explain"))
                 If updatedValues.ContainsKey("SP_FindClause") Then context.SP_FindClause = CStr(updatedValues("SP_FindClause"))
                 If updatedValues.ContainsKey("SP_FindClause_Clean") Then context.SP_FindClause_Clean = CStr(updatedValues("SP_FindClause_Clean"))
+                If updatedValues.ContainsKey("SP_ApplyDocStyle") Then context.SP_ApplyDocStyle = CStr(updatedValues("SP_ApplyDocStyle"))
+                If updatedValues.ContainsKey("SP_ApplyDocStyle_NumberingHint") Then context.SP_ApplyDocStyle_NumberingHint = CStr(updatedValues("SP_ApplyDocStyle_NumberingHint"))
                 If updatedValues.ContainsKey("SP_DocCheck_Clause") Then context.SP_DocCheck_Clause = CStr(updatedValues("SP_DocCheck_Clause"))
                 If updatedValues.ContainsKey("SP_DocCheck_MultiClause") Then context.SP_DocCheck_MultiClause = CStr(updatedValues("SP_DocCheck_MultiClause"))
                 If updatedValues.ContainsKey("SP_DocCheck_MultiClauseSum") Then context.SP_DocCheck_MultiClauseSum = CStr(updatedValues("SP_DocCheck_MultiClauseSum"))
@@ -2245,6 +2867,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_ContextSearchMulti") Then context.SP_ContextSearchMulti = CStr(updatedValues("SP_ContextSearchMulti"))
                 If updatedValues.ContainsKey("SP_RangeOfCells") Then context.SP_RangeOfCells = CStr(updatedValues("SP_RangeOfCells"))
                 If updatedValues.ContainsKey("SP_ParseFile") Then context.SP_ParseFile = CStr(updatedValues("SP_ParseFile"))
+                If updatedValues.ContainsKey("SP_Ignore") Then context.SP_Ignore = CStr(updatedValues("SP_Ignore"))
                 If updatedValues.ContainsKey("SP_WriteNeatly") Then context.SP_WriteNeatly = CStr(updatedValues("SP_WriteNeatly"))
                 If updatedValues.ContainsKey("SP_Add_KeepFormulasIntact") Then context.SP_Add_KeepFormulasIntact = CStr(updatedValues("SP_Add_KeepFormulasIntact"))
                 If updatedValues.ContainsKey("SP_Add_KeepHTMLIntact") Then context.SP_Add_KeepHTMLIntact = CStr(updatedValues("SP_Add_KeepHTMLIntact"))
@@ -2299,7 +2922,6 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("HelpMeInkyPath") Then context.INI_HelpMeInkyPath = CStr(updatedValues("HelpMeInkyPath"))
                 If updatedValues.ContainsKey("DiscussInkyPath") Then context.INI_DiscussInkyPath = CStr(updatedValues("DiscussInkyPath"))
                 If updatedValues.ContainsKey("DiscussInkyPathLocal") Then context.INI_DiscussInkyPathLocal = CStr(updatedValues("DiscussInkyPathLocal"))
-
                 If updatedValues.ContainsKey("RedactionInstructionsPath") Then context.INI_RedactionInstructionsPath = CStr(updatedValues("RedactionInstructionsPath"))
                 If updatedValues.ContainsKey("RedactionInstructionsPathLocal") Then context.INI_RedactionInstructionsPathLocal = CStr(updatedValues("RedactionInstructionsPathLocal"))
                 If updatedValues.ContainsKey("ExtractorPath") Then context.INI_ExtractorPath = CStr(updatedValues("ExtractorPath"))
@@ -2320,19 +2942,34 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("WebAgentPathLocal") Then context.INI_WebAgentPathLocal = CStr(updatedValues("WebAgentPathLocal"))
                 If updatedValues.ContainsKey("DocCheckPath") Then context.INI_DocCheckPath = CStr(updatedValues("DocCheckPath"))
                 If updatedValues.ContainsKey("DocCheckPathLocal") Then context.INI_DocCheckPathLocal = CStr(updatedValues("DocCheckPathLocal"))
+                If updatedValues.ContainsKey("DocStylePath") Then context.INI_DocStylePath = CStr(updatedValues("DocStylePath"))
+                If updatedValues.ContainsKey("DocStylePathLocal") Then context.INI_DocStylePathLocal = CStr(updatedValues("DocStylePathLocal"))
                 If updatedValues.ContainsKey("PromptLib_Transcript") Then context.INI_PromptLibPath_Transcript = CStr(updatedValues("PromptLib_Transcript"))
+                If updatedValues.ContainsKey("UpdateIni") Then context.INI_UpdateIni = CBool(updatedValues("UpdateIni"))
+                If updatedValues.ContainsKey("UpdateIniAllowRemote") Then context.INI_UpdateIniAllowRemote = CBool(updatedValues("UpdateIniAllowRemote"))
+                If updatedValues.ContainsKey("UpdateIniNoSignature") Then context.INI_UpdateIniNoSignature = CBool(updatedValues("UpdateIniNoSignature"))
+                If updatedValues.ContainsKey("UpdateSource") Then context.INI_UpdateSource = CStr(updatedValues("UpdateSource"))
+                If updatedValues.ContainsKey("UpdateIniIgnoreOverride") Then context.INI_UpdateIniIgnoreOverride = CStr(updatedValues("UpdateIniIgnoreOverride"))
+                If updatedValues.ContainsKey("UpdateIniSilentMode") Then context.INI_UpdateIniSilentMode = CInt(updatedValues("UpdateIniSilentMode"))
+                If updatedValues.ContainsKey("UpdateIniSilentLog") Then context.INI_UpdateIniSilentLog = CBool(updatedValues("UpdateIniSilentLog"))
 
                 ' Call UpdateAppConfig after all updates
                 UpdateAppConfig(context)
             End If
         End Sub
 
+        ''' <summary>
+        ''' Shows a modal "About" dialog for the current application instance.
+        ''' The dialog displays application identifiers, license status information, and additional static text,
+        ''' and provides buttons to view third-party license text and to reset stored license information.
+        ''' </summary>
+        ''' <param name="owner">Owner window used for theming (background color) and modal display.</param>
+        ''' <param name="context">Shared context providing the current application identifier (<c>RDV</c>).</param>
 
         Public Shared Sub ShowAboutWindow(owner As System.Windows.Forms.Form, context As ISharedContext)
             ' Example of using the same font and appearance as ShowWindowsSettings
             Dim standardFont As New System.Drawing.Font("Segoe UI", 9.0F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point)
 
-            ' Make the form 30% wider than the original 450
             Dim baseWidth As Integer = 450
             Dim formWidth As Integer = CInt(baseWidth * 1.3)
 
@@ -2509,6 +3146,7 @@ Namespace SharedLibrary
             ' Show the form
             aboutForm.ShowDialog(owner)
         End Sub
+
 
     End Class
 

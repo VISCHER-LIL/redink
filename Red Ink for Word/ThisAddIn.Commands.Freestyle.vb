@@ -46,11 +46,13 @@ Imports System.IO
 Imports System.Text.RegularExpressions
 Imports System.Windows.Forms
 Imports DocumentFormat.OpenXml
+Imports DocumentFormat.OpenXml.Office2010.CustomUI
 Imports DocumentFormat.OpenXml.Presentation
 Imports DocumentFormat.OpenXml.Wordprocessing
 Imports Microsoft.Office.Interop.PowerPoint
 Imports Microsoft.Office.Interop.Word
 Imports NetOffice.PowerPointApi
+Imports SharedLibrary
 Imports SharedLibrary.SharedLibrary
 Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports SLib = SharedLibrary.SharedLibrary.SharedMethods
@@ -220,7 +222,7 @@ Partial Public Class ThisAddIn
             Dim SlidesInstruct As String = $"with '{SlidesPrefix}' for adding to a Powerpoint file"
             Dim ClipboardInstruct As String = $"with '{ClipboardPrefix}', '{NewdocPrefix}' or '{PanePrefix}' for separate output"
             Dim PromptLibInstruct As String = If(INI_PromptLib, " or press 'OK' for the prompt library", "")
-            Dim ExtInstruct As String = $"; include '{ExtTrigger}' (multiple times) for text of (a) file(s) (txt, docx, pdf) or '{AddDocTrigger}' for an open Word doc"
+            Dim ExtInstruct As String = $"; include '{ExtTrigger}' or '{ExtTriggerFixed}' (multiple timesFixed) for text of (a) file(s) (txt, docx, pdf), or '{AddDocTrigger}' for an open Word doc"
             Dim TPMarkupInstruct As String = $"; add '{TPMarkupTriggerInstruct}' if revisions [of user] should be pointed out to the LLM"
             Dim NoFormatInstruct As String = $"; add '{NoFormatTrigger2}'/'{KFTrigger2}'/'{KPFTrigger2}/{SameAsReplaceTrigger}' for overriding formatting defaults"
             Dim AllInstruct As String = $"; add '{AllTrigger}' to select all"
@@ -508,6 +510,69 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
+            ' Signature Management for Update INI Key Functionality
+            If String.Equals(OtherPrompt.Trim(), "iniupdatekeys", StringComparison.OrdinalIgnoreCase) Then
+                ShowSignatureManagementDialog()
+                Return
+            End If
+
+            ' Batch Signing for Update INI Key Functionality
+            If String.Equals(OtherPrompt.Trim(), "iniupdatebatch", StringComparison.OrdinalIgnoreCase) Then
+                ShowBatchSigningDialog()
+                Return
+            End If
+
+            ' Signature Management for Update INI Key Functionality
+            If String.Equals(OtherPrompt.Trim(), "iniupdateignored", StringComparison.OrdinalIgnoreCase) Or String.Equals(OtherPrompt.Trim(), "iniupdateignore", StringComparison.OrdinalIgnoreCase) Then
+                ShowIgnoredParametersDialog()
+                Return
+            End If
+
+            ' Signature Management for importing INI keys
+            If String.Equals(OtherPrompt.Trim(), "iniload", StringComparison.OrdinalIgnoreCase) Or String.Equals(OtherPrompt.Trim(), "iniupdateignore", StringComparison.OrdinalIgnoreCase) Then
+
+                If IniImportManager.RunImportFromVariableConfigurationWindow(_context, Nothing) Then
+                        Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                        If answer = 1 Then
+                            ' Mark config as not loaded so InitializeConfig will re-read from disk
+                            _context.INIloaded = False
+                            ' Reload configuration from disk into memory
+                            InitializeConfig(False, True)
+                            ' Refresh the UI with the newly loaded values
+                            _context.MenusAdded = False
+                        End If
+                    End If
+                Return
+            End If
+
+
+            ' Signature Management for importing INI keys
+            If String.Equals(OtherPrompt.Trim(), "inirollback", StringComparison.OrdinalIgnoreCase) Or String.Equals(OtherPrompt.Trim(), "iniupdateignore", StringComparison.OrdinalIgnoreCase) Then
+
+                If IniImportManager.TryRollbackLastBackup(_context, Nothing) Then
+                    Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                    If answer = 1 Then
+                        ' Mark config as not loaded so InitializeConfig will re-read from disk
+                        _context.INIloaded = False
+                        ' Reload configuration from disk into memory
+                        InitializeConfig(False, True)
+                        ' Refresh the UI with the newly loaded values
+                        _context.MenusAdded = False
+                    End If
+                End If
+                Return
+
+            End If
+
+
+            ' Check for INI updates and apply if available
+            If String.Equals(OtherPrompt.Trim(), "iniupdate", StringComparison.OrdinalIgnoreCase) Then
+                Dim answer = CheckForIniUpdates(_context)
+                Return
+            End If
+
+
+
             ' Reset local configuration to defaults (with confirmation)
             If String.Equals(OtherPrompt.Trim(), "reset", StringComparison.OrdinalIgnoreCase) Then
                 If ShowCustomYesNoBox($"Do you really want to reset your local configuration file and settings (if any) by removing non-mandatory entries? The current configuration file '{AN2}.ini' will NOT be saved to a '.bak' file. If you only want to reload the configuration settings for giving up any temporary changes, use 'reload' instead.", "Yes", "No") = 1 Then
@@ -609,6 +674,19 @@ Partial Public Class ThisAddIn
                 RunDocCheck()
                 Return
             End If
+
+            ' Run learn doc style
+            If OtherPrompt.StartsWith("learndocstyle", StringComparison.OrdinalIgnoreCase) Then
+                ExtractParagraphStylesToJson()
+                Return
+            End If
+
+            ' Run apply doc style
+            If OtherPrompt.StartsWith("applydocstyle", StringComparison.OrdinalIgnoreCase) Then
+                ApplyStyleTemplate()
+                Return
+            End If
+
 
             ' Find clause in library/database
             If OtherPrompt.StartsWith("findclause", StringComparison.OrdinalIgnoreCase) Then
@@ -944,7 +1022,7 @@ Partial Public Class ThisAddIn
                 OtherPrompt = Regex.Replace(OtherPrompt, Regex.Escape(AddDocTrigger), "", RegexOptions.IgnoreCase)
             End If
 
-            ' === External file embedding ({doc} trigger) ===
+            ' === External file embedding ({doc} or {path} trigger) ===
 
             ' Handle single or multiple {doc} placeholders
             If Not String.IsNullOrEmpty(OtherPrompt) AndAlso OtherPrompt.IndexOf(ExtTrigger, StringComparison.OrdinalIgnoreCase) >= 0 Then
@@ -1013,6 +1091,201 @@ Partial Public Class ThisAddIn
                                          vbCrLf & vbCrLf & doc)
                         End If
                     Next
+                End If
+            End If
+
+            ' === External file embedding via fixed path placeholder (e.g., "{C:\x\y.txt}" or "<C:\x\y.txt>") ===
+            ' ExtTriggerFixed contains the template, currently "{[path]}". The prefix/suffix around "[path]" define the delimiter pair.
+            ' If the text between prefix/suffix is a valid existing file path, replace the whole token with the file contents (silent).
+            ' If the file does not exist or cannot be loaded, replace with "".
+            ' Otherwise (e.g., "{summer}"), leave the token untouched.
+            '
+            ' Wrapping behavior: identical to {doc} (ExtTrigger):
+            '   - If the token occurrence is already enclosed by an XML tag pair, do NOT add <document...> wrapper.
+            '   - Otherwise, auto-wrap with <document> or <documentN>...</documentN> (N = occurrence #, counting only path tokens).
+            If Not String.IsNullOrEmpty(OtherPrompt) AndAlso
+               Not String.IsNullOrWhiteSpace(ExtTriggerFixed) AndAlso
+               ExtTriggerFixed.IndexOf("[path]", StringComparison.OrdinalIgnoreCase) >= 0 Then
+
+                Dim pathTokenIndex As Integer = ExtTriggerFixed.IndexOf("[path]", StringComparison.OrdinalIgnoreCase)
+                Dim fixedPrefix As String = ExtTriggerFixed.Substring(0, pathTokenIndex)
+                Dim fixedSuffix As String = ExtTriggerFixed.Substring(pathTokenIndex + "[path]".Length)
+
+                ' Safety: do nothing if delimiters are not usable.
+                If String.IsNullOrEmpty(fixedPrefix) AndAlso String.IsNullOrEmpty(fixedSuffix) Then
+                    ' No-op
+                Else
+                    ' Counts per path (to report repeated includes)
+                    Dim loadedOkCounts As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase)
+                    Dim loadedFailCounts As New Dictionary(Of String, Integer)(StringComparer.OrdinalIgnoreCase)
+
+                    ' Match minimal text between delimiters.
+                    Dim patternFixed As String =
+                        Regex.Escape(fixedPrefix) &
+                        "(?<path>.*?)" &
+                        Regex.Escape(fixedSuffix)
+
+                    Dim fixedMatches As MatchCollection = Regex.Matches(
+                        OtherPrompt,
+                        patternFixed,
+                        RegexOptions.IgnoreCase Or RegexOptions.Singleline
+                    )
+
+                    If fixedMatches.Count > 0 Then
+
+                        ' Determine which matches are path-attempts (for numbering <documentN> tokens).
+                        Dim fileTokenMatches As New List(Of Match)()
+                        For Each m As Match In fixedMatches
+                            Dim candidatePath As String = If(m.Groups("path").Value, "").Trim()
+
+                            If (candidatePath.Length >= 2 AndAlso candidatePath.StartsWith("""", StringComparison.Ordinal) AndAlso candidatePath.EndsWith("""", StringComparison.Ordinal)) OrElse
+                               (candidatePath.Length >= 2 AndAlso candidatePath.StartsWith("'", StringComparison.Ordinal) AndAlso candidatePath.EndsWith("'", StringComparison.Ordinal)) Then
+                                candidatePath = candidatePath.Substring(1, candidatePath.Length - 2).Trim()
+                            End If
+
+                            Dim looksLikePath As Boolean =
+                                candidatePath.Contains("\") OrElse candidatePath.Contains("/") OrElse candidatePath.Contains(":")
+
+                            If looksLikePath Then
+                                fileTokenMatches.Add(m)
+                            End If
+                        Next
+
+                        ' Map match index -> occurrence number (1..N) only for path-attempt tokens.
+                        Dim occurrenceMap As New Dictionary(Of Integer, Integer)()
+                        Dim occ As Integer = 0
+                        For Each m As Match In fileTokenMatches
+                            occ += 1
+                            occurrenceMap(m.Index) = occ
+                        Next
+
+                        ' Detect if a placeholder occurrence is already enclosed by any tag, e.g. <tag>...{token}...</tag>
+                        ' (We base the check on the actual matched token text.)
+                        Dim wrappedPatternTemplate As String =
+                            "<(?<name>[A-Za-z][\w\-]*)\b[^>]*>[^<]*{TOKEN}[^<]*</\k<name>>"
+
+                        ' Reverse replace to keep indices stable.
+                        For i As Integer = fixedMatches.Count - 1 To 0 Step -1
+                            Dim m As Match = fixedMatches(i)
+                            Dim tokenText As String = m.Value
+                            Dim inner As String = m.Groups("path").Value
+                            Dim candidatePath As String = If(inner, "").Trim()
+
+                            ' Default: keep original text unchanged.
+                            Dim replacementText As String = tokenText
+                            Dim countedPath As String = candidatePath
+
+                            Try
+                                If Not String.IsNullOrWhiteSpace(candidatePath) Then
+
+                                    ' Allow quoted paths: {"C:\x\y.txt"} or {'C:\x\y.txt'}
+                                    If (candidatePath.Length >= 2 AndAlso candidatePath.StartsWith("""", StringComparison.Ordinal) AndAlso candidatePath.EndsWith("""", StringComparison.Ordinal)) OrElse
+                                       (candidatePath.Length >= 2 AndAlso candidatePath.StartsWith("'", StringComparison.Ordinal) AndAlso candidatePath.EndsWith("'", StringComparison.Ordinal)) Then
+                                        candidatePath = candidatePath.Substring(1, candidatePath.Length - 2).Trim()
+                                    End If
+
+                                    countedPath = candidatePath
+
+                                    Dim looksLikePath As Boolean =
+                                        candidatePath.Contains("\") OrElse candidatePath.Contains("/") OrElse candidatePath.Contains(":")
+
+                                    If looksLikePath Then
+
+                                        ' Expand environment variables (e.g. %APPDATA%) before checking existence / reading.
+                                        Dim expandedPath As String = SLib.ExpandEnvironmentVariables(candidatePath)
+                                        If Not String.IsNullOrWhiteSpace(expandedPath) Then
+                                            candidatePath = expandedPath
+                                        End If
+
+                                        If IO.File.Exists(candidatePath) Then
+                                            DragDropFormLabel = ""
+                                            DragDropFormFilter = ""
+
+                                            doc = Await GetFileContent(candidatePath, False, Not String.IsNullOrWhiteSpace(INI_APICall_Object))
+                                            ' If not loadable -> replace with empty string.
+                                            If String.IsNullOrWhiteSpace(doc) Then
+                                                replacementText = ""
+                                            Else
+                                                ' Apply the same "already wrapped by any XML tag?" logic as used for ExtTrigger.
+                                                Dim wrappedPatternThis As String =
+                                                    wrappedPatternTemplate.Replace("{TOKEN}", Regex.Escape(tokenText))
+
+                                                Dim isWrappedThis As Boolean = Regex.IsMatch(OtherPrompt, wrappedPatternThis, RegexOptions.IgnoreCase Or RegexOptions.Singleline)
+
+                                                Dim occurrenceNumber As Integer = 0
+                                                If occurrenceMap.ContainsKey(m.Index) Then
+                                                    occurrenceNumber = occurrenceMap(m.Index)
+                                                End If
+
+                                                ' For single path-token occurrence use <document>; for multiple use <documentN>.
+                                                If fileTokenMatches.Count <= 1 OrElse occurrenceNumber <= 0 Then
+                                                    replacementText = If(isWrappedThis, doc, $"<document>{doc}</document>")
+                                                Else
+                                                    replacementText = If(isWrappedThis, doc, $"<document{occurrenceNumber}>{doc}</document{occurrenceNumber}>")
+                                                End If
+                                            End If
+
+                                            If loadedOkCounts.ContainsKey(candidatePath) Then
+                                                loadedOkCounts(candidatePath) += 1
+                                            Else
+                                                loadedOkCounts(candidatePath) = 1
+                                            End If
+                                        Else
+                                            ' Path attempt but missing -> replace with empty string.
+                                            replacementText = ""
+
+                                            If loadedFailCounts.ContainsKey(candidatePath) Then
+                                                loadedFailCounts(candidatePath) += 1
+                                            Else
+                                                loadedFailCounts(candidatePath) = 1
+                                            End If
+                                        End If
+                                    End If
+                                    ' else: not a path attempt (e.g., "{summer}") -> keep token unchanged
+                                End If
+
+                            Catch ex As Exception
+                                replacementText = ""
+                                If Not String.IsNullOrWhiteSpace(countedPath) Then
+                                    If loadedFailCounts.ContainsKey(countedPath) Then
+                                        loadedFailCounts(countedPath) += 1
+                                    Else
+                                        loadedFailCounts(countedPath) = 1
+                                    End If
+                                End If
+                            End Try
+
+                            OtherPrompt = OtherPrompt.Substring(0, m.Index) &
+                                         replacementText &
+                                         OtherPrompt.Substring(m.Index + m.Length)
+                        Next
+
+                        ' Summary message (report only path attempts that succeeded/failed; tokens like "{summer}" are ignored)
+                        If loadedOkCounts.Count > 0 OrElse loadedFailCounts.Count > 0 Then
+                            Dim summary As New System.Text.StringBuilder()
+                            summary.AppendLine("Fixed-path file includes:")
+                            summary.AppendLine("")
+
+                            If loadedOkCounts.Count > 0 Then
+                                summary.AppendLine("Loaded successfully:")
+                                For Each kvp In loadedOkCounts.OrderBy(Function(x) x.Key)
+                                    Dim suffix As String = If(kvp.Value > 1, $" ({kvp.Value}x)", "")
+                                    summary.AppendLine(" - " & kvp.Key & suffix)
+                                Next
+                                summary.AppendLine("")
+                            End If
+
+                            If loadedFailCounts.Count > 0 Then
+                                summary.AppendLine("Failed to load (replaced with no text):")
+                                For Each kvp In loadedFailCounts.OrderBy(Function(x) x.Key)
+                                    Dim suffix As String = If(kvp.Value > 1, $" ({kvp.Value}x)", "")
+                                    summary.AppendLine(" - " & kvp.Key & suffix)
+                                Next
+                            End If
+
+                            ShowCustomMessageBox(summary.ToString().TrimEnd())
+                        End If
+                    End If
                 End If
             End If
 

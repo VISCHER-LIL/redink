@@ -1,5 +1,26 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
+' =============================================================================
+' File: SharedContext.vb
+' Purpose: Defines `SharedContext`, a shared, mutable context container that implements
+'          `ISharedContext` and is used to pass configuration values and prompt strings
+'          through the SharedLibrary and host add-ins.
+'
+' Architecture / How it works:
+'  - `ISharedContext` defines the complete contract (properties) for shared settings and
+'    runtime values that are initialized by each host project (e.g., in `ThisAddIn.Properties.vb`)
+'    and then read/updated by SharedLibrary code.
+'  - `SharedContext` provides the concrete implementation via auto-properties, making the
+'    context easy to construct, initialize, and pass around as a single object.
+'  - `SharedContext.New()` initializes the two list properties used as an in-memory prompt
+'    library (`PromptTitles` and `PromptLibrary`).
+'
+' Maintenance:
+'  - When adding a new shared property, update both `ISharedContext` and the corresponding
+'    `SharedContext` implementation, and ensure each host project initializes it consistently
+'    (see the existing checklist below).
+' =============================================================================
 
 Option Strict On
 Option Explicit On
@@ -17,6 +38,8 @@ Namespace SharedLibrary
         ' 4. Search and update SharedLibrary / Core / Config / ShareMethods.LoadConfig.vb (search for a pre-existing Property usage)
         ' 5. Search and update SharedLibrary / Core / Config / ShareMethods.Settings.vb (search for a pre-existing Property usage)
         ' 6. Search and update SharedLibrary / Core / Definitions / SharedMethods.Constants.vb (if you need to update Property usage)
+        ' 7. Add a default value in Sharedlibrary / Core / Constants if there is one and include it in the exclusion list of UpdateAppConfig() (no one needed for Boolean = False or empty strings)
+        ' 8. Update the IsBooleanSetting() in SharedLibrary / Core / Config / ShareMethods.Settings.vb
 
         Public Interface ISharedContext
 
@@ -36,6 +59,7 @@ Namespace SharedLibrary
             Property INI_TokenCount As String
             Property INI_DoubleS As Boolean
             Property INI_Clean As Boolean
+            Property INI_Ignore As Boolean
             Property INI_NoDash As Boolean
             Property INI_MarkdownBubbles As Boolean
             Property INI_PreCorrection As String
@@ -89,18 +113,13 @@ Namespace SharedLibrary
             Property INI_DoMarkupOutlook As Boolean
             Property INI_DoMarkupWord As Boolean
             Property INI_RoastMe As Boolean
-
-
             Property DecodedAPI As String
             Property DecodedAPI_2 As String
             Property TokenExpiry As DateTime
             Property TokenExpiry_2 As DateTime
-
             Property Codebasis As String
-
             Property GPTSetupError As Boolean
             Property INIloaded As Boolean
-
             Property RDV As String
             Property InitialConfigFailed As Boolean
             Property INI_ContextMenu As Boolean
@@ -113,7 +132,6 @@ Namespace SharedLibrary
             Property INI_ExtractorPathLocal As String
             Property INI_RenameLibPath As String
             Property INI_RenameLibPathLocal As String
-
             Property INI_RedactionInstructionsPath As String
             Property INI_RedactionInstructionsPathLocal As String
             Property INI_SpeechModelPath As String
@@ -125,12 +143,12 @@ Namespace SharedLibrary
             Property SP_Explain As String
             Property SP_FindClause As String
             Property SP_FindClause_Clean As String
+            Property SP_ApplyDocStyle As String
+            Property SP_ApplyDocStyle_NumberingHint As String
             Property SP_DocCheck_Clause As String
             Property SP_DocCheck_MultiClause As String
             Property SP_DocCheck_MultiClauseSum As String
             Property SP_DocCheck_MultiClauseSum_Bubbles As String
-
-
             Property SP_SuggestTitles As String
             Property SP_Friendly As String
             Property SP_Convincing As String
@@ -152,10 +170,8 @@ Namespace SharedLibrary
             Property SP_FreestyleNoText As String
             Property SP_SwitchParty As String
             Property SP_Anonymize As String
-
             Property SP_Extract As String
             Property SP_ExtractSchema As String
-
             Property SP_MergeDateRows As String
             Property SP_Rename As String
             Property SP_Redact As String
@@ -165,6 +181,7 @@ Namespace SharedLibrary
             Property SP_WriteNeatly As String
             Property SP_RangeOfCells As String
             Property SP_ParseFile As String
+            Property SP_Ignore As String
             Property SP_Add_KeepFormulasIntact As String
             Property SP_Add_KeepHTMLIntact As String
             Property SP_Add_KeepInlineIntact As String
@@ -185,7 +202,6 @@ Namespace SharedLibrary
             Property SP_ChatExcel As String
             Property SP_Add_ChatExcel_Commands As String
             Property INI_ChatCap As Integer
-
             Property INI_ISearch As Boolean
             Property INI_ISearch_Approve As Boolean
             Property INI_ISearch_URL As String
@@ -208,9 +224,7 @@ Namespace SharedLibrary
             Property INI_Lib_Apply_SP_Markup As String
             Property INI_MarkupMethodHelper As Integer
             Property INI_MarkupMethodWord As Integer
-
             Property INI_MarkupMethodWordOverride As String
-
             Property INI_MarkupMethodOutlookOverride As String
             Property INI_ShortcutsWordExcel As String
             Property INI_PromptLib As Boolean
@@ -223,9 +237,10 @@ Namespace SharedLibrary
             Property INI_FindClausePathLocal As String
             Property INI_WebAgentPath As String
             Property INI_WebAgentPathLocal As String
-
             Property INI_DocCheckPath As String
             Property INI_DocCheckPathLocal As String
+            Property INI_DocStylePath As String
+            Property INI_DocStylePathLocal As String
             Property INI_PromptLibPath_Transcript As String
             Property PromptLibrary() As List(Of String)
             Property PromptTitles() As List(Of String)
@@ -238,6 +253,22 @@ Namespace SharedLibrary
             Property SP_MergePrompt As String
             Property SP_MergePrompt2 As String
             Property SP_Add_MergePrompt As String
+            Property Ignore As String
+
+            ' Master switch for INI update mechanism
+            Property INI_UpdateIni As Boolean
+            ' Allow HTTPS sources (vs local/network only)
+            Property INI_UpdateIniAllowRemote As Boolean
+            ' Skip signature verification if True
+            Property INI_UpdateIniNoSignature As Boolean
+            ' Update source for redink.ini: "path; keylist; base64_public_key"
+            Property INI_UpdateSource As String
+            ' Override ignore settings with file-specific and segment-specific rules
+            Property INI_UpdateIniIgnoreOverride As String
+            ' Silent update mode: Controls whether updates are applied without user interaction
+            Property INI_UpdateIniSilentMode As Integer
+            ' Log silent update actions to a file for audit purposes
+            Property INI_UpdateIniSilentLog As Boolean
 
         End Interface
 
@@ -263,6 +294,7 @@ Namespace SharedLibrary
         Public Property INI_TokenCount As String Implements ISharedContext.INI_TokenCount
         Public Property INI_DoubleS As Boolean Implements ISharedContext.INI_DoubleS
         Public Property INI_Clean As Boolean Implements ISharedContext.INI_Clean
+        Public Property INI_Ignore As Boolean Implements ISharedContext.INI_Ignore
         Public Property INI_NoDash As Boolean Implements ISharedContext.INI_NoDash
         Public Property INI_MarkdownBubbles As Boolean Implements ISharedContext.INI_MarkdownBubbles
         Public Property INI_PreCorrection As String Implements ISharedContext.INI_PreCorrection
@@ -348,6 +380,8 @@ Namespace SharedLibrary
         Public Property SP_Explain As String Implements ISharedContext.SP_Explain
         Public Property SP_FindClause As String Implements ISharedContext.SP_FindClause
         Public Property SP_FindClause_Clean As String Implements ISharedContext.SP_FindClause_Clean
+        Public Property SP_ApplyDocStyle As String Implements ISharedContext.SP_ApplyDocStyle
+        Public Property SP_ApplyDocStyle_NumberingHint As String Implements ISharedContext.SP_ApplyDocStyle_NumberingHint
         Public Property SP_DocCheck_Clause As String Implements ISharedContext.SP_DocCheck_Clause
         Public Property SP_DocCheck_MultiClause As String Implements ISharedContext.SP_DocCheck_MultiClause
         Public Property SP_DocCheck_MultiClauseSum As String Implements ISharedContext.SP_DocCheck_MultiClauseSum
@@ -387,6 +421,7 @@ Namespace SharedLibrary
         Public Property SP_ContextSearchMulti As String Implements ISharedContext.SP_ContextSearchMulti
         Public Property SP_RangeOfCells As String Implements ISharedContext.SP_RangeOfCells
         Public Property SP_ParseFile As String Implements ISharedContext.SP_ParseFile
+        Public Property SP_Ignore As String Implements ISharedContext.SP_Ignore
         Public Property SP_WriteNeatly As String Implements ISharedContext.SP_WriteNeatly
         Public Property SP_Add_KeepFormulasIntact As String Implements ISharedContext.SP_Add_KeepFormulasIntact
         Public Property SP_Add_KeepHTMLIntact As String Implements ISharedContext.SP_Add_KeepHTMLIntact
@@ -447,6 +482,8 @@ Namespace SharedLibrary
         Public Property INI_WebAgentPathLocal As String Implements ISharedContext.INI_WebAgentPathLocal
         Public Property INI_DocCheckPath As String Implements ISharedContext.INI_DocCheckPath
         Public Property INI_DocCheckPathLocal As String Implements ISharedContext.INI_DocCheckPathLocal
+        Public Property INI_DocStylePath As String Implements ISharedContext.INI_DocStylePath
+        Public Property INI_DocStylePathLocal As String Implements ISharedContext.INI_DocStylePathLocal
         Public Property INI_PromptLibPath_Transcript As String Implements ISharedContext.INI_PromptLibPath_Transcript
         Public Property PromptLibrary() As List(Of String) Implements ISharedContext.PromptLibrary
         Public Property PromptTitles() As List(Of String) Implements ISharedContext.PromptTitles
@@ -460,6 +497,16 @@ Namespace SharedLibrary
         Public Property SP_MergePrompt As String Implements ISharedContext.SP_MergePrompt
         Public Property SP_MergePrompt2 As String Implements ISharedContext.SP_MergePrompt2
         Public Property SP_Add_MergePrompt As String Implements ISharedContext.SP_Add_MergePrompt
+
+        Public Property INI_UpdateIni As Boolean Implements ISharedContext.INI_UpdateIni
+        Public Property INI_UpdateIniAllowRemote As Boolean Implements ISharedContext.INI_UpdateIniAllowRemote
+        Public Property INI_UpdateIniNoSignature As Boolean Implements ISharedContext.INI_UpdateIniNoSignature
+        Public Property INI_UpdateSource As String Implements ISharedContext.INI_UpdateSource
+        Public Property INI_UpdateIniIgnoreOverride As String Implements ISharedContext.INI_UpdateIniIgnoreOverride
+        Public Property INI_UpdateIniSilentMode As Integer Implements ISharedContext.INI_UpdateIniSilentMode
+        Public Property INI_UpdateIniSilentLog As Boolean Implements ISharedContext.INI_UpdateIniSilentLog
+
+        Public Property Ignore As String Implements ISharedContext.Ignore
 
     End Class
 End Namespace
