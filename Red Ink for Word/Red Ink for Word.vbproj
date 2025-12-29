@@ -38,7 +38,7 @@
     <TargetFrameworkProfile />
     <BootstrapperEnabled>true</BootstrapperEnabled>
     <TargetCulture>en</TargetCulture>
-    <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
+    <AutoIncrementApplicationRevision>false</AutoIncrementApplicationRevision>
     <UpdateEnabled>false</UpdateEnabled>
     <UpdateInterval>0</UpdateInterval>
     <UpdateIntervalUnits>days</UpdateIntervalUnits>
@@ -48,7 +48,7 @@
     <LoadBehavior>3</LoadBehavior>
   </PropertyGroup>
   <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
-    <ApplicationVersion>1.0.0.700</ApplicationVersion>
+    <ApplicationVersion>1.1.0.700</ApplicationVersion>
     <PublishUrl>..\clickonce\apps\develop\word\</PublishUrl>
     <InstallUrl>https://redink.ai/apps/develop/word/</InstallUrl>
     <ProductName>Red Ink for Word %28Develop%29</ProductName>
