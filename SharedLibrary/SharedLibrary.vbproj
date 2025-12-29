@@ -17,17 +17,15 @@
     </NuGetPackageImportStamp>
     <TargetFrameworkProfile />
   </PropertyGroup>
-	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
-		<DefineConstants>$(DefineConstants),DEVELOP</DefineConstants>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
-		<DefineConstants>$(DefineConstants),PREVIEW</DefineConstants>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(RedInkEnvironment)' != 'Develop' and '$(RedInkEnvironment)' != 'Preview'">
-		<DefineConstants>$(DefineConstants),GA</DefineConstants>
-	</PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
+    <DefineConstants>$(DefineConstants),DEVELOP</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
+    <DefineConstants>$(DefineConstants),PREVIEW</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RedInkEnvironment)' != 'Develop' and '$(RedInkEnvironment)' != 'Preview'">
+    <DefineConstants>$(DefineConstants),GA</DefineConstants>
+  </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
@@ -331,6 +329,8 @@
     <Compile Include="Code\Core\Clipboard\SharedMethods.ClipboardSnapshot.vb" />
     <Compile Include="Code\Core\Clipboard\SharedMethods.PutInClipboard.vb" />
     <Compile Include="Code\Core\Clipboard\SharedMethods.StoreAndRestoreClipboard.vb" />
+    <Compile Include="Code\Core\Config\IniImportManager.vb" />
+    <Compile Include="Code\Core\Config\SharedMethods.UpdateIni.vb" />
     <Compile Include="Code\Core\Config\SharedMethods.License.vb" />
     <Compile Include="Code\Core\Config\SharedMethods.LoadConfig.vb" />
     <Compile Include="Code\Core\Config\SharedMethods.Settings.vb" />
@@ -338,7 +338,6 @@
     <Compile Include="Code\Core\Converter\MarkdownToRtfConverter.vb" />
     <Compile Include="Code\Core\Definitions\SharedMethods.Constants.vb" />
     <Compile Include="Code\Core\Definitions\SharedMethods.Constants.OwnBuild.Security.vb" />
-    <Compile Include="Code\Core\Definitions\SharedMethods.Constants.OwnBuild.UpdateURLs.vb" />
     <Compile Include="Code\Core\LLM\ModelSelection\SharedMethods.AlternateModels.vb" />
     <Compile Include="Code\Core\LLM\SharedMethods.GoogleOAuthHelper.vb" />
     <Compile Include="Code\Core\LLM\SharedMethods.MainLLM.vb" />
@@ -355,6 +354,7 @@
     </Compile>
     <Compile Include="Code\Core\Texthandling\SharedMethods.TextHandling.vb" />
     <Compile Include="Code\Core\Texthandling\SharedMethods.TextHandlingExcel.vb" />
+    <Compile Include="Code\Core\UI\LogWindow.vb" />
     <Compile Include="Code\Core\UI\SharedMethods.Infobox.vb" />
     <Compile Include="Code\Core\UI\SharedMethods.Pane.vb" />
     <Compile Include="Code\Core\UI\SharedMethods.SelectionFormSmall.vb" />
@@ -432,7 +432,8 @@
     </COMReference>
   </ItemGroup>
   <ItemGroup>
-    <Content Include="Code\Overview.txt" />
+    <Content Include="Code\Source Code Overview.txt" />
+    <Content Include="Code\Build Environment.txt" />
     <Content Include="license.txt" />
     <None Include="Resources\Red_Ink_Logo_Medium.png" />
     <None Include="Resources\Red_Ink_Logo_Large.png" />

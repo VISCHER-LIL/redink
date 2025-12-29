@@ -1,5 +1,21 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
+' =============================================================================
+' File: ModelConfig.vb
+' Purpose: Defines a mutable data container that holds the currently selected LLM/model configuration
+'          and related runtime state used by the model selection and invocation infrastructure.
+'
+' Architecture:
+'  - Configuration Carrier: Instances of `ModelConfig` are populated from INI/config dictionaries (e.g. via
+'    `SharedMethods.CreateModelConfigFromDict`) and can be applied back to an `ISharedContext` (e.g. via
+'    `SharedMethods.ApplyModelConfig`).
+'  - Credentials: Stores API key material and related flags (e.g., encryption/prefix handling) and limited
+'    OAuth2 configuration values required by callers.
+'  - Runtime/Diagnostics State: Stores request/response related strings and token expiry information that
+'    callers may fill during runtime.
+'  - Cloning: `Clone()` returns a shallow copy via `MemberwiseClone` for snapshotting the current config.
+' =============================================================================
 
 Option Strict On
 Option Explicit On

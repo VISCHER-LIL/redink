@@ -1,5 +1,25 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
+'
+' =============================================================================
+' File: SharedMethods.AlternateModels.vb
+' Purpose: Provides functionality to load, select, and apply alternative LLM/model
+'          configurations ("alternate models") from an INI file, and to transfer
+'          configuration values between `ISharedContext` and `ModelConfig`.
+'
+' Architecture:
+'  - INI Parsing: `LoadAlternativeModels` parses an INI file into per-section dictionaries
+'    (`Dictionary(Of String, String)`) and materializes each section as a `ModelConfig`.
+'  - ModelConfig Materialization: `CreateModelConfigFromDict` maps keys to `ModelConfig`
+'    properties and resolves API key material via `RealAPIKeyMC` depending on OAuth2 usage.
+'  - Context Snapshot/Restore: `GetCurrentConfig` snapshots the active configuration from
+'    `ISharedContext`; `ApplyModelConfig` writes a `ModelConfig` back into `ISharedContext`.
+'  - UI Integration: `ShowModelSelection` uses `ModelSelectorForm` (single selection) and
+'    `ShowMultipleModelSelection` uses `MultiModelSelectorForm` (multi-selection) to let
+'    the user choose model configurations.
+'  - Task-Based Selection: `GetSpecialTaskModel` scans the INI sections for a given flag key
+'    (e.g., task name) set to a truthy value and applies the first match.
+' =============================================================================
 
 Option Strict On
 Option Explicit On
@@ -13,7 +33,15 @@ Namespace SharedLibrary
     Partial Public Class SharedMethods
 
 
-        ' Creates a ModelConfig object from a dictionary of key/value pairs.
+        ''' <summary>
+        ''' Creates a <see cref="ModelConfig"/> instance from a dictionary built from an INI section.
+        ''' Also resolves API key material via <c>RealAPIKeyMC</c> and initializes OAuth2-related fields
+        ''' used by callers.
+        ''' </summary>
+        ''' <param name="configDict">Key/value pairs parsed from an INI section.</param>
+        ''' <param name="context">Shared context used for prompt defaults and API key resolution.</param>
+        ''' <param name="Description">Model description (typically taken from the INI section name).</param>
+        ''' <returns>A populated <see cref="ModelConfig"/> instance.</returns>
         Public Shared Function CreateModelConfigFromDict(ByVal configDict As Dictionary(Of String, String), context As ISharedContext, Description As String) As ModelConfig
             Dim mc As New ModelConfig()
             Try
@@ -25,7 +53,7 @@ Namespace SharedLibrary
                 mc.APICall = If(configDict.ContainsKey("APICall"), configDict("APICall"), "")
                 mc.APICall_Object = If(configDict.ContainsKey("APICall_Object"), configDict("APICall_Object"), "")
                 mc.Timeout = If(configDict.ContainsKey("Timeout"), CLng(configDict("Timeout")), 0)
-                mc.MaxOutputToken = If(configDict.ContainsKey("MaxOutputToken_2"), CInt(configDict("MaxOutputToken")), 0)
+                mc.MaxOutputToken = If(configDict.ContainsKey("MaxOutputToken"), CInt(configDict("MaxOutputToken")), 0)
                 mc.Temperature = If(configDict.ContainsKey("Temperature"), configDict("Temperature"), "")
                 mc.Model = If(configDict.ContainsKey("Model"), configDict("Model"), "")
                 mc.APIEncrypted = ParseBoolean(configDict, "APIKeyEncrypted")
@@ -64,7 +92,11 @@ Namespace SharedLibrary
 
 
 
-        ' Extracts the current configuration from the shared context using the same style.
+        ''' <summary>
+        ''' Creates a <see cref="ModelConfig"/> snapshot from values currently stored in <see cref="ISharedContext"/>.
+        ''' </summary>
+        ''' <param name="context">Source context containing the active configuration values.</param>
+        ''' <returns>A populated <see cref="ModelConfig"/> instance.</returns>
         Public Shared Function GetCurrentConfig(ByVal context As ISharedContext) As ModelConfig
             Dim mc As New ModelConfig()
             Try
@@ -100,7 +132,15 @@ Namespace SharedLibrary
             Return mc
         End Function
 
-        ' Applies the given ModelConfig to the shared context using the assignment style.
+        ''' <summary>
+        ''' Applies the specified <see cref="ModelConfig"/> to the provided <see cref="ISharedContext"/> by copying
+        ''' configuration values into the context fields used by callers.
+        ''' </summary>
+        ''' <param name="context">Target context to receive the configuration values.</param>
+        ''' <param name="config">Source configuration values to apply.</param>
+        ''' <param name="ErrorFlag">
+        ''' Optional error-suppression flag. When <c>True</c>, repeated UI error reporting is suppressed by this method.
+        ''' </param>
         Public Shared Sub ApplyModelConfig(ByVal context As ISharedContext, ByVal config As ModelConfig, Optional ByRef ErrorFlag As Boolean = False)
             Try
                 context.INI_APIKey_2 = If(Not String.IsNullOrEmpty(config.APIKey), config.APIKey, "")
@@ -143,13 +183,23 @@ Namespace SharedLibrary
             End Try
         End Sub
 
-        ' Restores the default configuration (passed in as originalConfig).
+        ''' <summary>
+        ''' Restores a previously captured default configuration by applying it to the provided context.
+        ''' </summary>
+        ''' <param name="context">Target context to receive the configuration values.</param>
+        ''' <param name="originalConfig">Configuration snapshot to restore.</param>
         Public Shared Sub RestoreDefaults(ByVal context As ISharedContext, ByVal originalConfig As ModelConfig)
             ApplyModelConfig(context, originalConfig)
         End Sub
 
 
-        ' Loads alternative model configurations from an INI file.
+        ''' <summary>
+        ''' Loads alternative model configurations from an INI file and returns them as a list of <see cref="ModelConfig"/>.
+        ''' Each INI section is treated as one model configuration; section names are stored in <see cref="ModelConfig.ModelDescription"/>.
+        ''' </summary>
+        ''' <param name="iniFilePath">Path to the INI file.</param>
+        ''' <param name="context">Shared context used when creating <see cref="ModelConfig"/> instances.</param>
+        ''' <returns>List of parsed <see cref="ModelConfig"/> entries (empty if file not found or contains no sections).</returns>
         Public Shared Function LoadAlternativeModels(ByVal iniFilePath As String, context As ISharedContext) As List(Of ModelConfig)
             Dim models As New List(Of ModelConfig)()
             Try
@@ -201,13 +251,41 @@ Namespace SharedLibrary
         End Function
 
 
+        ''' <summary>
+        ''' Snapshot of the default configuration captured prior to applying an alternate model.
+        ''' </summary>
         Public Shared originalConfig As ModelConfig
+
+        ''' <summary>
+        ''' Stores the current "reset to default after use" UI checkbox state as used by callers.
+        ''' </summary>
         Public Shared OptionChecked As Boolean = False
+
+        ''' <summary>
+        ''' Indicates whether <see cref="originalConfig"/> is currently considered valid/available for restore logic.
+        ''' </summary>
         Public Shared originalConfigLoaded As Boolean = False
+
+        ''' <summary>
+        ''' Stores the models selected by the multi-model selector dialog.
+        ''' </summary>
         Public Shared SelectedAlternateModels As List(Of ModelConfig)
+
+        ''' <summary>
+        ''' Stores the last selected alternate model display name (used for preselection).
+        ''' </summary>
         Public Shared LastAlternateModel As String = ""
 
-        ' Displays the model selection form and applies the chosen configuration.
+        ''' <summary>
+        ''' Displays a single-selection model picker dialog and applies the chosen configuration to the provided context.
+        ''' </summary>
+        ''' <param name="context">Shared context to be updated.</param>
+        ''' <param name="iniFilePath">Path to the INI file containing alternative models.</param>
+        ''' <param name="Title">Dialog title.</param>
+        ''' <param name="Listtype">Dialog label above the listbox.</param>
+        ''' <param name="OptionText">Checkbox label controlling reset-to-default behavior.</param>
+        ''' <param name="UseCase">Selection mode (see <c>ModelSelectorForm</c>).</param>
+        ''' <returns><c>True</c> if the dialog completed with OK; otherwise <c>False</c>.</returns>
         Public Shared Function ShowModelSelection(ByVal context As ISharedContext, iniFilePath As String, Optional Title As String = "Freestyle", Optional Listtype As String = "Select the model you want to use:", Optional OptionText As String = "Reset to default model after use", Optional UseCase As Integer = 1) As Boolean
             Try
                 ' Back up the current (default) configuration.
@@ -239,6 +317,12 @@ Namespace SharedLibrary
         End Function
 
 
+        ''' <summary>
+        ''' Displays a multi-selection model picker dialog and stores the chosen models in <see cref="SelectedAlternateModels"/>.
+        ''' </summary>
+        ''' <param name="context">Shared context used for INI parsing defaults and key resolution.</param>
+        ''' <param name="modelPath">Path to the INI file; environment variables are expanded.</param>
+        ''' <returns><c>True</c> if the dialog completed with OK and at least one model was selected; otherwise <c>False</c>.</returns>
         Public Shared Function ShowMultipleModelSelection(context As ISharedContext,
                                                   modelPath As String) As Boolean
             Try
@@ -274,8 +358,15 @@ Namespace SharedLibrary
 
 
 
-        ' Retrieves and applies the first model whose section contains a flag parameter named Task
-        ' with a truthy value (True/Yes/Wahr/Ja/1). Returns True if applied; False if none found.
+        ''' <summary>
+        ''' Retrieves and applies the first model whose INI section contains a key matching <paramref name="Task"/>
+        ''' with a truthy value (True/Yes/Wahr/Ja/On/1).
+        ''' </summary>
+        ''' <param name="context">Shared context to receive the selected model configuration.</param>
+        ''' <param name="iniFilePath">Path to the INI file.</param>
+        ''' <param name="Task">Key name to locate in each INI section.</param>
+        ''' <param name="UseCase">Selection mode (currently used only for compatibility with other call sites).</param>
+        ''' <returns><c>True</c> if a matching model was found and applied; otherwise <c>False</c>.</returns>
         Public Shared Function GetSpecialTaskModel(ByVal context As ISharedContext,
                                                ByVal iniFilePath As String,
                                                ByVal Task As String,
@@ -359,7 +450,7 @@ Namespace SharedLibrary
                 Return False
 
             Catch ex As Exception
-                MessageBox.Show("Error in GetSpecialModel: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                MessageBox.Show("Error in GetSpecialTaskModel: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
                 Return False
             End Try
         End Function

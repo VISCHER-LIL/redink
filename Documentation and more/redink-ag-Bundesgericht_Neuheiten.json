@@ -1,0 +1,181 @@
+﻿{
+  "meta": {
+    "user_agent": "RedInk-WebAgent/1.0",
+    "default_timeout_ms": 100000
+  },
+  "env": {
+    "variables": {
+      "threshold_date": "{parameter1 = Publishing date; string; >= 31.12.2025}",
+      "summary_list": "",
+      "summary_array": [],
+      "debug": false
+    }
+  },
+  "steps": [
+    { "id":"tune_llm_tolerance", "command":"set_var", "params":{"name":"continue_on_llm_timeout","value": true } },
+    { "id":"tune_llm_invalid", "command":"set_var", "params":{"name":"allow_llm_invalid","value": true } },
+    {
+      "id": "open_index",
+      "command": "open_url",
+      "params": {
+        "url": "https://search.bger.ch/ext/eurospider/live/de/php/aza/http/index_aza.php?lang=de&mode=index&search=false",
+        "return_body": true
+      },
+      "assign": { "var": "index_body_raw", "path": "body" }
+    },
+    {
+      "id": "find_date_links_llm",
+      "command": "llm_analyze",
+      "params": {
+        "system": "You are a deterministic HTML link extractor. You receive raw HTML that contains anchor (<a>) elements whose visible text contains a date in the format dd.mm.yyyy optionally followed by descriptive text (e.g. '22.02.2024 22 Entscheide'). Extract ONLY the href values of those links whose date is {{threshold_date}} (format dd.mm.yyyy). Normalize relative URLs to absolute using the page URL if necessary (omit fragments). Return ONLY valid JSON of the form {\"links\":[\"url1\",\"url2\"]}. If none, return {\"links\":[]}. No extra text, no fences.",
+        "user": "HTML:\n{{index_body_raw}}",
+        "retry": { "max": 2, "delay_ms": 3000, "backoff": 2.5 },
+        "retry_on_invalid": true,
+        "require_key": "links", 
+        "temperature": 0
+      },
+      "assign": { "var": "date_links", "path": "links" }
+    },
+    {
+      "id": "ensure_date_links_array",
+      "command": "if",
+      "params": {
+        "condition": "exists {{date_links}}",
+        "else_steps": [
+          {
+            "id": "init_empty_date_links",
+            "command": "set_var",
+            "params": { "name": "date_links", "value": [] }
+          }
+        ]
+      }
+    },
+    {
+      "id": "loop_date_pages",
+      "command": "foreach",
+      "params": {
+        "list": "date_links",
+        "item_var": "date_page_url",
+        "steps": [
+          {
+            "id": "open_date_page",
+            "command": "open_url",
+            "params": {
+              "url": "{{date_page_url}}",
+              "return_body": true
+            },
+            "assign": { "var": "date_page_html", "path": "body" }
+          },
+          {
+            "id": "extract_decision_links",
+            "command": "llm_analyze",
+            "params": {
+              "system": "You are a deterministic HTML decision link extractor. You receive raw HTML of a daily decisions page of the Swiss Federal Supreme Court. Each genuine decision row is a table (or table-like) row where: (1) the first column contains a date in the format dd.mm.yyyy; (2) the second column contains an <a> anchor whose visible text is the official case / docket identifier. Some rows may be headers, pagination, navigation, empty, or not real decisions—ignore those. REQUIREMENTS: 1) For every genuine decision row, extract an object {\"date\":\"dd.mm.yyyy\",\"id\":\"CASE_ID\",\"url\":\"ABSOLUTE_URL\"}. 2) Preserve order of appearance (top to bottom). 3) De-duplicate strictly by (date,id,url) first; if duplicates differ only by relative vs absolute URL, keep the absolute form once. 4) Accept only dates matching regex ^\\d{2}\\.\\d{2}\\.\\d{4}$. Skip rows with malformed or future-inconsistent dates. 5) The case id is the trimmed visible text of the anchor in the second column (do not synthesize or alter spacing except collapse internal runs to single spaces). 6) Resolve relative hrefs against base https://search.bger.ch/ext/eurospider/live/de/php/aza/http/ (strip fragments and query parameters only if they are empty; otherwise keep them). 7) Exclude anchors that are purely pagination, sorting, JavaScript, mailto:, or '#' placeholders. 8) No guessing: if a row’s structure is ambiguous, skip it rather than inventing data. 9) Output ONLY valid JSON: {\"decisions\":[ {...}, ... ]}. If none: {\"decisions\":[]}. 10) No extra text, no Markdown, no code fences, no comments. 11) Never output duplicate keys or trailing commas. 12) Do not add fields other than date,id,url.",
+              "user": "HTML:\n{{date_page_html}}",
+              "retry": { "max": 2, "delay_ms": 3000, "backoff": 2.5 },
+              "retry_on_invalid": true,
+              "require_key": "decisions", 
+              "temperature": 0
+            },
+            "assign": { "var": "decision_links", "path": "decisions" }
+          },
+          {
+            "id": "normalize_decision_links_if_missing",
+            "command": "if",
+            "params": {
+              "condition": "exists {{decision_links}}",
+              "else_steps": [
+                {
+                  "id": "force_empty_decisions",
+                  "command": "set_var",
+                  "params": { "name": "decision_links", "value": [] }
+                }
+              ]
+            }
+          },
+          {
+            "id": "loop_decisions",
+            "command": "foreach",
+            "params": {
+              "list": "decision_links",
+              "item_var": "decision",
+              "max_items": 100,
+              "steps": [
+                {
+                  "id": "open_decision",
+                  "command": "open_url",
+                  "params": {
+                    "url": "{{decision.url}}",
+                    "return_body": true
+                  },
+                  "assign": { "var": "decision_html", "path": "body" }
+                },
+                {
+                  "id": "summarize_decision",
+                  "command": "llm_analyze",
+                  "params": {
+                    "system": "You are a deterministic legal decision summarizer. Input: (a) metadata (id,date,url) and (b) raw HTML of a single Swiss Federal Supreme Court decision page. Produce 2–3 concise German sentences: (1) legal domain / core issue, (2) essential holding / outcome. No speculation. If meaningful content cannot be reliably extracted, use summary=\"(Keine verwertbare Entscheidgrundlage extrahierbar)\". Output ONLY valid JSON: {\"id\":\"...\",\"date\":\"dd.mm.yyyy\",\"url\":\"...\",\"summary\":\"...\"}. No extra text, no code fences.",
+                    "user": "Metadata:\nID: {{decision.id}}\nDate: {{decision.date}}\nURL: {{decision.url}}\n\nHTML:\n{{decision_html}}",
+                    "retry": { "max": 2, "delay_ms": 3000, "backoff": 2.5 },
+                    "retry_on_invalid": true,
+                    "require_key": "id,date,url,summary",                    
+                    "temperature": 0
+                  },
+                  "assign": { "var": "decision_summary_obj" }
+                },
+                {
+                  "id": "append_summary_markdown_if_nonempty",
+                  "command": "if",
+                  "params": {
+                    "condition": "exists {{summary_list}}",
+                    "steps": [
+                      {
+                        "id": "append_with_nl",
+                        "command": "template",
+                        "params": {
+                          "template": "{{summary_list}}\n- **{{decision_summary_obj.id}}** ({{decision_summary_obj.date}}) [Link]({{decision_summary_obj.url}}): {{decision_summary_obj.summary}}"
+                        },
+                        "assign": { "var": "summary_list" }
+                      }
+                    ],
+                    "else_steps": [
+                      {
+                        "id": "append_first",
+                        "command": "template",
+                        "params": {
+                          "template": "- **{{decision_summary_obj.id}}** ({{decision_summary_obj.date}}) [Link]({{decision_summary_obj.url}}): {{decision_summary_obj.summary}}"
+                        },
+                        "assign": { "var": "summary_list" }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "push_structured_summary",
+                  "command": "array_push",
+                  "params": {
+                    "array": "summary_array",
+                    "item_var": "decision_summary_obj"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "render_final_report",
+      "command": "render_report",
+      "params": {
+        "template": "{{#summaries}}# Zusammenfassung Bundesgerichtsentscheide (Publikation: {{threshold_date}})\n\n{{summaries}}\n{{/summaries}}{{^summaries}}Keine Entscheidungen oder extrahierbaren Inhalte gefunden (Publikation: {{threshold_date}}).{{/summaries}}",
+        "context": {
+          "summaries": "{{summary_list}}",
+          "threshold_date": "{{threshold_date}}",
+          "summary_array": "{{summary_array}}"
+        },
+        "output_path": "{{env.DESKTOP}}\\BGer_Summaries.md"
+      }
+    }
+  ]
+}
