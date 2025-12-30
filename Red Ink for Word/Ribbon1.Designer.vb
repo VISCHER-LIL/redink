@@ -85,6 +85,7 @@ Partial Class Ribbon1
         Me.RI_ArgueAgainst = Me.Factory.CreateRibbonButton
         Me.RI_SuggestTitles = Me.Factory.CreateRibbonButton
         Me.RI_RevisionsSummary = Me.Factory.CreateRibbonButton
+        Me.RI_RevisionsSummary = Me.Factory.CreateRibbonButton
         Me.RI_SpecialModel = Me.Factory.CreateRibbonButton
         Me.RI_DocCheck = Me.Factory.CreateRibbonButton
         Me.RI_FindClause = Me.Factory.CreateRibbonButton
@@ -113,6 +114,17 @@ Partial Class Ribbon1
         Me.RI_Transcriptor = Me.Factory.CreateRibbonButton
         Me.RI_DiscussInky = Me.Factory.CreateRibbonButton
         Me.RI_HelpMe = Me.Factory.CreateRibbonButton
+        Me.ModelsMenu = Me.Factory.CreateRibbonMenu
+        Me.RI_Model1 = Me.Factory.CreateRibbonButton
+        Me.RI_Model2 = Me.Factory.CreateRibbonButton
+        Me.RI_Model3 = Me.Factory.CreateRibbonButton
+        Me.RI_Model4 = Me.Factory.CreateRibbonButton
+        Me.RI_Model5 = Me.Factory.CreateRibbonButton
+        Me.RI_Model6 = Me.Factory.CreateRibbonButton
+        Me.RI_Model7 = Me.Factory.CreateRibbonButton
+        Me.RI_Model8 = Me.Factory.CreateRibbonButton
+        Me.RI_Model9 = Me.Factory.CreateRibbonButton
+        Me.RI_Model10 = Me.Factory.CreateRibbonButton
         Me.Settings = Me.Factory.CreateRibbonButton
         Me.Group2 = Me.Factory.CreateRibbonGroup
         Me.RI_PrimLang2 = Me.Factory.CreateRibbonButton
@@ -162,6 +174,7 @@ Partial Class Ribbon1
         Me.Menu1.Items.Add(Me.RI_Transcriptor)
         Me.Menu1.Items.Add(Me.RI_DiscussInky)
         Me.Menu1.Items.Add(Me.RI_HelpMe)
+        Me.Menu1.Items.Add(Me.ModelsMenu)
         Me.Menu1.Items.Add(Me.Settings)
         Me.Menu1.KeyTip = "RI"
         Me.Menu1.Label = "Task"
@@ -423,15 +436,6 @@ Partial Class Ribbon1
         Me.RI_Explain.ScreenTip = "Explain in simple terms what the selected text means"
         Me.RI_Explain.ShowImage = True
         '
-        'RI_ArgueAgainst
-        '
-        Me.RI_ArgueAgainst.Label = "Argue Against"
-        Me.RI_ArgueAgainst.Name = "RI_ArgueAgainst"
-        Me.RI_ArgueAgainst.OfficeImageId = "SpeakStop"
-        Me.RI_ArgueAgainst.ScreenTip = "This will let the AI argue against the selected text with at least the number of " &
-    "words defined by you"
-        Me.RI_ArgueAgainst.ShowImage = True
-        '
         'RI_SuggestTitles
         '
         Me.RI_SuggestTitles.Label = "Suggest Titles"
@@ -687,6 +691,82 @@ Partial Class Ribbon1
         Me.RI_HelpMe.ScreenTip = "This will call up a chatbot that answers your questions about Red Ink"
         Me.RI_HelpMe.ShowImage = True
         '
+        'ModelsMenu
+        '
+        Me.ModelsMenu.Items.Add(Me.RI_Model1)
+        Me.ModelsMenu.Items.Add(Me.RI_Model2)
+        Me.ModelsMenu.Items.Add(Me.RI_Model3)
+        Me.ModelsMenu.Items.Add(Me.RI_Model4)
+        Me.ModelsMenu.Items.Add(Me.RI_Model5)
+        Me.ModelsMenu.Items.Add(Me.RI_Model6)
+        Me.ModelsMenu.Items.Add(Me.RI_Model7)
+        Me.ModelsMenu.Items.Add(Me.RI_Model8)
+        Me.ModelsMenu.Items.Add(Me.RI_Model9)
+        Me.ModelsMenu.Items.Add(Me.RI_Model10)
+        Me.ModelsMenu.Label = "Models"
+        Me.ModelsMenu.Name = "ModelsMenu"
+        Me.ModelsMenu.ShowImage = True
+        '
+        'RI_Model1
+        '
+        Me.RI_Model1.Label = ""
+        Me.RI_Model1.Name = "RI_Model1"
+        Me.RI_Model1.ShowImage = True
+        '
+        'RI_Model2
+        '
+        Me.RI_Model2.Label = ""
+        Me.RI_Model2.Name = "RI_Model2"
+        Me.RI_Model2.ShowImage = True
+        '
+        'RI_Model3
+        '
+        Me.RI_Model3.Label = ""
+        Me.RI_Model3.Name = "RI_Model3"
+        Me.RI_Model3.ShowImage = True
+        '
+        'RI_Model4
+        '
+        Me.RI_Model4.Label = ""
+        Me.RI_Model4.Name = "RI_Model4"
+        Me.RI_Model4.ShowImage = True
+        '
+        'RI_Model5
+        '
+        Me.RI_Model5.Label = ""
+        Me.RI_Model5.Name = "RI_Model5"
+        Me.RI_Model5.ShowImage = True
+        '
+        'RI_Model6
+        '
+        Me.RI_Model6.Label = ""
+        Me.RI_Model6.Name = "RI_Model6"
+        Me.RI_Model6.ShowImage = True
+        '
+        'RI_Model7
+        '
+        Me.RI_Model7.Label = ""
+        Me.RI_Model7.Name = "RI_Model7"
+        Me.RI_Model7.ShowImage = True
+        '
+        'RI_Model8
+        '
+        Me.RI_Model8.Label = ""
+        Me.RI_Model8.Name = "RI_Model8"
+        Me.RI_Model8.ShowImage = True
+        '
+        'RI_Model9
+        '
+        Me.RI_Model9.Label = ""
+        Me.RI_Model9.Name = "RI_Model9"
+        Me.RI_Model9.ShowImage = True
+        '
+        'RI_Model10
+        '
+        Me.RI_Model10.Label = ""
+        Me.RI_Model10.Name = "RI_Model10"
+        Me.RI_Model10.ShowImage = True
+        '
         'Settings
         '
         Me.Settings.Label = "Settings"
@@ -732,6 +812,15 @@ Partial Class Ribbon1
         Me.RI_Chat.OfficeImageId = "ContactUs"
         Me.RI_Chat.ScreenTip = "Will open a window where you can chat with the LLM"
         Me.RI_Chat.ShowImage = True
+        '
+        'RI_ArgueAgainst
+        '
+        Me.RI_ArgueAgainst.Label = "Argue Against"
+        Me.RI_ArgueAgainst.Name = "RI_ArgueAgainst"
+        Me.RI_ArgueAgainst.OfficeImageId = "SpeakStop"
+        Me.RI_ArgueAgainst.ScreenTip = "This will let the AI argue against the selected text with at least the number of " &
+    "words defined by you"
+        Me.RI_ArgueAgainst.ShowImage = True
         '
         'Ribbon1
         '
@@ -992,6 +1081,17 @@ Partial Class Ribbon1
     Friend WithEvents RI_LiveCompare As RibbonButton
     Friend WithEvents RI_RevisionsSummary As RibbonButton
     Friend WithEvents RI_DiscussInky As RibbonButton
+    Friend WithEvents ModelsMenu As RibbonMenu
+    Friend WithEvents RI_Model1 As RibbonButton
+    Friend WithEvents RI_Model2 As RibbonButton
+    Friend WithEvents RI_Model3 As RibbonButton
+    Friend WithEvents RI_Model4 As RibbonButton
+    Friend WithEvents RI_Model5 As RibbonButton
+    Friend WithEvents RI_Model6 As RibbonButton
+    Friend WithEvents RI_Model7 As RibbonButton
+    Friend WithEvents RI_Model8 As RibbonButton
+    Friend WithEvents RI_Model9 As RibbonButton
+    Friend WithEvents RI_Model10 As RibbonButton
 End Class
 
 Partial Class ThisRibbonCollection

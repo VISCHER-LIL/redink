@@ -431,6 +431,18 @@ Namespace My
                 Me("LicenseWarningStartCount") = value
             End Set
         End Property
+
+        <Global.System.Configuration.UserScopedSettingAttribute(),  _
+         Global.System.Diagnostics.DebuggerNonUserCodeAttribute(),  _
+         Global.System.Configuration.DefaultSettingValueAttribute("1")>  _
+        Public Property SelectedModelNumber() As Integer
+            Get
+                Return CType(Me("SelectedModelNumber"),Integer)
+            End Get
+            Set
+                Me("SelectedModelNumber") = value
+            End Set
+        End Property
     End Class
 End Namespace
 

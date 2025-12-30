@@ -78,10 +78,23 @@ Namespace SharedLibrary
                     If Not String.IsNullOrEmpty(trimmedLine) AndAlso Not trimmedLine.StartsWith(";") Then ' Skip comments and empty lines
                         Dim keyValue = trimmedLine.Split(New Char() {"="c}, 2)
                         If keyValue.Length = 2 Then
-                            configDict(keyValue(0).Trim()) = keyValue(1).Trim()
+                            Dim key = keyValue(0).Trim()
+                            Dim value = keyValue(1).Trim()
+
+                            If Not configDict.ContainsKey(key) Then
+                                configDict(key) = value
+                            ElseIf Not String.IsNullOrWhiteSpace(value) Then
+                                ' Prefer non-empty overrides; ignore blank defaults that would wipe earlier values
+                                configDict(key) = value
+                            End If
                         End If
                     End If
                 Next
+
+                ' Detect available models using ModelConfigManager.
+                ' "Primary" = the original top-level INI_* keys (no suffix) that will be treated as Model 1 when no MultiModel_*_<n> keys exist.
+                ' New configs should prefer the MultiModel_<Key>_<Number> naming convention introduced by ModelConfigManager.
+                ModelConfigManager.DetectAndStoreModels(configDict)
 
                 ' Assign and validate configuration values
                 context.INI_APIKey = If(configDict.ContainsKey("APIKey"), configDict("APIKey"), "")
@@ -332,6 +345,16 @@ Namespace SharedLibrary
 
                 If INIValuesMissing(context) Then
                     Return
+                End If
+
+                ' Apply selected model to primary fields if multi-model configuration is present.
+                Dim availableModels = ModelConfigManager.GetAvailableModels()
+                If availableModels.Count > 0 Then
+                    Dim modelToSelect As Integer = ModelConfigManager.LoadSavedModelNumber()
+                    If Not availableModels.Contains(modelToSelect) Then
+                        modelToSelect = 1
+                    End If
+                    ModelConfigManager.SelectModel(context, modelToSelect)
                 End If
 
                 ' Additional configurations for OAuth2
