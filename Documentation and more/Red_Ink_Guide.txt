@@ -61,7 +61,7 @@ ANNEX 1: IDEAS TO GET TO KNOW RED INK	203
 ANNEX 2: PROGRAMMING RESPONSE TEMPLATES	205
 ANNEX 3: WEB AGENT SCRIPTING	208
 ANNEX 4: AUTOMATIC INI UPDATE	229
-ANNEX 5: INSTALLATION WITH CENTRAL CONFIGURATION	240
+ANNEX 5: INSTALLATION WITH CENTRAL CONFIGURATION	241
 
 I. OVERVIEW
 1 Red Ink is an AI tool developed for daily office use, which is integrated directly into Word, Excel and Outlook in the form of Microsoft Office add-ins, allowing various AI functions to be performed with your own texts, worksheets and emails. Prompts can be entered directly, but it is also possible to have the AI translate, revise, summarize, comment on, and search a selected text, cells in a worksheet, or email chains. Even a chatbot is available, the tool can transcribe, create audiobooks from texts, and can also be accessed from the browser. What is special about Red Ink, however, in contrast to most other AI tools, is that you can work with the AI directly in Word, Excel and Outlook; there is no need to switch back and forth to the browser.
@@ -2103,7 +2103,7 @@ G. Automatic loading of configuration and template files
 439 To make it easier for less experienced users to configure Red Ink, the add-in has a function that allows parameterizations to be loaded from a source on the internet or a file at the push of a button. This can be used, for example, to configure additional models or Special Services. Red Ink will read these and replace existing configurations for these models or services or insert them anew. This works for both the basic configuration (in "redink.ini") and the alternative models and Special Services.
 440 The function is called via the "Settings" menu, and there via the "Get Model/Special Service" and "Get Settings" buttons. In "Expert Config", a (combined) button is also available for access and it can be activated via the Freestyle shortcut "iniload". However, it is only available when working with a local configuration. If a system is configured in such a way that the directory of the configuration file is determined via the registry, it must be configured manually. The configuration is best done via Word, but Outlook and Excel also support the function (they normally use the configuration file from Word).
 441 When activated, Red Ink requests a link or a file path with the corresponding configuration file. Such links are available on the one hand at https://redink.ai/get-more and on the other hand from some of the service providers themselves. Subsequently, the function requests various confirmations from the user, because it makes corresponding entries in the configuration files for them, but also creates them if necessary. Existing configurations of the relevant models will be overwritten (the user is warned beforehand), but a backup copy of everything is created in the same directory. The last operation can be undone with the Freestyle command "inirollback" (note that this will not undo manual configuration changes). The system has stored third-party providers known to us with their internet addresses; a warning is issued for links from unknown sources. In addition to new entries for models and Special Services, other parameters can also be installed in this way, should the need arise.
-442 If the configuration file contains a placeholder (e.g., "[[API key]]"), the user will be asked for this value when the configuration is read in (e.g., secret code). This can then be entered and is only stored locally.
+442 If the configuration file contains a placeholder (e.g., "[[API key]]"), the user will be asked for this value when the configuration is read in (e.g., secret code). This can then be entered and is only stored locally. The placeholder is documented in the configuration file ("; [[placeholder]] = value"). This value can be used by the function for automatically updating configuration files.
 443 If a value or a configuration file is to be checked after being read, this is also possible via "Settings" and there "Expert Config". The configurations for alternative models and Special Services become active immediately; if adjustments are made to the primary and secondary models, the configuration file must be reloaded. This will be offered.
 444 The configuration files themselves are structured in the same way as the configuration files themselves. Configuration files for a model should only contain the parameters of the model. The system makes the necessary adjustments if a configuration is to be installed as a secondary model. For alternative models and Special Services, each configuration must begin with a segment or section title, i.e., a name in square brackets (e.g., "[Lexi Search]" or "[Gemini 3 Pro maximum reasoning]". This is used for matching.
 445 The configuration files can be the same as those used for the automatic update function (see para. 448); it is useful to pre-configure the automatic updates in these ("Updatesource = …").
@@ -3645,7 +3645,11 @@ This classification applies to both the old and new values. A change is consider
 * A new parameter is added whose value contains a URL or path
 * An existing parameter is changed and either the old or new value contains a URL or path
 Suspicious changes are not selected for application in interactive mode by default and require explicit confirmation by the user.
-O. Protected parameters
+O. Handling placeholders during changes
+If a placeholder appears in a parameter that is to be changed, the system tries to replace it correctly. To do this, it searches the relevant segment or file for a comment containing this placeholder and its value. This must have the following format (it must be written exactly the same way):
+; [[Placeholder]] = Value
+If the system finds such a placeholder and its value, it continues normally and replaces the placeholder in the change. If it does not find it, it will ask the user in interactive mode before proceeding to confirm the changes. In silent mode, the change is not carried out, but is documented in the relevant file or segment so that the user can make it manually afterwards. A new comment is added with each new run; the file should therefore be checked regularly when using silent mode. As soon as placeholders are entered with their values, the replacement runs smoothly again.
+P. Protected parameters
 Parameters whose name begins with Update are protected from automatic changes. This prevents the update mechanism from overwriting its own configuration.
 Protected parameters include:
 * UpdateIni
@@ -3657,13 +3661,13 @@ Protected parameters include:
 * UpdateIniSilentLog
 * UpdateIniIgnoreOverride
 This protection feature ensures that an administrator cannot accidentally or maliciously change the update settings via a remote update.
-P. Ignore list and override rules
+Q. Ignore list and override rules
 * Local ignore list
 Users can add parameters to the ignore list to permanently exclude them from future update checks. The list is stored in the application settings and is retained across sessions and restarts. 
 The ignore list can be managed using the Freestyle command iniupdateignored. This opens a dialogue box listing all ignored parameters, which can be removed from the list individually.
 * Override rules (UpdateIniIgnoreOverride)
 The UpdateIniIgnoreOverride parameter allows administrators to override the local ignore list of users with central rules. The format is a comma-separated list of rules with + (ignore) or - (include) as a prefix. 
-Q. Rule formats
+R. Rule formats
 Format
 Description
 +key or -key
@@ -3676,7 +3680,7 @@ Rule applies only to the parameter in the specified segment of the file
 Rule applies to the parameter in this segment, regardless of the file
 +file.ini\|*\|key
 Equivalent to +file.ini\|key
-R. Special values
+S. Special values
 Value
 Meaning
 +all
@@ -3694,13 +3698,13 @@ UpdateIniIgnoreOverride = +allmodels.ini|*|Model
 UpdateIniIgnoreOverride = -redink.ini|Endpoint,+Model
 ; Complex combination
 UpdateIniIgnoreOverride = -all,+Endpoint,-redink.ini|Endpoint,+specialservices.ini|ServiceA|Timeout
-S. Rule priority
+T. Rule priority
 If several rules apply, the more specific rule wins. Specificity is determined by the number of components not specified as wildcards (*):
 * File name specified: +4 points
 * Segment name specified: +2 points
 * Parameter name specified: +1 point
 If the specificity is the same, the rule that appears later in the list takes precedence.
-T. Applying the changes
+U. Applying the changes
 When changes are approved (manually in interactive mode or automatically in silent mode), the system performs the following steps:
 * Create backup copy
 Before each change, the existing configuration file is backed up with a timestamp and the .bak extension. The backup file is located in the same directory as the original file. A rollback is possible via the Freestyle shortcut "inirollback".
@@ -3710,15 +3714,15 @@ The file is processed line by line. For lines containing a parameter to be updat
 New keys that do not yet exist in the local file are inserted at the end of the corresponding segment. In the main configuration without segments, new parameters are added at the end of the file.
 * Saving
 The updated file is saved in UTF-8 format to ensure compatibility with different character sets.
-U. Error handling
+V. Error handling
 If an error occurs during the update (e.g. write protection, file system error), the backup copy is automatically restored and the user is informed of the error.
-V. Effectiveness of changes
+W. Effectiveness of changes
 The changes only take effect after the configuration has been reloaded. For Office add-ins, this usually means restarting the host application (Word, Outlook, Excel) with regard to "redink.ini" or the next use of the alternative models or special services (without restarting).
-W. Deletion of Models & Special Services
+X. Deletion of Models & Special Services
 For security reasons, the mechanism is not able to delete segments. If an outdated segment is to be deactivated for the user (because it can no longer be used or should no longer be used), this is still possible: The parameter "Depreciated = True" must be inserted in the model and service definitions and an update must be performed. Red Ink will no longer consider this model. It is recommended for service providers who keep their own configuration information online to create two of them: One for the initial download and one for updates of existing installations. The latter also contains the depreciated models until they have been deactivated everywhere, while the former only contains the current models. This prevents new users from being supplied with models that no longer exist.
-X. Updates of local redink.ini copies by a central redink.ini
+Y. Updates of local redink.ini copies by a central redink.ini
 With this mechanism, it is also fundamentally possible to synchronize local versions of redink.ini using a central redink.ini file by having redink.ini include an UpdateSource line. It will not synchronize itself. However, the user will be asked if they want to apply adjustments from the central redink.ini. To avoid being asked repeatedly, they can add the relevant parameters to the ignore list.
-Y. Signature management tool
+Z. Signature management tool
 An integrated signature management tool is available for administrators. It is accessed via the Freestyle shortcut "iniupdatekeys". This tool offers the following functions:
 * Key pair generation
 New Ed25519 key pairs can be created in the "Generate Keypair" tab. The tool generates:
@@ -3729,15 +3733,15 @@ In the "Sign File" tab, configuration files can be signed with the private key. 
 * Signature verification
 Existing signatures can be verified manually in the "Verify Signature" tab. This is useful for troubleshooting when updates fail due to signature errors.
 Developers who wish to create their own signing procedure can find details in the comments at the end of the source code of SharedMethods.UpdateIni.vb.
-Z. Batch processing
+AA. Batch processing
 A batch processing function is available for signing multiple files, which signs all selected files with the same private key. It is called using the Freestyle shortcut "iniupdatebatch".
-AA. Ignore list management
+BB. Ignore list management
 The Freestyle shortcut "iniupdateignored" opens a dialogue for managing the ignore list. All saved entries are displayed in this dialogue. Each entry shows:
 * The file name
 * Optionally, the segment name
 * The parameter name
 By unchecking the box next to an entry and clicking "Save Changes", the parameter is removed from the ignore list and will be considered again during the next update check.
-BB. Logging 
+CC. Logging 
 All update events are logged locally and stored in %appdata%\redink\updater.log (as are general add-in update processes). 
 The log file contains detailed information about:
 * Start and end of update checks
@@ -3747,7 +3751,7 @@ The log file contains detailed information about:
 * Signature verification results
 * Any errors
 In silent mode, logging only takes place if UpdateIniSilentLog = true is set. Exceptions are security events such as signature errors and changes that have actually been applied, which are always logged regardless of this setting.
-CC. Update Workflow
+DD. Update Workflow
 The following describes the complete update process:
 * Checking the main switch: If UpdateIni = false, the process is terminated immediately.
 * Registry check for silent mode: If silent mode is enabled and the registry flag is set, a check is performed to see whether PermitSilentIniUpdates is allowed
@@ -3759,7 +3763,7 @@ The following describes the complete update process:
 * In interactive mode: Confirmation dialogue box is displayed
 * Application: Approved changes are written to the local files
 * Logging: All actions are logged
-DD. Security recommendations
+EE. Security recommendations
 The following practices are recommended for secure operation of the update mechanism:
 * Keep signature verification enabled: Only disable UpdateIniNoSignature in controlled test environments
 * Keep private keys secure: Never store private keys in version control systems or unencrypted files
@@ -3835,14 +3839,15 @@ We provide various documents for end-users at https://redink.ai/downloads-site/m
 
 
 
-30 December 2025	1
+31 December 2025	1
 
 
-	30 December 2025 
+	31 December 2025 
 
 
 
 Copyright © LawDigital Ltd., Switzerland. All rights reserved. Info: https://redink.ai
+
 
 
 

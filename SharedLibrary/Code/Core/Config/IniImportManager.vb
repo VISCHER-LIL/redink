@@ -78,6 +78,26 @@ Public NotInheritable Class IniImportManager
     System.Text.RegularExpressions.RegexOptions.IgnoreCase Or System.Text.RegularExpressions.RegexOptions.CultureInvariant
 )
 
+    ''' <summary>
+    ''' Represents a placeholder that was successfully resolved during import processing,
+    ''' including the placeholder name and the user-provided replacement value.
+    ''' </summary>
+    ''' <remarks>
+    ''' Instances of this class are collected during placeholder resolution and later used
+    ''' to inject explanatory comments into the resulting INI output.
+    ''' </remarks>
+    Private NotInheritable Class ResolvedPlaceholder
+        ''' <summary>
+        ''' The placeholder name without surrounding brackets (e.g. "API_KEY").
+        ''' </summary>
+        Public Property Name As System.String
+
+        ''' <summary>
+        ''' The value entered by the user that replaced the placeholder.
+        ''' </summary>
+        Public Property Value As System.String
+    End Class
+
 
 
     ''' <summary>
@@ -1166,9 +1186,17 @@ Public NotInheritable Class IniImportManager
         Dim substitutedText As System.String = normalizedImportText
         Dim placeholderWarnings As New System.Collections.Generic.List(Of System.String)()
 
-        If Not TryResolvePlaceholders(ownerForm, substitutedText, placeholderWarnings) Then
+        Dim resolvedPlaceholders As New System.Collections.Generic.List(Of ResolvedPlaceholder)()
+
+        If Not TryResolvePlaceholders(
+        ownerForm,
+        substitutedText,
+        placeholderWarnings,
+        resolvedPlaceholders
+                ) Then
             Return False
         End If
+
 
         If placeholderWarnings.Count > 0 Then
             ShowCustomMessageBox(System.String.Join(System.Environment.NewLine & System.Environment.NewLine, placeholderWarnings))
@@ -1481,6 +1509,12 @@ Public NotInheritable Class IniImportManager
         If autoOptions Is Nothing Then
             Dim decision As System.Int32 = ShowCustomYesNoBox(sb.ToString(), "Yes, continue", "No, abort import")
             If decision <> 1 Then Return False
+        End If
+
+        If resolvedPlaceholders.Count > 0 Then
+            For Each p As DryRunPlan In plans
+                InjectPlaceholderCommentsIntoPlan(p, resolvedPlaceholders)
+            Next
         End If
 
         For Each p As DryRunPlan In plans
@@ -2056,15 +2090,37 @@ Public NotInheritable Class IniImportManager
     ' =========================================================================================
 
     ''' <summary>
-    ''' Prompts the user for values for each [[...]] placeholder and substitutes non-empty entries.
+    ''' Prompts the user for values for each [[...]] placeholder found in the input text and
+    ''' substitutes non-empty entries directly into the text.
     ''' </summary>
-    ''' <param name="ownerForm">Owner window.</param>
-    ''' <param name="text">Input/output text containing placeholders.</param>
-    ''' <param name="warnings">Collector for warnings about placeholders left unresolved.</param>
-    ''' <returns>True if processing should continue; otherwise False.</returns>
-    Private Shared Function TryResolvePlaceholders(ownerForm As System.Windows.Forms.Form,
-                                                  ByRef text As System.String,
-                                                  warnings As System.Collections.Generic.List(Of System.String)) As System.Boolean
+    ''' <param name="ownerForm">Owner window used for modal UI prompts.</param>
+    ''' <param name="text">
+    ''' Input/output text containing placeholders; updated in-place with resolved values.
+    ''' </param>
+    ''' <param name="warnings">
+    ''' Collector for warnings about placeholders that were left unresolved and remain in the text.
+    ''' </param>
+    ''' <param name="resolved">
+    ''' Collector for placeholders that were successfully resolved, including the placeholder
+    ''' name and the user-provided value. This list is later used to annotate the output INI file.
+    ''' </param>
+    ''' <returns>
+    ''' True if placeholder processing completed and import should continue; otherwise False
+    ''' if the user aborted the placeholder input dialog.
+    ''' </returns>
+
+    Private Shared Function TryResolvePlaceholders(
+    ownerForm As System.Windows.Forms.Form,
+    ByRef text As System.String,
+    warnings As System.Collections.Generic.List(Of System.String),
+    ByRef resolved As System.Collections.Generic.List(Of ResolvedPlaceholder)
+) As System.Boolean
+
+
+        If resolved Is Nothing Then
+            resolved = New System.Collections.Generic.List(Of ResolvedPlaceholder)()
+        End If
+
 
         If warnings Is Nothing Then warnings = New System.Collections.Generic.List(Of System.String)()
         If System.String.IsNullOrWhiteSpace(text) Then Return True
@@ -2127,6 +2183,11 @@ Public NotInheritable Class IniImportManager
                 Dim keyRx As New System.Text.RegularExpressions.Regex("\[\[" & System.Text.RegularExpressions.Regex.Escape(name) & "\]\]",
                                                                      System.Text.RegularExpressions.RegexOptions.IgnoreCase)
                 text = keyRx.Replace(text, value)
+                resolved.Add(New ResolvedPlaceholder With {
+                        .Name = name,
+                        .Value = value
+                    })
+
             Else
                 warnings.Add("Warning: Placeholder '[[ " & name & " ]]' was left empty and remains in the configuration." & System.Environment.NewLine &
                              "You can later fill it using the 'Edit .ini Files' feature or directly access the file.")
@@ -2494,6 +2555,112 @@ Public NotInheritable Class IniImportManager
         ApplyMainIniKeyReplaceAppend(plan, existingLines, kv)
         Return plan
     End Function
+
+    ''' <summary>
+    ''' Injects explanatory comment lines for resolved placeholders into a dry-run plan's
+    ''' generated output content.
+    ''' </summary>
+    ''' <remarks>
+    ''' For sectioned INI files (alternate models or special services), the comments are inserted
+    ''' at the beginning of each affected section, preceded and followed by exactly one empty line.
+    ''' For global (non-sectioned) INI files, the comments are appended at the end of the file,
+    ''' also surrounded by exactly one empty line before and after the comment block.
+    '''
+    ''' The injected comments use the format:
+    '''   ; [[placeholder]] = uservalue
+    '''
+    ''' This method modifies <see cref="DryRunPlan.NewFileLines"/> in-place and does not affect
+    ''' parsing, backup generation, or commit semantics.
+    ''' </remarks>
+    ''' <param name="plan">
+    ''' The dry-run plan whose generated output lines will be annotated.
+    ''' </param>
+    ''' <param name="resolved">
+    ''' The list of placeholders that were resolved during import processing.
+    ''' If empty or Nothing, no changes are made.
+    ''' </param>
+    Private Shared Sub InjectPlaceholderCommentsIntoPlan(
+    plan As DryRunPlan,
+    resolved As System.Collections.Generic.List(Of ResolvedPlaceholder)
+)
+        If plan Is Nothing OrElse
+       resolved Is Nothing OrElse
+       resolved.Count = 0 OrElse
+       plan.NewFileLines Is Nothing Then
+            Return
+        End If
+
+        Dim commentLines As New System.Collections.Generic.List(Of System.String)()
+        For Each rp As ResolvedPlaceholder In resolved
+            commentLines.Add("; [[" & rp.Name & "]] = " & rp.Value)
+        Next
+
+        ' ==========================================================
+        ' SECTIONED INI (AlternateModel / SpecialService)
+        ' ==========================================================
+        If plan.Kind = ImportKind.AlternateModel OrElse
+       plan.Kind = ImportKind.SpecialService Then
+
+            For Each sectionName As System.String In plan.SectionNames
+
+                Dim startIndex As System.Int32 = -1
+                Dim endIndex As System.Int32 = -1
+
+                FindSectionRange(plan.NewFileLines, sectionName, startIndex, endIndex)
+                If startIndex < 0 Then Continue For
+
+                Dim insertIndex As System.Int32 = startIndex + 1
+
+                ' Remove all empty lines directly after the section header
+                While insertIndex < plan.NewFileLines.Count AndAlso
+                  plan.NewFileLines(insertIndex).Trim().Length = 0
+                    plan.NewFileLines.RemoveAt(insertIndex)
+                End While
+
+                ' Insert ONE empty line before comments
+                plan.NewFileLines.Insert(insertIndex, "")
+                insertIndex += 1
+
+                ' Insert comments
+                For Each c As System.String In commentLines
+                    plan.NewFileLines.Insert(insertIndex, c)
+                    insertIndex += 1
+                Next
+
+                ' Remove all empty lines after comments
+                While insertIndex < plan.NewFileLines.Count AndAlso
+                  plan.NewFileLines(insertIndex).Trim().Length = 0
+                    plan.NewFileLines.RemoveAt(insertIndex)
+                End While
+
+                ' Insert ONE empty line after comments
+                plan.NewFileLines.Insert(insertIndex, "")
+            Next
+
+        Else
+            ' ==========================================================
+            ' GLOBAL INI
+            ' ==========================================================
+
+            ' Remove trailing empty lines
+            While plan.NewFileLines.Count > 0 AndAlso
+              plan.NewFileLines(plan.NewFileLines.Count - 1).Trim().Length = 0
+                plan.NewFileLines.RemoveAt(plan.NewFileLines.Count - 1)
+            End While
+
+            ' ONE empty line before comments
+            plan.NewFileLines.Add("")
+
+            ' Comments
+            For Each c As System.String In commentLines
+                plan.NewFileLines.Add(c)
+            Next
+
+            ' ONE empty line after comments
+            plan.NewFileLines.Add("")
+        End If
+    End Sub
+
 
     ''' <summary>
     ''' Commits a dry-run plan by writing backups and replacing the target file content (atomic replace when possible).
