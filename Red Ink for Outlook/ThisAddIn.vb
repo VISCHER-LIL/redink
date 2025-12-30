@@ -48,6 +48,7 @@ Imports Microsoft.Office.Interop.Outlook
 Imports Microsoft.Office.Interop.PowerPoint
 Imports Microsoft.Office.Interop.Word
 Imports SharedLibrary.SharedLibrary
+Imports SharedLibrary.SharedLibrary.SharedMethods
 
 Partial Public Class ThisAddIn
 
@@ -576,6 +577,30 @@ Partial Public Class ThisAddIn
         _context.InitialConfigFailed = False
         _context.RDV = "Outlook (" & Version & ")"
         SharedMethods.InitializeConfig(_context, FirstTime, Reload)
+        Try
+            If Globals.Ribbons.Ribbon1 IsNot Nothing Then
+                Globals.Ribbons.Ribbon1.UpdateModelsMenu()
+            End If
+        Catch
+            ' Ribbon may not be ready yet
+        End Try
+    End Sub
+    Public Shared Sub SelectModel(modelNumber As Integer)
+        Try
+            If ModelConfigManager.SelectModel(_context, modelNumber) Then
+                Try
+                    If Globals.Ribbons.Ribbon1 IsNot Nothing Then
+                        Globals.Ribbons.Ribbon1.UpdateModelsMenu()
+                    End If
+                Catch
+                    ' non-critical
+                End Try
+            Else
+                SharedMethods.ShowCustomMessageBox($"Model {modelNumber} is not configured.")
+            End If
+        Catch ex As System.Exception
+            SharedMethods.ShowCustomMessageBox($"Error switching model: {ex.Message}")
+        End Try
     End Sub
 
     ''' <summary>

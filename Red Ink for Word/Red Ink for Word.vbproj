@@ -1,4 +1,4 @@
-﻿<Project ToolsVersion="17.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project ToolsVersion="17.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="..\packages\PdfiumViewer.Native.x86.v8-xfa.2018.4.8.256\build\PdfiumViewer.Native.x86.v8-xfa.props" Condition="Exists('..\packages\PdfiumViewer.Native.x86.v8-xfa.2018.4.8.256\build\PdfiumViewer.Native.x86.v8-xfa.props')" />
   <Import Project="..\packages\PdfiumViewer.Native.x86_64.v8-xfa.2018.4.8.256\build\PdfiumViewer.Native.x86_64.v8-xfa.props" Condition="Exists('..\packages\PdfiumViewer.Native.x86_64.v8-xfa.2018.4.8.256\build\PdfiumViewer.Native.x86_64.v8-xfa.props')" />
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
@@ -48,21 +48,21 @@
     <LoadBehavior>3</LoadBehavior>
   </PropertyGroup>
   <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
-    <ApplicationVersion>1.0.0.700</ApplicationVersion>
+    <ApplicationVersion>1.0.0.706</ApplicationVersion>
     <PublishUrl>..\clickonce\apps\develop\word\</PublishUrl>
     <InstallUrl>https://redink.ai/apps/develop/word/</InstallUrl>
     <ProductName>Red Ink for Word %28Develop%29</ProductName>
     <FriendlyName>Red Ink for Word %28Develop%29</FriendlyName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
-    <ApplicationVersion>1.0.0.201</ApplicationVersion>
+    <ApplicationVersion>1.0.0.706</ApplicationVersion>
     <PublishUrl>..\clickonce\apps\preview\word\</PublishUrl>
     <InstallUrl>https://redink.ai/apps/preview/word/</InstallUrl>
     <ProductName>Red Ink for Word %28Preview%29</ProductName>
     <FriendlyName>Red Ink for Word %28Preview%29</FriendlyName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(RedInkEnvironment)' == 'GA'">
-    <ApplicationVersion>1.0.0.1</ApplicationVersion>
+    <ApplicationVersion>1.0.0.706</ApplicationVersion>
     <PublishUrl>..\clickonce\apps\ga\word\</PublishUrl>
     <InstallUrl>https://redink.ai/apps/ga/word/</InstallUrl>
     <ProductName>Red Ink for Word</ProductName>
@@ -556,6 +556,7 @@
     <Import Include="Microsoft.VisualBasic" />
     <Import Include="System" />
     <Import Include="System.Collections.Generic" />
+    <Import Include="System.Diagnostics" />
     <Import Include="System.Linq" />
     <Import Include="System.Text" />
     <Import Include="System.Xml.Linq" />
@@ -628,6 +629,7 @@
     <Compile Include="ThisAddIn.WebExtension.vb" />
     <Compile Include="ThisAddIn.WordHelpers.vb" />
     <Compile Include="ThisAddIn.WordSearchHelper.vb" />
+    <None Include="Red Ink for Word_TemporaryKey.pfx" />
     <None Include="Resources\Red_Ink_Logo_Large.png" />
     <None Include="Resources\Red_Ink_Logo_Medium.png" />
     <Content Include="VBA Helper\RI_Helper_Code_Word.bas" />
@@ -759,7 +761,7 @@
     <SignManifests>true</SignManifests>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestCertificateThumbprint>50229D23A3CA721BCA66C2ECC258074E6C6D6456</ManifestCertificateThumbprint>
+    <ManifestCertificateThumbprint>5E40483CEA0314AAD471029E15CE26096544C430</ManifestCertificateThumbprint>
   </PropertyGroup>
   <PropertyGroup>
     <ManifestTimestampUrl>http://timestamp.digicert.com</ManifestTimestampUrl>
@@ -783,6 +785,9 @@
     <NoWarn>42016,41999,42017,42018,42019,42032,42036,42020,42021,42022</NoWarn>
     <DebugType>pdbonly</DebugType>
     <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup>
+    <ManifestKeyFile>Red Ink for Word_TemporaryKey.pfx</ManifestKeyFile>
   </PropertyGroup>
   <!-- Include the build rules for a Visual Basic project. -->
   <Import Project="$(MSBuildToolsPath)\Microsoft.VisualBasic.targets" />
@@ -823,3 +828,8 @@
   <Import Project="..\packages\Whisper.net.Runtime.Metal.1.9.0\build\Whisper.net.Runtime.Metal.targets" Condition="Exists('..\packages\Whisper.net.Runtime.Metal.1.9.0\build\Whisper.net.Runtime.Metal.targets')" />
   <Import Project="..\packages\Whisper.net.Runtime.1.9.0\build\Whisper.net.Runtime.targets" Condition="Exists('..\packages\Whisper.net.Runtime.1.9.0\build\Whisper.net.Runtime.targets')" />
 </Project>
+
+
+
+
+

@@ -75,6 +75,17 @@ Partial Class Ribbon1
         Me.RI_Regex = Me.Factory.CreateRibbonButton
         Me.RI_Chat = Me.Factory.CreateRibbonButton
         Me.RI_HelpMe = Me.Factory.CreateRibbonButton
+        Me.ModelsMenu = Me.Factory.CreateRibbonMenu
+        Me.RI_Model1 = Me.Factory.CreateRibbonButton
+        Me.RI_Model2 = Me.Factory.CreateRibbonButton
+        Me.RI_Model3 = Me.Factory.CreateRibbonButton
+        Me.RI_Model4 = Me.Factory.CreateRibbonButton
+        Me.RI_Model5 = Me.Factory.CreateRibbonButton
+        Me.RI_Model6 = Me.Factory.CreateRibbonButton
+        Me.RI_Model7 = Me.Factory.CreateRibbonButton
+        Me.RI_Model8 = Me.Factory.CreateRibbonButton
+        Me.RI_Model9 = Me.Factory.CreateRibbonButton
+        Me.RI_Model10 = Me.Factory.CreateRibbonButton
         Me.Settings = Me.Factory.CreateRibbonButton
         Me.Group2 = Me.Factory.CreateRibbonGroup
         Me.RI_PrimLang2 = Me.Factory.CreateRibbonButton
@@ -120,6 +131,7 @@ Partial Class Ribbon1
         Me.Menu1.Items.Add(Me.Menu2)
         Me.Menu1.Items.Add(Me.RI_Chat)
         Me.Menu1.Items.Add(Me.RI_HelpMe)
+        Me.Menu1.Items.Add(Me.ModelsMenu)
         Me.Menu1.Items.Add(Me.Settings)
         Me.Menu1.Label = "Task"
         Me.Menu1.Name = "Menu1"
@@ -313,6 +325,82 @@ Partial Class Ribbon1
         Me.RI_HelpMe.ScreenTip = "This will call up a chatbot that answers your questions about Red Ink"
         Me.RI_HelpMe.ShowImage = True
         '
+        'ModelsMenu
+        '
+        Me.ModelsMenu.Label = "Models"
+        Me.ModelsMenu.Name = "ModelsMenu"
+        Me.ModelsMenu.ShowImage = True
+        Me.ModelsMenu.Items.Add(Me.RI_Model1)
+        Me.ModelsMenu.Items.Add(Me.RI_Model2)
+        Me.ModelsMenu.Items.Add(Me.RI_Model3)
+        Me.ModelsMenu.Items.Add(Me.RI_Model4)
+        Me.ModelsMenu.Items.Add(Me.RI_Model5)
+        Me.ModelsMenu.Items.Add(Me.RI_Model6)
+        Me.ModelsMenu.Items.Add(Me.RI_Model7)
+        Me.ModelsMenu.Items.Add(Me.RI_Model8)
+        Me.ModelsMenu.Items.Add(Me.RI_Model9)
+        Me.ModelsMenu.Items.Add(Me.RI_Model10)
+        '
+        'RI_Model1
+        '
+        Me.RI_Model1.Label = "Model 1"
+        Me.RI_Model1.Name = "RI_Model1"
+        Me.RI_Model1.Visible = False
+        '
+        'RI_Model2
+        '
+        Me.RI_Model2.Label = "Model 2"
+        Me.RI_Model2.Name = "RI_Model2"
+        Me.RI_Model2.Visible = False
+        '
+        'RI_Model3
+        '
+        Me.RI_Model3.Label = "Model 3"
+        Me.RI_Model3.Name = "RI_Model3"
+        Me.RI_Model3.Visible = False
+        '
+        'RI_Model4
+        '
+        Me.RI_Model4.Label = "Model 4"
+        Me.RI_Model4.Name = "RI_Model4"
+        Me.RI_Model4.Visible = False
+        '
+        'RI_Model5
+        '
+        Me.RI_Model5.Label = "Model 5"
+        Me.RI_Model5.Name = "RI_Model5"
+        Me.RI_Model5.Visible = False
+        '
+        'RI_Model6
+        '
+        Me.RI_Model6.Label = "Model 6"
+        Me.RI_Model6.Name = "RI_Model6"
+        Me.RI_Model6.Visible = False
+        '
+        'RI_Model7
+        '
+        Me.RI_Model7.Label = "Model 7"
+        Me.RI_Model7.Name = "RI_Model7"
+        Me.RI_Model7.Visible = False
+        '
+        'RI_Model8
+        '
+        Me.RI_Model8.Label = "Model 8"
+        Me.RI_Model8.Name = "RI_Model8"
+        Me.RI_Model8.Visible = False
+        '
+        'RI_Model9
+        '
+        Me.RI_Model9.Label = "Model 9"
+        Me.RI_Model9.Name = "RI_Model9"
+        Me.RI_Model9.Visible = False
+        '
+        'RI_Model10
+        '
+        Me.RI_Model10.Label = "Model 10"
+        Me.RI_Model10.Name = "RI_Model10"
+        Me.RI_Model10.Visible = False
+        '
         'Settings
         '
         Me.Settings.Label = "Settings"
@@ -405,6 +493,7 @@ Partial Class Ribbon1
         Me.Menu1.SuperTip = $"{AN} " & ThisAddIn.Version &
                         $" {SharedLibrary.SharedLibrary.SharedMethods.CopyrightNotice} " &
                         "(model: " & ThisAddIn.INI_Model & ")"
+        UpdateModelsMenu()
         UpdateUndoButton()
     End Function
 
@@ -447,6 +536,17 @@ Partial Class Ribbon1
     Friend WithEvents RI_Extractor As RibbonButton
     Friend WithEvents Menu3 As RibbonMenu
     Friend WithEvents RI_Renamer As RibbonButton
+    Friend WithEvents ModelsMenu As RibbonMenu
+    Friend WithEvents RI_Model1 As RibbonButton
+    Friend WithEvents RI_Model2 As RibbonButton
+    Friend WithEvents RI_Model3 As RibbonButton
+    Friend WithEvents RI_Model4 As RibbonButton
+    Friend WithEvents RI_Model5 As RibbonButton
+    Friend WithEvents RI_Model6 As RibbonButton
+    Friend WithEvents RI_Model7 As RibbonButton
+    Friend WithEvents RI_Model8 As RibbonButton
+    Friend WithEvents RI_Model9 As RibbonButton
+    Friend WithEvents RI_Model10 As RibbonButton
 End Class
 
 Partial Class ThisRibbonCollection

@@ -1,4 +1,4 @@
-﻿<Project ToolsVersion="17.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project ToolsVersion="17.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <!--
     This section defines project-level properties.
@@ -44,21 +44,21 @@
     <LoadBehavior>3</LoadBehavior>
   </PropertyGroup>
   <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Develop'">
-    <ApplicationVersion>0.2.0.704</ApplicationVersion>
+    <ApplicationVersion>0.2.0.706</ApplicationVersion>
     <PublishUrl>..\clickonce\apps\develop\excel\</PublishUrl>
     <InstallUrl>https://redink.ai/apps/develop/excel/</InstallUrl>
     <ProductName>Red Ink for Excel %28Develop%29</ProductName>
     <FriendlyName>Red Ink for Excel %28Develop%29</FriendlyName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(RedInkEnvironment)' == 'Preview'">
-    <ApplicationVersion>1.0.0.201</ApplicationVersion>
+    <ApplicationVersion>0.2.0.706</ApplicationVersion>
     <PublishUrl>..\clickonce\apps\preview\excel\</PublishUrl>
     <InstallUrl>https://redink.ai/apps/preview/excel/</InstallUrl>
     <ProductName>Red Ink for Excel %28Preview%29</ProductName>
     <FriendlyName>Red Ink for Excel %28Preview%29</FriendlyName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(RedInkEnvironment)' == 'GA'">
-    <ApplicationVersion>1.0.0.1</ApplicationVersion>
+    <ApplicationVersion>0.2.0.706</ApplicationVersion>
     <PublishUrl>..\clickonce\apps\ga\excel\</PublishUrl>
     <InstallUrl>https://redink.ai/apps/ga/excel/</InstallUrl>
     <ProductName>Red Ink for Excel</ProductName>
@@ -330,6 +330,7 @@
     <Compile Include="ThisAddIn.vb">
       <SubType>Code</SubType>
     </Compile>
+    <None Include="Red Ink for Excel_TemporaryKey.pfx" />
     <None Include="Resources\Red_Ink_Logo.png" />
     <None Include="Resources\Red_Ink_Logo_Large.png" />
     <None Include="Resources\Red_Ink_Logo_Medium.png" />
@@ -397,11 +398,10 @@
     <SignManifests>true</SignManifests>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestKeyFile>
-    </ManifestKeyFile>
+    <ManifestKeyFile>Red Ink for Excel_TemporaryKey.pfx</ManifestKeyFile>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestCertificateThumbprint>50229D23A3CA721BCA66C2ECC258074E6C6D6456</ManifestCertificateThumbprint>
+    <ManifestCertificateThumbprint>57EEC28D19491A027A48325DADFCB44B40614B27</ManifestCertificateThumbprint>
   </PropertyGroup>
   <PropertyGroup>
     <ManifestTimestampUrl>http://timestamp.digicert.com</ManifestTimestampUrl>
@@ -445,3 +445,4 @@
     </VisualStudio>
   </ProjectExtensions>
 </Project>
+

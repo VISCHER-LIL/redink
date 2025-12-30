@@ -208,6 +208,30 @@ Partial Public Class ThisAddIn
         _context.InitialConfigFailed = False
         _context.RDV = "Excel (" & Version & ")"
         SharedMethods.InitializeConfig(_context, FirstTime, Reload)
+        Try
+            If Globals.Ribbons.Ribbon1 IsNot Nothing Then
+                Globals.Ribbons.Ribbon1.UpdateModelsMenu()
+            End If
+        Catch
+            ' Ribbon may not be ready; ignore
+        End Try
+    End Sub
+    Public Shared Sub SelectModel(modelNumber As Integer)
+        Try
+            If ModelConfigManager.SelectModel(_context, modelNumber) Then
+                Try
+                    If Globals.Ribbons.Ribbon1 IsNot Nothing Then
+                        Globals.Ribbons.Ribbon1.UpdateModelsMenu()
+                    End If
+                Catch
+                    ' non-critical
+                End Try
+            Else
+                SharedMethods.ShowCustomMessageBox($"Model {modelNumber} is not configured.")
+            End If
+        Catch ex As Exception
+            SharedMethods.ShowCustomMessageBox($"Error switching model: {ex.Message}")
+        End Try
     End Sub
     Private Function INIValuesMissing() As Boolean
         Return SharedMethods.INIValuesMissing(_context)

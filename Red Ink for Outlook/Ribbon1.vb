@@ -3,6 +3,7 @@
 
 Imports Microsoft.Office.Tools.Ribbon
 Imports Microsoft.Win32
+Imports SharedLibrary.SharedLibrary
 Public Class Ribbon1
 
     Private Enum OfficeTheme
@@ -159,6 +160,84 @@ Public Class Ribbon1
     Private Sub RI_HelpMe_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_HelpMe.Click
         Globals.ThisAddIn.HelpMeInky()
     End Sub
+
+    Private Sub RI_Model1_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Model1.Click
+        Globals.ThisAddIn.SelectModel(1)
+    End Sub
+
+    Private Sub RI_Model2_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Model2.Click
+        Globals.ThisAddIn.SelectModel(2)
+    End Sub
+
+    Private Sub RI_Model3_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Model3.Click
+        Globals.ThisAddIn.SelectModel(3)
+    End Sub
+
+    Private Sub RI_Model4_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Model4.Click
+        Globals.ThisAddIn.SelectModel(4)
+    End Sub
+
+    Private Sub RI_Model5_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Model5.Click
+        Globals.ThisAddIn.SelectModel(5)
+    End Sub
+
+    Private Sub RI_Model6_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Model6.Click
+        Globals.ThisAddIn.SelectModel(6)
+    End Sub
+
+    Private Sub RI_Model7_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Model7.Click
+        Globals.ThisAddIn.SelectModel(7)
+    End Sub
+
+    Private Sub RI_Model8_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Model8.Click
+        Globals.ThisAddIn.SelectModel(8)
+    End Sub
+
+    Private Sub RI_Model9_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Model9.Click
+        Globals.ThisAddIn.SelectModel(9)
+    End Sub
+
+    Private Sub RI_Model10_Click(sender As Object, e As RibbonControlEventArgs) Handles RI_Model10.Click
+        Globals.ThisAddIn.SelectModel(10)
+    End Sub
+
+    Public Sub UpdateModelsMenu()
+        Try
+            Dim available = ModelConfigManager.GetAvailableModels()
+            Dim current = ModelConfigManager.GetCurrentModelNumber()
+
+            For i = 1 To 10
+                Dim btn = GetModelButton(i)
+                If btn Is Nothing Then Continue For
+
+                If available.Contains(i) Then
+                    btn.Visible = True
+                    Dim label = ModelConfigManager.GetModelDisplayName(i)
+                    btn.Label = If(i = current, label & " *", label)
+                Else
+                    btn.Visible = False
+                End If
+            Next
+        Catch
+            ' non-critical
+        End Try
+    End Sub
+
+    Private Function GetModelButton(i As Integer) As RibbonButton
+        Select Case i
+            Case 1 : Return RI_Model1
+            Case 2 : Return RI_Model2
+            Case 3 : Return RI_Model3
+            Case 4 : Return RI_Model4
+            Case 5 : Return RI_Model5
+            Case 6 : Return RI_Model6
+            Case 7 : Return RI_Model7
+            Case 8 : Return RI_Model8
+            Case 9 : Return RI_Model9
+            Case 10 : Return RI_Model10
+        End Select
+        Return Nothing
+    End Function
 
 End Class
 

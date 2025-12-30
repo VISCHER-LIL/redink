@@ -41,6 +41,7 @@ Imports System.Threading
 Imports System.Threading.Tasks
 Imports System.Windows.Forms
 Imports SharedLibrary.SharedLibrary
+Imports SharedLibrary.SharedLibrary.SharedMethods
 Imports System.Globalization
 
 Partial Public Class ThisAddIn
@@ -446,7 +447,39 @@ Partial Public Class ThisAddIn
         _context.InitialConfigFailed = False
         _context.RDV = "Word (" & Version & ")"
         SharedMethods.InitializeConfig(_context, FirstTime, Reload)
+        
+        ' Update the models menu if ribbon is loaded
+        Try
+            If Globals.Ribbons.Ribbon1 IsNot Nothing Then
+                Globals.Ribbons.Ribbon1.UpdateModelsMenu()
+            End If
+        Catch
+            ' Ribbon may not be loaded yet; ignore
+        End Try
     End Sub
+
+    ''' <summary>
+    ''' Selects a model by number and updates the primary configuration.
+    ''' Used by the ribbon \"Models\" menu.
+    ''' </summary>
+    Public Shared Sub SelectModel(modelNumber As Integer)
+        Try
+            If ModelConfigManager.SelectModel(_context, modelNumber) Then
+                Try
+                    If Globals.Ribbons.Ribbon1 IsNot Nothing Then
+                        Globals.Ribbons.Ribbon1.UpdateModelsMenu()
+                    End If
+                Catch
+                    ' Non-critical UI update failure
+                End Try
+            Else
+                SharedMethods.ShowCustomMessageBox($"Model {modelNumber} is not configured.")
+            End If
+        Catch ex As Exception
+            SharedMethods.ShowCustomMessageBox($"Error switching model: {ex.Message}")
+        End Try
+    End Sub
+
     Private Function INIValuesMissing() As Boolean
         Return SharedMethods.INIValuesMissing(_context)
     End Function
