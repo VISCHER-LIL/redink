@@ -836,7 +836,8 @@ Partial Public Class ThisAddIn
             {"Language2", "Default translation language 2"},
             {"PromptLibPath", "Prompt library file"},
             {"PromptLibPathLocal", "Prompt library file (local)"},
-            {"DefaultPrefix", "Default prefix to use in 'Freestyle'"}
+            {"DefaultPrefix", "Default prefix to use in 'Freestyle'"},
+            {"Location", "Location information to use, e.g., in 'Freestyle'"}
         }
         Dim SettingsTips As New Dictionary(Of String, String) From {
             {"Temperature", "The higher, the more creative the LLM will be (0.0-2.0)"},
@@ -852,7 +853,8 @@ Partial Public Class ThisAddIn
             {"Language2", "The language (in English) that will be used for the second quick access button in the ribbon"},
             {"PromptLibPath", "The filename (including path, support environmental variables) for your prompt library (if any)"},
             {"PromptLibPathLocal", "The filename (including path, support environmental variables) for your local prompt library (if any)"},
-            {"DefaultPrefix", "You can define here the default prefix to use within 'Freestyle' if no other prefix is used (will be added authomatically)."}
+            {"DefaultPrefix", "You can define here the default prefix to use within 'Freestyle' if no other prefix is used (will be added authomatically)."},
+            {"Location", "Provide location information (e.g., 'We are in Zurich, Switzerland') to be used in 'Freestyle', chatbot and some other prompts that contain {Location} to get more location specific results."}
         }
         ShowSettingsWindow(Settings, SettingsTips)
         Dim splash As New SplashScreen("Updating menu following your changes ...")

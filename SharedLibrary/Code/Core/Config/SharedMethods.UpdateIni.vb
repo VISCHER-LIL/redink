@@ -1,38 +1,148 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
-
+'
 ' =============================================================================
-' File: SharedMethods.UpdateIni.vb
-' Purpose: Provides automatic INI configuration file updates from local or remote
-'          sources with digital signature verification and user approval workflow.
+' File:    SharedMethods.UpdateIni.vb
+' Purpose: Automated INI configuration update subsystem with optional Ed25519
+'          signature validation, interactive approval UI, silent (policy-driven)
+'          application modes, persistent ignore rules, and audit logging.
 '
-' Architecture:
-'  - Context-Based Configuration: All INI update settings are accessed via
-'    ISharedContext (_iniUpdateContext), which is set at the start of
-'    CheckForIniUpdates() and used by all helper methods.
-'  - Update Sources: Supports local file paths, network shares (UNC), and HTTP(S) URLs.
-'    Remote sources can be disabled via INI_UpdateIniAllowRemote.
-'  - Digital Signatures: Ed25519 signatures via BouncyCastle for authenticity
-'    verification. When signature verification is enabled, a .sig file is loaded
-'    alongside the update file. If no public key is configured, verification is skipped
-'    and a warning is reported.
-'  - Silent Update Modes: Supports five security levels (SilentUpdateSecurityLevel enum):
-'      0=Disabled (interactive), 1=SafeOnly, 2=SignedOnly, 3=LocalTrusted, 4=All
-'    Silent mode requires registry permission (PermitSilentIniUpdates).
-'  - User Approval: In interactive mode, shows changes in a dialog allowing
-'    per-parameter approval/rejection with visual highlighting of suspicious changes.
-'  - Ignore List: Persists rejected parameters in My.Settings for future exclusion.
-'    Override rules (INI_UpdateIniIgnoreOverride) allow file/segment/key-specific control.
-'  - Protected Keys: Keys starting with "Update" are not modified by the auto-update mechanism.
-'  - Three INI Files Supported:
-'      1. redink.ini (main config) - uses INI_UpdateSource from context
-'      2. AlternateModelPath (segmented) - each segment has its own UpdateSource
-'      3. SpecialServicePath (segmented) - each segment has its own UpdateSource
+' Architectural Overview
+' ----------------------
+' This module is implemented as a `SharedLibrary.SharedMethods` partial class and is
+' driven by a context object (`ISharedContext`) supplied at runtime.
 '
-' Registry Keys (optional):
-'  - RegPath_PermitSilentInitUpdates: Must be "yes"/"true"/"1" to enable silent mode,
-'    if required by noSilentINIUpdatesWithoutRegistryFlag (see SharedMethods.Constants.OwnBuild.Security.vb).
-'    (note: name is defined by the constant used in code; log output refers to "PermitSilentIniUpdates").
+' It follows a "detect → filter → decide → apply" pipeline:
+'   1) Detect differences between local INI files and configured update sources.
+'   2) Collect signature/download diagnostics and track failed sources.
+'   3) Filter out ignored changes (with override rules).
+'   4) Decide which changes may be applied (silent security level or interactive UI).
+'   5) Create a timestamped backup and write updates back into the local INI file(s).
+'   6) Log all relevant actions (security events are forced to log).
+'
+' Primary Entry Point (startup integration)
+' ----------------------------------------
+' - `Public Shared Function CheckForIniUpdates(ByRef context As ISharedContext) As Boolean`
+'     * assigns `_iniUpdateContext`
+'     * enforces master switch and client authorization
+'     * resolves and checks up to three INI targets
+'     * drives silent vs interactive update flow
+'
+' Supported INI Targets (local files inspected and possibly modified)
+' ------------------------------------------------------------------
+' - Main INI: resolved via `GetDefaultINIPath(context.RDV)` and update source from:
+'     * `_iniUpdateContext.INI_UpdateSource`
+' - Alternate model INI: local file from:
+'     * `context.INI_AlternateModelPath` (segmented file; `UpdateSource` per segment)
+' - Special service INI: local file from:
+'     * `context.INI_SpecialServicePath` (segmented file; `UpdateSource` per segment)
+'
+' Update Source Format (global and segmented)
+' ------------------------------------------
+' - Parsing:
+'     * `Private Shared Function ParseGlobalUpdateSource(updateSource As String) As IniSegment`
+'     * `Private Shared Sub ParseUpdateSource(segment As IniSegment)`
+' - Expected format:
+'     `path; keys; publicKey`
+'   where `keys` may include:
+'     - `all` (all remote keys), `new` (new keys only), explicit keys, `-key` exclusions
+'
+' Change Detection Pipeline (key code points)
+' ------------------------------------------
+' - INI parsing:
+'     * `Private Shared Function ParseIniFile(filePath As String) As ParsedIniFile`
+' - Remote content loading (file/UNC/HTTP(S)):
+'     * `Private Shared Function LoadUpdateSourceContent(sourcePath As String,
+'                                                       publicKey As String,
+'                                                       signatureErrors As List(Of String),
+'                                                       Optional failedSources As HashSet(Of String) = Nothing) As String`
+' - Comparison:
+'     * `Private Shared Function CheckSingleIniFile(...) As List(Of IniParameterChange)`
+'     * `Private Shared Function CheckSegmentedIniFile(...) As List(Of IniParameterChange)`
+' - Segment extraction / flat parsing helpers:
+'     * `Private Shared Function FindSegmentInContent(content As String, segmentName As String) As IniSegment`
+'     * `Private Shared Function ParseIniContentToDict(content As String) As Dictionary(Of String, String)`
+' - Suspicious change classification (URL/path-like value changes):
+'     * `Private Shared Function IsPathOrUrlChange(oldValue As String, newValue As String) As Boolean`
+'
+' Protected Keys
+' --------------
+' - `Private Shared Function IsProtectedKey(key As String) As Boolean`
+'   Keys starting with `"Update"` are never modified by this subsystem.
+'
+' Signature Verification (Ed25519)
+' -------------------------------
+' - Verification is performed inside `LoadUpdateSourceContent` when enabled.
+' - Core verifier:
+'     * `Private Shared Function VerifyEd25519Signature(content As String,
+'                                                      signatureBase64 As String,
+'                                                      publicKeyBase64 As String) As Boolean`
+' - File-level helper (manual verification UI uses this):
+'     * `Public Shared Function VerifySignatureFile(filePath As String, publicKeyBase64 As String) As Boolean`
+' - Admin tooling (key generation, signing, verification, batch signing):
+'     * `Public Shared Function GenerateEd25519KeyPair() As (PublicKey As String, PrivateKey As String)`
+'     * `Public Shared Function SignUpdateFile(filePath As String, base64PrivateKey As String) As Boolean`
+'     * `Public Shared Sub ShowSignatureManagementDialog()`
+'     * `Public Shared Function BatchSignFiles(filePaths As String(), base64PrivateKey As String) As Dictionary(Of String, String)`
+'     * `Public Shared Sub ShowBatchSigningDialog()`
+'
+' Silent vs Interactive Application
+' --------------------------------
+' - Silent mode decision and filtering:
+'     * `Public Enum SilentUpdateSecurityLevel`
+'     * `Private Shared ReadOnly Property SilentMode As SilentUpdateSecurityLevel`
+'     * `Private Shared Function ProcessSilentUpdates(...) As Boolean`
+' - Interactive approval UI:
+'     * `Private Shared Function ShowUpdateApprovalDialog(changes As List(Of IniParameterChange)) As UpdateApprovalResult`
+'     * `Private Shared Sub ShowIgnoreConfirmationDialog(rejectedChanges As List(Of IniParameterChange))`
+' - Signature diagnostics UI (interactive mode only):
+'     * `Private Shared Sub ShowSignatureErrorDialog(errors As List(Of String))`
+'
+' Ignore List / Overrides (persisted via My.Settings)
+' --------------------------------------------------
+' - Rule parsing and application:
+'     * `Private Shared Function ParseIgnoreOverrideRules(overrideValue As String) As List(Of IgnoreOverrideRule)`
+'     * `Private Shared Function FilterIgnoredParameters(changes As List(Of IniParameterChange)) As List(Of IniParameterChange)`
+' - Storage helpers:
+'     * `Private Shared Function GetIgnoreKey(change As IniParameterChange) As String`
+'     * `Private Shared Function GetIgnoreListForFile(fileName As String) As HashSet(Of String)`
+'     * `Private Shared Sub SaveIgnoreListForFile(fileName As String, ignoreList As HashSet(Of String))`
+'     * `Private Shared Sub AddToIgnoreList(changes As List(Of IniParameterChange))`
+' - UI management entry point:
+'     * `Public Shared Sub ShowIgnoredParametersDialog()`
+' - Freestyle command string constant:
+'     * `Private Const IniUpdateIgnored As String = "iniupdateignored"`
+'
+' Applying Updates + Backups
+' --------------------------
+' - Apply changes to disk (includes adding new keys and segment-aware insertion):
+'     * `Private Shared Sub ApplyApprovedUpdates(changes As List(Of IniParameterChange), context As ISharedContext)`
+' - Backup creation:
+'     * `Private Shared Function CreateTimestampedBackup(filePath As String) As String`
+'
+' Client Authorization
+' --------------------
+' - Identifier:
+'     * `Public Shared Function GetCurrentClientIdentifier() As String`
+' - Permission check:
+'     * `Private Shared Function IsClientAllowedToUpdate() As Boolean`
+'
+' Logging / Audit Trail
+' ---------------------
+' - Central logger:
+'     * `Private Shared Sub LogIniUpdateEvent(eventType As String, details As String, Optional alwaysLog As Boolean = False)`
+' - Integration target:
+'     * `UpdateHandler.WriteUpdateLog(...)`
+'
+' Dialog Ownership / Placement (UI robustness in Office hosts)
+' -----------------------------------------------------------
+' - Owner resolution:
+'     * `Private Shared Function GetDialogOwner() As IWin32Window`
+' - Placement:
+'     * `Private Shared Sub CenterFormOnOwnerScreen(form As Form, owner As IWin32Window)`
+' - Win32 P/Invokes used:
+'     * `GetForegroundWindow`, `MonitorFromWindow`, `GetMonitorInfo`
+'
 ' =============================================================================
 
 
@@ -164,25 +274,6 @@ Namespace SharedLibrary
 #Region "Window Owner Helper"
 
         ''' <summary>
-        ''' Helper class to wrap a window handle for use as dialog owner.
-        ''' </summary>
-        Private Class WindowWrapper
-            Implements IWin32Window
-
-            Private ReadOnly _hwnd As IntPtr
-
-            Public Sub New(handle As IntPtr)
-                _hwnd = handle
-            End Sub
-
-            Public ReadOnly Property Handle As IntPtr Implements IWin32Window.Handle
-                Get
-                    Return _hwnd
-                End Get
-            End Property
-        End Class
-
-        ''' <summary>
         ''' Gets the owner window for modal dialogs.
         ''' Uses UpdateHandler.HostHandle which is set during add-in startup.
         ''' </summary>
@@ -209,6 +300,92 @@ Namespace SharedLibrary
         Private Shared Function GetForegroundWindow() As IntPtr
         End Function
 
+        <System.Runtime.InteropServices.DllImport("user32.dll")>
+        Private Shared Function MonitorFromWindow(hwnd As IntPtr, dwFlags As UInteger) As IntPtr
+        End Function
+
+        <System.Runtime.InteropServices.DllImport("user32.dll", CharSet:=System.Runtime.InteropServices.CharSet.Auto)>
+        Private Shared Function GetMonitorInfo(hMonitor As IntPtr, ByRef lpmi As MONITORINFO) As Boolean
+        End Function
+
+        Private Const MONITOR_DEFAULTTONEAREST As UInteger = &H2UI
+
+        <System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)>
+        Private Structure MONITORINFO
+            Public cbSize As Integer
+            Public rcMonitor As RECT
+            Public rcWork As RECT
+            Public dwFlags As Integer
+        End Structure
+
+        <System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)>
+        Private Structure RECT
+            Public Left As Integer
+            Public Top As Integer
+            Public Right As Integer
+            Public Bottom As Integer
+        End Structure
+
+        ''' <summary>
+        ''' Positions a form centered on the same screen as the owner window.
+        ''' </summary>
+        ''' <param name="form">The form to position.</param>
+        ''' <param name="owner">The owner window used to determine the target screen.</param>
+        Private Shared Sub CenterFormOnOwnerScreen(form As Form, owner As IWin32Window)
+            Try
+                If form Is Nothing Then Return
+
+                Dim ownerHandle As IntPtr = IntPtr.Zero
+                If owner IsNot Nothing Then
+                    ownerHandle = owner.Handle
+                End If
+
+                If ownerHandle = IntPtr.Zero Then
+                    ownerHandle = GetForegroundWindow()
+                End If
+
+                If ownerHandle = IntPtr.Zero Then
+                    ' Fallback to primary screen center
+                    form.StartPosition = FormStartPosition.CenterScreen
+                    Return
+                End If
+
+                ' Get the monitor that contains the owner window
+                Dim hMonitor As IntPtr = MonitorFromWindow(ownerHandle, MONITOR_DEFAULTTONEAREST)
+                If hMonitor = IntPtr.Zero Then
+                    form.StartPosition = FormStartPosition.CenterScreen
+                    Return
+                End If
+
+                Dim mi As New MONITORINFO()
+                mi.cbSize = System.Runtime.InteropServices.Marshal.SizeOf(GetType(MONITORINFO))
+
+                If Not GetMonitorInfo(hMonitor, mi) Then
+                    form.StartPosition = FormStartPosition.CenterScreen
+                    Return
+                End If
+
+                ' Use the working area (excludes taskbar)
+                Dim workArea As New Rectangle(
+                    mi.rcWork.Left,
+                    mi.rcWork.Top,
+                    mi.rcWork.Right - mi.rcWork.Left,
+                    mi.rcWork.Bottom - mi.rcWork.Top
+                )
+
+                ' Center the form on this monitor
+                form.StartPosition = FormStartPosition.Manual
+                form.Location = New Point(
+                    workArea.Left + (workArea.Width - form.Width) \ 2,
+                    workArea.Top + (workArea.Height - form.Height) \ 2
+                )
+
+            Catch
+                ' Fallback
+                form.StartPosition = FormStartPosition.CenterScreen
+            End Try
+        End Sub
+
 #End Region
 
 #Region "Main Entry Point"
@@ -227,6 +404,12 @@ Namespace SharedLibrary
                 ' Check master switch
                 If Not _iniUpdateContext.INI_UpdateIni Then
                     Debug.WriteLine("INI Update: Disabled via _iniUpdateContext.INI_UpdateIni")
+                    Return False
+                End If
+
+                ' Check if this client is allowed to perform updates
+                If Not IsClientAllowedToUpdate() Then
+                    Debug.WriteLine("INI Update: This client is not authorized to perform updates")
                     Return False
                 End If
 
@@ -552,13 +735,17 @@ Namespace SharedLibrary
             Dim form As New Form() With {
                 .Text = $"{AN} - Signature Validation Errors",
                 .Size = New Size(850, 520),
-                .StartPosition = FormStartPosition.CenterScreen,
+                .StartPosition = FormStartPosition.Manual,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
                 .MinimumSize = New Size(750, 450),
                 .AutoScaleMode = AutoScaleMode.Dpi,
                 .TopMost = True
             }
+
+            ' Position on the correct screen
+            Dim owner = GetDialogOwner()
+            CenterFormOnOwnerScreen(form, owner)
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -1005,6 +1192,13 @@ Namespace SharedLibrary
                 If String.IsNullOrWhiteSpace(sourceInfo.UpdatePath) Then Return changes
                 If sourceInfo.UpdateKeys Is Nothing OrElse sourceInfo.UpdateKeys.Count = 0 Then Return changes
 
+                ' Circular reference check
+                If IsSameFile(localPath, sourceInfo.UpdatePath) Then
+                    Debug.WriteLine($"INI Update: Skipping self-referencing update source for {fileName}")
+                    LogIniUpdateEvent("Skipped", $"Self-referencing UpdateSource detected for {fileName} - update source points to itself")
+                    Return changes
+                End If
+
                 ' Load remote content (with signature validation)
                 Dim remoteContent = LoadUpdateSourceContent(sourceInfo.UpdatePath, sourceInfo.PublicKey, signatureErrors, failedSources)
                 If String.IsNullOrWhiteSpace(remoteContent) Then Return changes
@@ -1122,6 +1316,13 @@ Namespace SharedLibrary
                     If String.IsNullOrWhiteSpace(segment.UpdatePath) Then Continue For
                     If segment.UpdateKeys Is Nothing OrElse segment.UpdateKeys.Count = 0 Then Continue For
 
+                    ' Circular reference Check
+                    If IsSameFile(localPath, segment.UpdatePath) Then
+                        Debug.WriteLine($"INI Update: Skipping self-referencing update source for {fileName}[{segment.Name}]")
+                        LogIniUpdateEvent("Skipped", $"Self-referencing UpdateSource in segment [{segment.Name}] of {fileName}")
+                        Continue For
+                    End If
+
                     ' Track update source for LocalTrusted mode
                     ' Use segment-specific key: "filename|segmentname" to handle multiple segments
                     If updateSources IsNot Nothing Then
@@ -1214,6 +1415,42 @@ Namespace SharedLibrary
             End Try
 
             Return changes
+        End Function
+
+        ''' <summary>
+        ''' Determines whether two paths refer to the same file (handles environment variables, relative paths, UNC variations).
+        ''' </summary>
+        ''' <param name="path1">First path to compare.</param>
+        ''' <param name="path2">Second path to compare.</param>
+        ''' <returns><c>True</c> if both paths resolve to the same file; otherwise <c>False</c>.</returns>
+        Private Shared Function IsSameFile(path1 As String, path2 As String) As Boolean
+            If String.IsNullOrWhiteSpace(path1) OrElse String.IsNullOrWhiteSpace(path2) Then
+                Return False
+            End If
+
+            ' Skip comparison for remote URLs - they can't be the same as local files
+            If path1.StartsWith("http://", StringComparison.OrdinalIgnoreCase) OrElse
+       path1.StartsWith("https://", StringComparison.OrdinalIgnoreCase) OrElse
+       path2.StartsWith("http://", StringComparison.OrdinalIgnoreCase) OrElse
+       path2.StartsWith("https://", StringComparison.OrdinalIgnoreCase) Then
+                Return False
+            End If
+
+            Try
+                ' Expand environment variables and resolve to full paths
+                Dim expanded1 = ExpandEnvironmentVariables(path1)
+                Dim expanded2 = ExpandEnvironmentVariables(path2)
+
+                ' Get canonical full paths (resolves relative paths, normalizes separators)
+                Dim fullPath1 = Path.GetFullPath(expanded1)
+                Dim fullPath2 = Path.GetFullPath(expanded2)
+
+                ' Compare case-insensitively (Windows file system)
+                Return String.Equals(fullPath1, fullPath2, StringComparison.OrdinalIgnoreCase)
+            Catch
+                ' If path resolution fails, fall back to simple string comparison
+                Return String.Equals(path1, path2, StringComparison.OrdinalIgnoreCase)
+            End Try
         End Function
 
         ''' <summary>
@@ -1627,13 +1864,17 @@ Namespace SharedLibrary
             Dim form As New Form() With {
                 .Text = $"{AN} - Manage Ignored Update Parameters",
                 .Size = New Size(750, 520),
-                .StartPosition = FormStartPosition.CenterScreen,
+                .StartPosition = FormStartPosition.Manual,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
                 .MinimumSize = New Size(550, 400),
                 .AutoScaleMode = AutoScaleMode.Dpi,
                 .TopMost = True
             }
+
+            ' Position on the correct screen
+            Dim owner = GetDialogOwner()
+            CenterFormOnOwnerScreen(form, owner)
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -1787,13 +2028,18 @@ Namespace SharedLibrary
             Dim form As New Form() With {
                 .Text = $"{AN} - Configuration Updates Available",
                 .Size = New Size(950, 600),
-                .StartPosition = FormStartPosition.CenterScreen,
+                .StartPosition = FormStartPosition.Manual,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
                 .MinimumSize = New Size(800, 450),
                 .AutoScaleMode = AutoScaleMode.Dpi,
                 .TopMost = True
             }
+
+            ' Position on the correct screen
+            Dim owner = GetDialogOwner()
+            CenterFormOnOwnerScreen(form, owner)
+
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -2009,13 +2255,18 @@ Namespace SharedLibrary
             Dim form As New Form() With {
         .Text = $"{AN} - Ignore Future Updates?",
         .Size = New Size(750, 480),
-        .StartPosition = FormStartPosition.CenterScreen,
+        .StartPosition = FormStartPosition.Manual,
         .FormBorderStyle = FormBorderStyle.Sizable,
         .Font = New Font("Segoe UI", 9.0F),
         .MinimumSize = New Size(550, 350),
         .AutoScaleMode = AutoScaleMode.Dpi,
         .TopMost = True
     }
+
+            ' Position on the correct screen
+            Dim owner = GetDialogOwner()
+            CenterFormOnOwnerScreen(form, owner)
+
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -2138,7 +2389,7 @@ Namespace SharedLibrary
 #Region "Apply Updates"
 
         ''' <summary>
-        ''' Writes approved changes to the corresponding local INI files and creates backups via <c>.bak</c>.
+        ''' Writes approved changes to the corresponding local INI files and creates timestamped backups.
         ''' </summary>
         ''' <param name="changes">Approved changes to apply.</param>
         ''' <param name="context">Shared context used to resolve INI file paths.</param>
@@ -2154,15 +2405,20 @@ Namespace SharedLibrary
                 Dim mainIniPath = GetDefaultINIPath(context.RDV)
                 Dim mainIniName = Path.GetFileName(mainIniPath)
 
+                ' Check main INI file
                 If fileName.Equals(mainIniName, StringComparison.OrdinalIgnoreCase) Then
                     filePath = mainIniPath
-                ElseIf Not String.IsNullOrWhiteSpace(context.INI_AlternateModelPath) Then
+                End If
+
+                ' Check AlternateModelPath (independent check, not ElseIf)
+                If filePath Is Nothing AndAlso Not String.IsNullOrWhiteSpace(context.INI_AlternateModelPath) Then
                     Dim altPath = ExpandEnvironmentVariables(context.INI_AlternateModelPath)
                     If Path.GetFileName(altPath).Equals(fileName, StringComparison.OrdinalIgnoreCase) Then
                         filePath = altPath
                     End If
                 End If
 
+                ' Check SpecialServicePath (independent check)
                 If filePath Is Nothing AndAlso Not String.IsNullOrWhiteSpace(context.INI_SpecialServicePath) Then
                     Dim svcPath = ExpandEnvironmentVariables(context.INI_SpecialServicePath)
                     If Path.GetFileName(svcPath).Equals(fileName, StringComparison.OrdinalIgnoreCase) Then
@@ -2170,14 +2426,23 @@ Namespace SharedLibrary
                     End If
                 End If
 
-                If String.IsNullOrWhiteSpace(filePath) OrElse Not File.Exists(filePath) Then Continue For
+                If String.IsNullOrWhiteSpace(filePath) OrElse Not File.Exists(filePath) Then
+                    Debug.WriteLine($"ApplyApprovedUpdates: Could not resolve path for file '{fileName}' - skipping")
+                    Continue For
+                End If
 
                 Try
-                    ' Create backup
-                    RenameFileToBak(filePath)
+                    ' Create timestamped backup (preserves original extension)
+                    Dim backupPath = CreateTimestampedBackup(filePath)
+                    If String.IsNullOrWhiteSpace(backupPath) Then
+                        Debug.WriteLine($"Warning: Could not create backup for {filePath}")
+                        LogIniUpdateEvent("Backup Warning", $"Could not create backup for {filePath}")
+                    Else
+                        LogIniUpdateEvent("Backup Created", $"{filePath} → {backupPath}")
+                    End If
 
-                    ' Read current content from backup
-                    Dim lines = File.ReadAllLines(filePath & ".bak", Encoding.UTF8).ToList()
+                    ' Read current content from original file
+                    Dim lines = File.ReadAllLines(filePath, Encoding.UTF8).ToList()
                     Dim updatedLines As New List(Of String)()
 
                     ' Build lookup of changes by segment
@@ -2298,17 +2563,105 @@ Namespace SharedLibrary
                 Catch ex As Exception
                     Debug.WriteLine($"Error applying updates to {filePath}: {ex.Message}")
                     ShowCustomMessageBox($"Failed to update {fileName}: {ex.Message}")
-                    ' Try to restore backup
-                    Try
-                        If File.Exists(filePath & ".bak") Then
-                            If File.Exists(filePath) Then File.Delete(filePath)
-                            File.Move(filePath & ".bak", filePath)
-                        End If
-                    Catch
-                    End Try
                 End Try
             Next
         End Sub
+
+#End Region
+
+
+#Region "Client Identification"
+
+        ''' <summary>
+        ''' Returns the current client identifier used for UpdateClients matching.
+        ''' This uses the Windows computer name (Environment.MachineName).
+        ''' </summary>
+        ''' <returns>The client identifier string (computer name).</returns>
+        Public Shared Function GetCurrentClientIdentifier() As String
+            Try
+                Return Environment.MachineName
+            Catch
+                Return String.Empty
+            End Try
+        End Function
+
+        ''' <summary>
+        ''' Determines whether the current client is allowed to perform INI updates
+        ''' based on the UpdateClients parameter.
+        ''' </summary>
+        ''' <returns>True if this client can update; False otherwise.</returns>
+        Private Shared Function IsClientAllowedToUpdate() As Boolean
+            Try
+                ' Get the UpdateClients setting from context
+                Dim updateClients As String = _iniUpdateContext.INI_UpdateClients
+
+                ' If not configured, any client can update
+                If String.IsNullOrWhiteSpace(updateClients) Then
+                    Return True
+                End If
+
+                Dim currentClient As String = GetCurrentClientIdentifier()
+                If String.IsNullOrWhiteSpace(currentClient) Then
+                    LogIniUpdateEvent("Client Check", "Could not determine current client identifier - allowing update")
+                    Return True
+                End If
+
+                ' Parse the comma-separated list of allowed clients
+                Dim allowedClients = updateClients.Split(","c).
+                    Select(Function(c) c.Trim()).
+                    Where(Function(c) Not String.IsNullOrWhiteSpace(c)).
+                    ToList()
+
+                If allowedClients.Count = 0 Then
+                    Return True
+                End If
+
+                ' Check if current client is in the allowed list (case-insensitive)
+                Dim isAllowed = allowedClients.Any(Function(c) c.Equals(currentClient, StringComparison.OrdinalIgnoreCase))
+
+                If Not isAllowed Then
+                    LogIniUpdateEvent("Client Check",
+                        $"Client '{currentClient}' is not in UpdateClients list: {updateClients} - skipping update")
+                End If
+
+                Return isAllowed
+
+            Catch ex As Exception
+                Debug.WriteLine($"Error checking client authorization: {ex.Message}")
+                Return True ' On error, allow update to proceed
+            End Try
+        End Function
+
+#End Region
+
+#Region "Timestamped Backup Helper"
+
+        ''' <summary>
+        ''' Creates a timestamped backup of the specified file, preserving the original extension.
+        ''' Format: filename.ext_yyyyMMdd_HHmmss_fff.bak
+        ''' </summary>
+        ''' <param name="filePath">Path to the file to back up.</param>
+        ''' <returns>The path to the created backup file, or Nothing on failure.</returns>
+        Private Shared Function CreateTimestampedBackup(filePath As String) As String
+            Try
+                If String.IsNullOrWhiteSpace(filePath) OrElse Not File.Exists(filePath) Then
+                    Return Nothing
+                End If
+
+                Dim directory As String = Path.GetDirectoryName(filePath)
+                Dim fileName As String = Path.GetFileName(filePath)
+                Dim timestamp As String = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff")
+                Dim backupFileName As String = $"{fileName}_{timestamp}.bak"
+                Dim backupPath As String = Path.Combine(directory, backupFileName)
+
+                File.Copy(filePath, backupPath, overwrite:=False)
+
+                Return backupPath
+            Catch ex As Exception
+                Debug.WriteLine($"Failed to create timestamped backup for {filePath}: {ex.Message}")
+                Return Nothing
+            End Try
+        End Function
 
 #End Region
 
@@ -2434,6 +2787,8 @@ Namespace SharedLibrary
 #End Region
 
 
+
+
 #Region "Signature Management UI"
 
         ''' <summary>
@@ -2443,12 +2798,16 @@ Namespace SharedLibrary
             Dim form As New Form() With {
                 .Text = $"{AN} - Update Signature Management",
                 .Size = New Size(750, 380),
-                .StartPosition = FormStartPosition.CenterScreen,
+                .StartPosition = FormStartPosition.Manual,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
                 .MinimumSize = New Size(700, 350),
                 .TopMost = True
             }
+
+            ' Position on the correct screen
+            Dim owner = GetDialogOwner()
+            CenterFormOnOwnerScreen(form, owner)
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -2955,13 +3314,18 @@ Namespace SharedLibrary
             Dim form As New Form() With {
                 .Text = $"{AN} - Batch Sign Files",
                 .Size = New Size(750, 520),
-                .StartPosition = FormStartPosition.CenterScreen,
+                .StartPosition = FormStartPosition.Manual,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
                 .MinimumSize = New Size(600, 400),
                 .AutoScaleMode = AutoScaleMode.Dpi,
                 .TopMost = True
             }
+
+            ' Position on the correct screen
+            Dim owner = GetDialogOwner()
+            CenterFormOnOwnerScreen(form, owner)
+
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)

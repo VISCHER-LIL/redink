@@ -196,11 +196,13 @@ Namespace SharedLibrary
         ''' <summary>
         ''' Loads alternative model configurations from an INI file and returns them as a list of <see cref="ModelConfig"/>.
         ''' Each INI section is treated as one model configuration; section names are stored in <see cref="ModelConfig.ModelDescription"/>.
+        ''' Models with Depreciated=True are excluded. If ModelNote exists, it is appended to the description in brackets.
         ''' </summary>
         ''' <param name="iniFilePath">Path to the INI file.</param>
         ''' <param name="context">Shared context used when creating <see cref="ModelConfig"/> instances.</param>
+        ''' <param name="title">The purpose for which the models are used.</param>
         ''' <returns>List of parsed <see cref="ModelConfig"/> entries (empty if file not found or contains no sections).</returns>
-        Public Shared Function LoadAlternativeModels(ByVal iniFilePath As String, context As ISharedContext) As List(Of ModelConfig)
+        Public Shared Function LoadAlternativeModels(ByVal iniFilePath As String, context As ISharedContext, Optional Title As String = "") As List(Of ModelConfig)
             Dim models As New List(Of ModelConfig)()
             Try
                 If Not File.Exists(iniFilePath) Then
@@ -220,7 +222,12 @@ Namespace SharedLibrary
                     ' Section header (e.g., [Model1]) indicates a new model.
                     If trimmedLine.StartsWith("[") AndAlso trimmedLine.EndsWith("]") Then
                         If currentDict.Count > 0 Then
-                            models.Add(CreateModelConfigFromDict(currentDict, context, Description))
+                            ' Check if model is deprecated before adding
+                            If Not ParseBoolean(currentDict, "Depreciated") Then
+                                ' Build description with ModelNote if present
+                                Dim finalDescription As String = BuildModelDescription(Description, currentDict)
+                                models.Add(CreateModelConfigFromDict(currentDict, context, finalDescription))
+                            End If
                             currentDict.Clear()
                         End If
                         Description = trimmedLine.Substring(1, trimmedLine.Length - 2).Trim()
@@ -240,14 +247,37 @@ Namespace SharedLibrary
                         End If
                     End If
                 Next
-                ' Add the last model if any.
+                ' Add the last model if any and not deprecated.
                 If currentDict.Count > 0 Then
-                    models.Add(CreateModelConfigFromDict(currentDict, context, Description))
+                    If Not ParseBoolean(currentDict, "Depreciated") Then
+                        Dim finalDescription As String = BuildModelDescription(Description, currentDict)
+                        models.Add(CreateModelConfigFromDict(currentDict, context, finalDescription))
+                    End If
                 End If
             Catch ex As System.Exception
-                ShowCustomMessageBox($"Error reading INI file for alternative models ({iniFilePath}): " & ex.Message)
+                ShowCustomMessageBox($"Error reading INI file for models {If(String.IsNullOrWhiteSpace(Title), " ", $"for '{Title}' ")}({iniFilePath}): " & ex.Message)
             End Try
             Return models
+        End Function
+
+
+        ''' <summary>
+        ''' Builds the model description by combining the section header with the ModelNote parameter if present.
+        ''' </summary>
+        ''' <param name="sectionHeader">The INI section header (e.g., "GPT-4").</param>
+        ''' <param name="configDict">The configuration dictionary for the section.</param>
+        ''' <returns>The combined description: "SectionHeader (ModelNote)" or just "SectionHeader" if no ModelNote.</returns>
+        Private Shared Function BuildModelDescription(ByVal sectionHeader As String, ByVal configDict As Dictionary(Of String, String)) As String
+            Dim modelNote As String = ""
+            If configDict.ContainsKey("ModelNote") Then
+                modelNote = configDict("ModelNote").Trim()
+            End If
+
+            If Not String.IsNullOrWhiteSpace(modelNote) Then
+                Return sectionHeader & " - " & modelNote
+            Else
+                Return sectionHeader
+            End If
         End Function
 
 

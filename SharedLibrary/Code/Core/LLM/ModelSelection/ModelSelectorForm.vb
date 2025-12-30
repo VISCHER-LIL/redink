@@ -174,7 +174,7 @@ Namespace SharedLibrary
             Me.CancelButton = btnCancel
 
             ' Load models from INI file
-            alternativeModels = LoadAlternativeModels(iniFilePath, context)
+            alternativeModels = LoadAlternativeModels(iniFilePath, context, Title)
             If UseCase = 1 Then
                 lstModels.Items.Add("Default = " & context.INI_Model_2)
                 hasDefaultEntry = True

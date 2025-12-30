@@ -510,20 +510,28 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
+            ' Get computername (e.g., for UpdateClients parameter)
+            If String.Equals(OtherPrompt.Trim(), "clientname", StringComparison.OrdinalIgnoreCase) Then
+                SLib.PutInClipboard(GetCurrentClientIdentifier())
+                ShowCustomMessageBox("Your client name is '" & GetCurrentClientIdentifier() & "' (also in the clipboard).", AN)
+                Return
+            End If
+
+
             ' Signature Management for Update INI Key Functionality
-            If String.Equals(OtherPrompt.Trim(), "iniupdatekeys", StringComparison.OrdinalIgnoreCase) Then
+            If String.Equals(OtherPrompt.Trim(), "iniupdatekeys", StringComparison.OrdinalIgnoreCase) OrElse String.Equals(OtherPrompt.Trim(), "signtool", StringComparison.OrdinalIgnoreCase) Then
                 ShowSignatureManagementDialog()
                 Return
             End If
 
             ' Batch Signing for Update INI Key Functionality
-            If String.Equals(OtherPrompt.Trim(), "iniupdatebatch", StringComparison.OrdinalIgnoreCase) Then
+            If String.Equals(OtherPrompt.Trim(), "iniupdatebatch", StringComparison.OrdinalIgnoreCase) OrElse String.Equals(OtherPrompt.Trim(), "signbatch", StringComparison.OrdinalIgnoreCase) Then
                 ShowBatchSigningDialog()
                 Return
             End If
 
             ' Signature Management for Update INI Key Functionality
-            If String.Equals(OtherPrompt.Trim(), "iniupdateignored", StringComparison.OrdinalIgnoreCase) Or String.Equals(OtherPrompt.Trim(), "iniupdateignore", StringComparison.OrdinalIgnoreCase) Then
+            If String.Equals(OtherPrompt.Trim(), "iniupdateignored", StringComparison.OrdinalIgnoreCase) OrElse String.Equals(OtherPrompt.Trim(), "iniupdateignore", StringComparison.OrdinalIgnoreCase) Then
                 ShowIgnoredParametersDialog()
                 Return
             End If
@@ -549,28 +557,35 @@ Partial Public Class ThisAddIn
             ' Signature Management for importing INI keys
             If String.Equals(OtherPrompt.Trim(), "inirollback", StringComparison.OrdinalIgnoreCase) Or String.Equals(OtherPrompt.Trim(), "iniupdateignore", StringComparison.OrdinalIgnoreCase) Then
 
-                If IniImportManager.TryRollbackLastBackup(_context, Nothing) Then
-                    Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
-                    If answer = 1 Then
-                        ' Mark config as not loaded so InitializeConfig will re-read from disk
-                        _context.INIloaded = False
-                        ' Reload configuration from disk into memory
-                        InitializeConfig(False, True)
-                        ' Refresh the UI with the newly loaded values
-                        _context.MenusAdded = False
+                If ShowCustomYesNoBox($"Do you really want to roll back you last configuration file change? A new backup will be created", "Yes, rollback", "No") = 1 Then
+                    If IniImportManager.TryRollbackLastBackup(_context, Nothing) Then
+                        Dim answer = ShowCustomYesNoBox("Your main configuration settings have changed. You need to reload them for them to become active. Proceed?", "Yes, reload", "No, load later")
+                        If answer = 1 Then
+                            ' Mark config as not loaded so InitializeConfig will re-read from disk
+                            _context.INIloaded = False
+                            ' Reload configuration from disk into memory
+                            InitializeConfig(False, True)
+                            ' Refresh the UI with the newly loaded values
+                            _context.MenusAdded = False
+                        End If
                     End If
+                    Return
+                Else
+                    Return
                 End If
-                Return
-
             End If
 
 
             ' Check for INI updates and apply if available
             If String.Equals(OtherPrompt.Trim(), "iniupdate", StringComparison.OrdinalIgnoreCase) Then
-                Dim answer = CheckForIniUpdates(_context)
+                Dim answer As Boolean = CheckForIniUpdates(_context)
+                If answer Then
+                    ShowCustomMessageBox("Updates to the .ini file(s) have been applied.")
+                Else
+                    ShowCustomMessageBox("No updates were applied. Either no updates were found or you chose not to apply them.")
+                End If
                 Return
             End If
-
 
 
             ' Reset local configuration to defaults (with confirmation)
