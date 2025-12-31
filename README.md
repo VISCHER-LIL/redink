@@ -34,7 +34,7 @@ Red Ink is an add-in for Microsoft Office on Windows that allows you to access y
 * Word styles can be automatically applied based on the content of a document (in order to get a document in line with house style)
 * Configuration settings for models, special services and more can be imported from outside sources and updated automatically (see https://redink.ai/get-more)
 * Various features allow you to protect yourself against prompt injection attacks
-* Finally, Red Ink also offers a local chat bot that provides access to all configured language models via any browser on the user’s computer, even without logging in – ideal for researching or brainstorming outside of Word, Excel, or Outlook
+* Red Ink also offers a local chat bot that provides access to all configured language models via any browser on the user’s computer, even without logging in – ideal for researching or brainstorming outside of Word, Excel, or Outlook
 
 There are two versions of Red Ink: A "General Audience" (or GA) version and a "Preview" version (which has new features earlier and receives more frequent updates). They are also distinguished here on GitHub. The latest updates to the code are in the "Preview" branch.
 
