@@ -225,6 +225,14 @@ Partial Public Class ThisAddIn
         End Set
     End Property
 
+    Public Shared Property INI_Location As String
+        Get
+            Return _context.INI_Location
+        End Get
+        Set(value As String)
+            _context.INI_Location = value
+        End Set
+    End Property
     Public Shared Property INI_NoDash As Boolean
         Get
             Return _context.INI_NoDash
@@ -1985,6 +1993,24 @@ Partial Public Class ThisAddIn
         End Get
         Set(value As String)
             _context.Ignore = value
+        End Set
+    End Property
+
+    Public Shared Property Location As String
+        Get
+            Return _context.Location
+        End Get
+        Set(value As String)
+            _context.Location = value
+        End Set
+    End Property
+
+    Public Shared Property INI_NoHelperDownload As Boolean
+        Get
+            Return _context.INI_NoHelperDownload
+        End Get
+        Set(value As Boolean)
+            _context.INI_NoHelperDownload = value
         End Set
     End Property
 

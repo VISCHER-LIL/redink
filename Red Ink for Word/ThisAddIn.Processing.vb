@@ -2199,14 +2199,11 @@ Partial Public Class ThisAddIn
         Debug.WriteLine(selection.Text)
 
         If range.Start < range.End AndAlso Not TrailingCR Then
-            ' Check if space exists before and after range; needed because Word automatically removes a space when deleting text
             Dim docStart As Integer = range.Document.Content.Start
             Dim docEnd As Integer = range.Document.Content.End
 
             If range.Start > docStart AndAlso range.End < docEnd Then
-                ' One-character range before range
                 Dim beforerange As Range = range.Document.Range(range.Start - 1, range.Start)
-                ' One-character range after range
                 Dim afterrange As Range = range.Document.Range(range.End - 1, range.End)
 
                 Debug.WriteLine($"Beforetext='{beforerange.Text}'")
@@ -2231,18 +2228,17 @@ Partial Public Class ThisAddIn
             Result = ResultBack
         End Try
 
+        Debug.WriteLine($"After Unescape: {Result}")
+
         Dim markdownSource As String = Result
 
         Result = Result.Replace(vbLf & " " & vbLf, vbLf & vbLf)
 
         Dim pattern As String = "((\r\n|\n|\r){2,})"
         Result = Regex.Replace(Result, pattern, Function(m As Match)
-                                                    ' Check if the match reaches the end of the string:
                                                     If m.Index + m.Length = Result.Length Then
-                                                        ' At end: return the breaks as they are
                                                         Return m.Value
                                                     Else
-                                                        ' Otherwise: insert &nbsp; between the breaks
                                                         Dim breaks As String = m.Value
                                                         Dim regexBreaks As New Regex("(\r\n|\n|\r)")
                                                         Dim splitBreaks = regexBreaks.Matches(breaks)
@@ -2254,6 +2250,41 @@ Partial Public Class ThisAddIn
                                                         Return resultx
                                                     End If
                                                 End Function)
+
+        ' ============= PROTECT SPECIAL PATTERNS BEFORE MARKDOWN CONVERSION =============
+        ' Protect {{...}} placeholders (merge fields, special elements) - MUST come first
+        Dim curlyPlaceholders As New List(Of String)()
+        Result = System.Text.RegularExpressions.Regex.Replace(
+            Result,
+            "\{\{.*?\}\}",
+            Function(m)
+                curlyPlaceholders.Add(m.Value)
+                Return $"[[CURLY_{curlyPlaceholders.Count - 1}]]"
+            End Function,
+            RegexOptions.Singleline)
+
+        ' Protect single curly braces {word} that Markdig interprets as generic attributes
+        Dim singleCurlyPlaceholders As New List(Of String)()
+        Result = System.Text.RegularExpressions.Regex.Replace(
+            Result,
+            "\{[^{}]+\}",
+            Function(m)
+                singleCurlyPlaceholders.Add(m.Value)
+                Return $"[[SCURLY_{singleCurlyPlaceholders.Count - 1}]]"
+            End Function,
+            RegexOptions.Singleline)
+
+        ' Protect <...> angle bracket content that is NOT valid HTML
+        Dim anglePlaceholders As New List(Of String)()
+        Result = System.Text.RegularExpressions.Regex.Replace(
+            Result,
+            "<(?![/]?(?:p|br|div|span|strong|b|i|em|u|a|ul|ol|li|h[1-6]|table|tr|td|th|thead|tbody|img|hr|pre|code|blockquote)[ >/])[^>]+>",
+            Function(m)
+                anglePlaceholders.Add(m.Value)
+                Return $"[[ANGLE_{anglePlaceholders.Count - 1}]]"
+            End Function,
+            RegexOptions.IgnoreCase Or RegexOptions.Singleline)
+        ' ================================================================================
 
         Dim builder As New MarkdownPipelineBuilder()
 
@@ -2278,11 +2309,28 @@ Partial Public Class ThisAddIn
 
         Dim htmlResult As String = Markdown.ToHtml(Result, markdownPipeline).Trim
 
+        ' ============= RESTORE PROTECTED PATTERNS AFTER MARKDOWN CONVERSION =============
+        ' Restore {{...}} placeholders - DO NOT encode, these need to be processed by RestoreSpecialTextElements
+        For idx As Integer = 0 To curlyPlaceholders.Count - 1
+            htmlResult = htmlResult.Replace($"[[CURLY_{idx}]]", curlyPlaceholders(idx))
+        Next
+
+        ' Restore single curly braces {word} - keep as literal text
+        For idx As Integer = 0 To singleCurlyPlaceholders.Count - 1
+            htmlResult = htmlResult.Replace($"[[SCURLY_{idx}]]", System.Net.WebUtility.HtmlEncode(singleCurlyPlaceholders(idx)))
+        Next
+
+        ' Restore <...> placeholders (HTML-encode them so they display as text)
+        For idx As Integer = 0 To anglePlaceholders.Count - 1
+            htmlResult = htmlResult.Replace($"[[ANGLE_{idx}]]", System.Net.WebUtility.HtmlEncode(anglePlaceholders(idx)))
+        Next
+        ' ================================================================================
+
         ' Remove all real newlines so they are not converted as text
         htmlResult = htmlResult _
-            .Replace(vbCrLf, "") _
-            .Replace(vbCr, "") _
-            .Replace(vbLf, "")
+        .Replace(vbCrLf, "") _
+        .Replace(vbCr, "") _
+        .Replace(vbLf, "")
 
         ' Load the HTML into HtmlDocument
         Dim htmlDoc As New HtmlAgilityPack.HtmlDocument()
@@ -2319,7 +2367,6 @@ Partial Public Class ThisAddIn
         Debug.WriteLine("TrailingCR = " & TrailingCR)
         Debug.WriteLine(selection.Text)
     End Sub
-
 
     ''' <summary>
     ''' Lightweight structure holding revision metadata (start, end, text, type, author) for efficient processing without repeated COM calls.

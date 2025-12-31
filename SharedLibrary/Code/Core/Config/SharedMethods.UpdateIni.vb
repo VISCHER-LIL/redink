@@ -1,40 +1,98 @@
 ﻿' Part of "Red Ink" (SharedLibrary)
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
-
-' =============================================================================
-' File: SharedMethods.UpdateIni.vb
-' Purpose: Provides automatic INI configuration file updates from local or remote
-'          sources with digital signature verification and user approval workflow.
 '
-' Architecture:
-'  - Context-Based Configuration: All INI update settings are accessed via
-'    ISharedContext (_iniUpdateContext), which is set at the start of
-'    CheckForIniUpdates() and used by all helper methods.
-'  - Update Sources: Supports local file paths, network shares (UNC), and HTTP(S) URLs.
-'    Remote sources can be disabled via INI_UpdateIniAllowRemote.
-'  - Digital Signatures: Ed25519 signatures via BouncyCastle for authenticity
-'    verification. When signature verification is enabled, a .sig file is loaded
-'    alongside the update file. If no public key is configured, verification is skipped
-'    and a warning is reported.
-'  - Silent Update Modes: Supports five security levels (SilentUpdateSecurityLevel enum):
-'      0=Disabled (interactive), 1=SafeOnly, 2=SignedOnly, 3=LocalTrusted, 4=All
-'    Silent mode requires registry permission (PermitSilentIniUpdates).
-'  - User Approval: In interactive mode, shows changes in a dialog allowing
-'    per-parameter approval/rejection with visual highlighting of suspicious changes.
-'  - Ignore List: Persists rejected parameters in My.Settings for future exclusion.
-'    Override rules (INI_UpdateIniIgnoreOverride) allow file/segment/key-specific control.
-'  - Protected Keys: Keys starting with "Update" are not modified by the auto-update mechanism.
-'  - Three INI Files Supported:
-'      1. redink.ini (main config) - uses INI_UpdateSource from context
-'      2. AlternateModelPath (segmented) - each segment has its own UpdateSource
-'      3. SpecialServicePath (segmented) - each segment has its own UpdateSource
-'
-' Registry Keys (optional):
-'  - RegPath_PermitSilentInitUpdates: Must be "yes"/"true"/"1" to enable silent mode,
-'    if required by noSilentINIUpdatesWithoutRegistryFlag (see SharedMethods.Constants.OwnBuild.Security.vb).
-'    (note: name is defined by the constant used in code; log output refers to "PermitSilentIniUpdates").
 ' =============================================================================
-
+' File:    SharedMethods.UpdateIni.vb
+' Purpose: Automated INI configuration update subsystem with optional Ed25519
+'          signature validation, interactive approval UI, silent (policy-driven)
+'          application modes, persistent ignore rules, placeholder preservation,
+'          and audit logging.
+'
+' Architectural Overview
+' ----------------------
+' This module is implemented as a `SharedLibrary.SharedMethods` partial class and is
+' driven by a context object (`ISharedContext`) supplied at runtime.
+'
+' It follows a "detect → filter → decide → apply" pipeline:
+'   1) Detect differences between local INI files and configured update sources.
+'   2) Collect signature/download diagnostics and track failed sources.
+'   3) Filter out ignored changes (with override rules).
+'   4) Resolve placeholders in remote values using local definitions.
+'   5) Decide which changes may be applied (silent security level or interactive UI).
+'   6) Create a timestamped backup and write updates back into the local INI file(s).
+'   7) Log all relevant actions (security events are forced to log).
+'
+' Primary Entry Point (startup integration)
+' ----------------------------------------
+' - `Public Shared Function CheckForIniUpdates(ByRef context As ISharedContext) As Boolean`
+'
+' Placeholder Preservation System
+' -------------------------------
+' Remote update templates may contain placeholders like `[[ Your Tenant ]]` which are
+' substituted with locally-defined values stored as INI comments:
+'   `;  [[ Your Tenant ]] = contoso`
+'
+' Key functions:
+'   - `ParsePlaceholderDefinitions` - reads `;  [[ name ]] = value` comments from local file
+'   - `ExtractPlaceholders` / `ContainsPlaceholders` - detects `[[ ... ]]` patterns
+'   - `ApplyPlaceholders` - substitutes placeholders with stored definitions
+'   - `FindMissingPlaceholders` - identifies placeholders without local definitions
+'   - `ShowPlaceholderInputDialog` - interactive prompt for missing values
+'   - `GeneratePendingUpdatesBlock` - creates commented block for silent mode fallback
+'   - `WriteNewPlaceholderDefinitions` / `WritePendingUpdatesBlock` - file writers
+'
+' Supported INI Targets
+' ---------------------
+' - Main INI: `GetDefaultINIPath(context.RDV)` with `_iniUpdateContext.INI_UpdateSource`
+' - Alternate model INI: `context.INI_AlternateModelPath` (segmented; per-segment UpdateSource)
+' - Special service INI: `context.INI_SpecialServicePath` (segmented; per-segment UpdateSource)
+'
+' Update Source Format
+' --------------------
+' Format: `path; keys; publicKey`
+' Keys: `all`, `new`, explicit keys, `-key` exclusions
+'
+' Change Detection
+' ----------------
+' - `CheckSingleIniFile` - non-segmented files with placeholder support
+' - `CheckSegmentedIniFile` - segmented files with per-segment placeholder support
+'
+' Signature Verification (Ed25519)
+' --------------------------------
+' - `VerifyEd25519Signature` - core verifier
+' - `GenerateEd25519KeyPair` / `SignUpdateFile` / `VerifySignatureFile` - admin tools
+' - `ShowSignatureManagementDialog` / `ShowBatchSigningDialog` - UI tools
+'
+' Silent vs Interactive Modes
+' ---------------------------
+' - `SilentUpdateSecurityLevel` enum (Disabled, SafeOnly, SignedOnly, LocalTrusted, All)
+' - `ProcessSilentUpdates` - applies updates without UI based on security level
+' - `ShowUpdateApprovalDialog` / `ShowIgnoreConfirmationDialog` - interactive UI
+'
+' Ignore List Management
+' ----------------------
+' - `ParseIgnoreOverrideRules` / `FilterIgnoredParameters` - rule parsing and filtering
+' - `GetIgnoreListForFile` / `SaveIgnoreListForFile` / `AddToIgnoreList` - persistence
+' - `ShowIgnoredParametersDialog` - UI for managing ignored parameters
+'
+' Backup and Apply
+' ----------------
+' - `CreateTimestampedBackup` - creates backup before modification
+' - `ApplyApprovedUpdates` - writes changes to disk
+'
+' Client Authorization
+' --------------------
+' - `GetCurrentClientIdentifier` / `IsClientAllowedToUpdate`
+'
+' Logging
+' -------
+' - `LogIniUpdateEvent` - central logger with forced security event logging
+'
+' Dialog Positioning
+' ------------------
+' - `GetDialogOwner` / `CenterFormOnOwnerScreen` - ensures dialogs appear on correct monitor
+'
+' =============================================================================
 
 Option Strict On
 Option Explicit On
@@ -117,6 +175,8 @@ Namespace SharedLibrary
             Public Property NewValue As String          ' Value from remote source
             Public Property IsSelected As Boolean       ' User's approval choice
             Public Property IsSuspicious As Boolean     ' True if contains URL/path that changed
+            Public Property RemoteTemplateValue As String ' The original remote value with placeholders (before substitution).
+            Public Property Placeholders As List(Of String)  ' List of placeholders found in the remote value.
 
             Public Overrides Function ToString() As String
                 Return $"[{IniFile}]{If(String.IsNullOrEmpty(SegmentName), "", $"[{SegmentName}]")}.{ParameterKey}"
@@ -161,55 +221,6 @@ Namespace SharedLibrary
 
 #End Region
 
-#Region "Window Owner Helper"
-
-        ''' <summary>
-        ''' Helper class to wrap a window handle for use as dialog owner.
-        ''' </summary>
-        Private Class WindowWrapper
-            Implements IWin32Window
-
-            Private ReadOnly _hwnd As IntPtr
-
-            Public Sub New(handle As IntPtr)
-                _hwnd = handle
-            End Sub
-
-            Public ReadOnly Property Handle As IntPtr Implements IWin32Window.Handle
-                Get
-                    Return _hwnd
-                End Get
-            End Property
-        End Class
-
-        ''' <summary>
-        ''' Gets the owner window for modal dialogs.
-        ''' Uses UpdateHandler.HostHandle which is set during add-in startup.
-        ''' </summary>
-        Private Shared Function GetDialogOwner() As IWin32Window
-            Try
-                ' Use the host handle captured by UpdateHandler during startup
-                Dim handle = UpdateHandler.HostHandle
-                If handle <> IntPtr.Zero Then
-                    Return New WindowWrapper(handle)
-                End If
-
-                ' Fallback: get the foreground window
-                Dim foregroundHandle = GetForegroundWindow()
-                If foregroundHandle <> IntPtr.Zero Then
-                    Return New WindowWrapper(foregroundHandle)
-                End If
-            Catch
-            End Try
-
-            Return Nothing
-        End Function
-
-        <System.Runtime.InteropServices.DllImport("user32.dll")>
-        Private Shared Function GetForegroundWindow() As IntPtr
-        End Function
-
-#End Region
 
 #Region "Main Entry Point"
 
@@ -227,6 +238,12 @@ Namespace SharedLibrary
                 ' Check master switch
                 If Not _iniUpdateContext.INI_UpdateIni Then
                     Debug.WriteLine("INI Update: Disabled via _iniUpdateContext.INI_UpdateIni")
+                    Return False
+                End If
+
+                ' Check if this client is allowed to perform updates
+                If Not IsClientAllowedToUpdate() Then
+                    Debug.WriteLine("INI Update: This client is not authorized to perform updates")
                     Return False
                 End If
 
@@ -298,6 +315,134 @@ Namespace SharedLibrary
                 ' Filter out ignored parameters
                 allChanges = FilterIgnoredParameters(allChanges)
 
+                ' Check for missing placeholders
+                Dim changesWithMissingPlaceholders = allChanges.Where(
+                    Function(c) c.Placeholders IsNot Nothing AndAlso
+                                ContainsPlaceholders(c.NewValue)).ToList()
+
+                ' Determine blocked scopes (file + segment)
+                Dim blockedScopes As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+
+                For Each c As IniParameterChange In changesWithMissingPlaceholders
+                    blockedScopes.Add($"{c.IniFile}|{If(c.SegmentName, "")}")
+                Next
+
+
+                If changesWithMissingPlaceholders.Count > 0 Then
+                    ' Collect all missing placeholder info
+                    Dim missingPlaceholderInfos As New List(Of MissingPlaceholderInfo)()
+                    Dim seenPlaceholders As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+
+                    For Each change In changesWithMissingPlaceholders
+                        Dim missingInChange = ExtractPlaceholders(change.NewValue)
+                        For Each placeholder In missingInChange
+                            Dim key = $"{change.IniFile}|{change.SegmentName}|{placeholder}"
+                            If Not seenPlaceholders.Contains(key) Then
+                                seenPlaceholders.Add(key)
+                                missingPlaceholderInfos.Add(New MissingPlaceholderInfo() With {
+                                    .Placeholder = placeholder,
+                                    .SegmentName = change.SegmentName,
+                                    .FileName = change.IniFile,
+                                    .SampleContext = $"{change.ParameterKey} = {change.RemoteTemplateValue}"
+                                })
+                            End If
+                        Next
+                    Next
+
+                    If _iniUpdateContext.INI_UpdateIniSilentMode <> SilentUpdateSecurityLevel.Disabled Then
+                        ' SILENT MODE: Write pending updates as comments
+                        ' Group by file and segment
+                        Dim byFileAndSegment = changesWithMissingPlaceholders.GroupBy(
+                            Function(c) $"{c.IniFile}|{c.SegmentName}")
+
+                        For Each group In byFileAndSegment
+                            Dim parts = group.Key.Split("|"c)
+                            Dim fileNamePart = parts(0)
+                            Dim segmentPart = If(parts.Length > 1, parts(1), "")
+
+                            ' Get all changes for this file/segment (not just those with missing placeholders)
+                            Dim allChangesForSegment = allChanges.Where(
+                                Function(c) c.IniFile.Equals(fileNamePart, StringComparison.OrdinalIgnoreCase) AndAlso
+                                            (c.SegmentName = segmentPart OrElse
+                                             (String.IsNullOrEmpty(c.SegmentName) AndAlso String.IsNullOrEmpty(segmentPart)))).ToList()
+
+                            ' Collect missing placeholders for this segment
+                            Dim missingForSegment = missingPlaceholderInfos.Where(
+                                Function(m) m.FileName.Equals(fileNamePart, StringComparison.OrdinalIgnoreCase) AndAlso
+                                            (m.SegmentName = segmentPart OrElse
+                                             (String.IsNullOrEmpty(m.SegmentName) AndAlso String.IsNullOrEmpty(segmentPart)))).
+                                Select(Function(m) m.Placeholder).Distinct().ToList()
+
+                            ' Resolve file path
+                            Dim filePath = ResolveIniFilePath(fileNamePart, context)
+                            If Not String.IsNullOrEmpty(filePath) Then
+                                Dim pendingBlock = GeneratePendingUpdatesBlock(allChangesForSegment, missingForSegment, segmentPart)
+                                WritePendingUpdatesBlock(filePath, segmentPart, pendingBlock)
+
+                                ' Remove ALL changes for this segment from the apply list                                
+                                allChanges.RemoveAll(
+                                    Function(c)
+                                        blockedScopes.Contains($"{c.IniFile}|{If(c.SegmentName, "")}")
+                                    End Function
+                                )
+
+                            End If
+                        Next
+
+                        LogIniUpdateEvent("Missing Placeholders",
+                            $"Silent mode: {changesWithMissingPlaceholders.Count} change(s) written as pending due to missing placeholders",
+                            alwaysLog:=True)
+                    Else
+                        ' INTERACTIVE MODE: Prompt user for placeholder values
+                        If ShowPlaceholderInputDialog(missingPlaceholderInfos) Then
+                            ' User provided values - apply them
+                            ' Group by file and segment to write definitions
+                            Dim byFileAndSegment = missingPlaceholderInfos.GroupBy(
+                                Function(m) $"{m.FileName}|{m.SegmentName}")
+
+                            For Each group In byFileAndSegment
+                                Dim parts = group.Key.Split("|"c)
+                                Dim fileNamePart = parts(0)
+                                Dim segmentPart = If(parts.Length > 1, parts(1), "")
+
+                                Dim filePath = ResolveIniFilePath(fileNamePart, context)
+                                If Not String.IsNullOrEmpty(filePath) Then
+                                    ' Write placeholder definitions
+                                    Dim newDefs As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+                                    For Each mp In group
+                                        If Not String.IsNullOrEmpty(mp.UserValue) Then
+                                            newDefs(mp.Placeholder) = mp.UserValue
+                                        End If
+                                    Next
+
+                                    If newDefs.Count > 0 Then
+                                        WriteNewPlaceholderDefinitions(filePath, segmentPart, newDefs)
+
+                                        ' Update change NewValue with substituted values
+                                        For Each change In allChanges.Where(
+                                            Function(c) c.IniFile.Equals(fileNamePart, StringComparison.OrdinalIgnoreCase) AndAlso
+                                                        (c.SegmentName = segmentPart OrElse
+                                                         (String.IsNullOrEmpty(c.SegmentName) AndAlso String.IsNullOrEmpty(segmentPart))))
+                                            If ContainsPlaceholders(change.NewValue) Then
+                                                change.NewValue = ApplyPlaceholders(change.NewValue, newDefs)
+                                            End If
+                                        Next
+                                    End If
+                                End If
+                            Next
+                        Else
+                            ' User cancelled - skip these changes entirely                            
+                            allChanges.RemoveAll(
+                                        Function(c)
+                                            blockedScopes.Contains($"{c.IniFile}|{If(c.SegmentName, "")}")
+                                        End Function
+                                    )
+                            LogIniUpdateEvent("Placeholder Input",
+                                $"User skipped {changesWithMissingPlaceholders.Count} change(s) requiring placeholder values")
+                        End If
+                    End If
+                End If
+
                 If allChanges.Count = 0 Then
                     Debug.WriteLine("INI Update: No changes detected")
                     LogIniUpdateEvent("Check Complete", "No changes detected")
@@ -358,6 +503,35 @@ Namespace SharedLibrary
                 LogIniUpdateEvent("ERROR", $"Unexpected error: {ex.Message}", alwaysLog:=True)
                 Return False
             End Try
+        End Function
+
+        ''' <summary>
+        ''' Resolves an INI file name to its full path using the context.
+        ''' </summary>
+        Private Shared Function ResolveIniFilePath(fileName As String, context As ISharedContext) As String
+            ' Check main INI
+            Dim mainIniPath = GetDefaultINIPath(context.RDV)
+            If Path.GetFileName(mainIniPath).Equals(fileName, StringComparison.OrdinalIgnoreCase) Then
+                Return mainIniPath
+            End If
+
+            ' Check AlternateModelPath
+            If Not String.IsNullOrWhiteSpace(context.INI_AlternateModelPath) Then
+                Dim altPath = ExpandEnvironmentVariables(context.INI_AlternateModelPath)
+                If Path.GetFileName(altPath).Equals(fileName, StringComparison.OrdinalIgnoreCase) Then
+                    Return altPath
+                End If
+            End If
+
+            ' Check SpecialServicePath
+            If Not String.IsNullOrWhiteSpace(context.INI_SpecialServicePath) Then
+                Dim svcPath = ExpandEnvironmentVariables(context.INI_SpecialServicePath)
+                If Path.GetFileName(svcPath).Equals(fileName, StringComparison.OrdinalIgnoreCase) Then
+                    Return svcPath
+                End If
+            End If
+
+            Return Nothing
         End Function
 
         ''' <summary>
@@ -552,13 +726,14 @@ Namespace SharedLibrary
             Dim form As New Form() With {
                 .Text = $"{AN} - Signature Validation Errors",
                 .Size = New Size(850, 520),
-                .StartPosition = FormStartPosition.CenterScreen,
+                .StartPosition = FormStartPosition.CenterParent,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
                 .MinimumSize = New Size(750, 450),
                 .AutoScaleMode = AutoScaleMode.Dpi,
                 .TopMost = True
             }
+
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -680,7 +855,7 @@ Namespace SharedLibrary
                                               ShowSignatureManagementDialog()
                                           End Sub
 
-            form.ShowDialog(GetDialogOwner())
+            form.ShowDialog()
         End Sub
 
 #End Region
@@ -821,6 +996,466 @@ Namespace SharedLibrary
 
             Return segment
         End Function
+
+#End Region
+
+#Region "Placeholder Preservation"
+
+        ''' <summary>
+        ''' Regex pattern to detect placeholders in values (e.g., [[ Your API Key ]], [[ Region ]])
+        ''' </summary>
+        Private Shared ReadOnly PlaceholderPattern As New System.Text.RegularExpressions.Regex(
+            "\[\[\s*[^\]]+?\s*\]\]",
+            System.Text.RegularExpressions.RegexOptions.Compiled)
+
+        ''' <summary>
+        ''' Parses placeholder definition comments from INI file lines.
+        ''' Format: ; [[ Placeholder Name ]] = value
+        ''' </summary>
+        ''' <param name="lines">Lines from the INI file.</param>
+        ''' <param name="segmentName">Segment name to scope the search, or empty for global scope.</param>
+        ''' <returns>Dictionary mapping placeholder strings (including brackets) to their values.</returns>
+        Private Shared Function ParsePlaceholderDefinitions(lines As IEnumerable(Of String), segmentName As String) As Dictionary(Of String, String)
+            Dim definitions As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+            Dim inTargetSegment = String.IsNullOrEmpty(segmentName)
+            Dim currentSegment As String = ""
+
+            For Each rawLine In lines
+                Dim line = rawLine.Trim()
+
+                ' Track segment changes
+                If line.StartsWith("[") AndAlso line.EndsWith("]") Then
+                    currentSegment = line.Substring(1, line.Length - 2).Trim()
+                    inTargetSegment = String.IsNullOrEmpty(segmentName) OrElse
+                                      currentSegment.Equals(segmentName, StringComparison.OrdinalIgnoreCase)
+                    Continue For
+                End If
+
+                ' Parse placeholder definition comments: ; [[ Name ]] = value
+                If inTargetSegment AndAlso line.StartsWith(";") Then
+                    Dim commentContent = line.Substring(1).Trim()
+
+                    ' Check if this comment defines a placeholder
+                    Dim match = PlaceholderPattern.Match(commentContent)
+                    If match.Success AndAlso match.Index = 0 Then
+                        ' Found a placeholder at the start of the comment
+                        Dim placeholder = match.Value
+                        Dim afterPlaceholder = commentContent.Substring(match.Length).Trim()
+
+                        ' Check for " = value" pattern
+                        If afterPlaceholder.StartsWith("=") Then
+                            Dim value = afterPlaceholder.Substring(1).Trim()
+                            ' Only store if value is non-empty
+                            If Not String.IsNullOrEmpty(value) Then
+                                definitions(placeholder) = value
+                            End If
+                        End If
+                    End If
+                End If
+
+                ' Stop if we've passed the target segment in segmented mode
+                If Not String.IsNullOrEmpty(segmentName) AndAlso
+                   Not String.IsNullOrEmpty(currentSegment) AndAlso
+                   Not currentSegment.Equals(segmentName, StringComparison.OrdinalIgnoreCase) AndAlso
+                   inTargetSegment = False AndAlso definitions.Count > 0 Then
+                    Exit For
+                End If
+            Next
+
+            Return definitions
+        End Function
+
+        ''' <summary>
+        ''' Determines if a value contains any placeholders.
+        ''' </summary>
+        Private Shared Function ContainsPlaceholders(value As String) As Boolean
+            If String.IsNullOrWhiteSpace(value) Then Return False
+            Return PlaceholderPattern.IsMatch(value)
+        End Function
+
+        ''' <summary>
+        ''' Extracts all unique placeholder names from a value.
+        ''' </summary>
+        Private Shared Function ExtractPlaceholders(value As String) As List(Of String)
+            Dim result As New List(Of String)()
+            If String.IsNullOrWhiteSpace(value) Then Return result
+
+            For Each match As System.Text.RegularExpressions.Match In PlaceholderPattern.Matches(value)
+                If Not result.Contains(match.Value, StringComparer.OrdinalIgnoreCase) Then
+                    result.Add(match.Value)
+                End If
+            Next
+
+            Return result
+        End Function
+
+        ''' <summary>
+        ''' Applies placeholder substitutions to a value.
+        ''' </summary>
+        ''' <param name="value">The value containing [[ placeholder ]] markers.</param>
+        ''' <param name="definitions">Dictionary mapping placeholder strings to their values.</param>
+        ''' <returns>The value with all known placeholders replaced.</returns>
+        Private Shared Function ApplyPlaceholders(value As String, definitions As Dictionary(Of String, String)) As String
+            If String.IsNullOrWhiteSpace(value) OrElse definitions Is Nothing OrElse definitions.Count = 0 Then
+                Return value
+            End If
+
+            Dim result = value
+            For Each kvp In definitions
+                result = result.Replace(kvp.Key, kvp.Value)
+            Next
+
+            Return result
+        End Function
+
+        ''' <summary>
+        ''' Finds placeholders in a value that are not defined in the given definitions.
+        ''' </summary>
+        Private Shared Function FindMissingPlaceholders(value As String, definitions As Dictionary(Of String, String)) As List(Of String)
+            Dim missing As New List(Of String)()
+            Dim allPlaceholders = ExtractPlaceholders(value)
+
+            For Each placeholder In allPlaceholders
+                If Not definitions.ContainsKey(placeholder) Then
+                    missing.Add(placeholder)
+                End If
+            Next
+
+            Return missing
+        End Function
+
+        ''' <summary>
+        ''' Represents a missing placeholder that needs user input.
+        ''' </summary>
+        Private Class MissingPlaceholderInfo
+            Public Property Placeholder As String       ' e.g., "[[ Your Tenant ]]"
+            Public Property SegmentName As String       ' e.g., "GPT-4" or empty for global
+            Public Property FileName As String          ' e.g., "allmodels.ini"
+            Public Property SampleContext As String     ' e.g., "Endpoint = https://api.[[ Your Tenant ]].example.com"
+            Public Property UserValue As String         ' User-provided value (filled by dialog)
+        End Class
+
+        ''' <summary>
+        ''' Shows a dialog for the user to provide values for missing placeholders.
+        ''' </summary>
+        ''' <param name="missingPlaceholders">List of missing placeholder info.</param>
+        ''' <returns>True if user provided values and clicked OK; False if cancelled.</returns>
+        Private Shared Function ShowPlaceholderInputDialog(missingPlaceholders As List(Of MissingPlaceholderInfo)) As Boolean
+            If missingPlaceholders Is Nothing OrElse missingPlaceholders.Count = 0 Then Return True
+
+            Dim form As New Form() With {
+                .Text = $"{AN} - Placeholder Values Required",
+                .Size = New Size(700, 450),
+                .StartPosition = FormStartPosition.CenterParent,
+                .FormBorderStyle = FormBorderStyle.Sizable,
+                .Font = New Font("Segoe UI", 9.0F),
+                .MinimumSize = New Size(550, 350),
+                .AutoScaleMode = AutoScaleMode.Dpi,
+                .TopMost = True
+            }
+
+
+
+            Try
+                Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
+                form.Icon = Icon.FromHandle(bmp.GetHicon())
+            Catch
+            End Try
+
+            Dim tblMain As New TableLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .Padding = New Padding(15),
+                .ColumnCount = 1,
+                .RowCount = 3,
+                .AutoSize = False
+            }
+            tblMain.ColumnStyles.Add(New ColumnStyle(SizeType.Percent, 100))
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+            tblMain.RowStyles.Add(New RowStyle(SizeType.Percent, 100))
+            tblMain.RowStyles.Add(New RowStyle(SizeType.AutoSize))
+            form.Controls.Add(tblMain)
+
+            ' Header
+            Dim lblHeader As New Label() With {
+                .Text = "The following configuration values contain placeholders that need to be filled in." & vbCrLf &
+                        "Please provide the values for your environment:",
+                .Dock = DockStyle.Fill,
+                .AutoSize = True,
+                .Padding = New Padding(0, 0, 0, 10)
+            }
+            tblMain.Controls.Add(lblHeader, 0, 0)
+
+            ' DataGridView for placeholder input
+            Dim dgv As New DataGridView() With {
+                .Dock = DockStyle.Fill,
+                .AllowUserToAddRows = False,
+                .AllowUserToDeleteRows = False,
+                .AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                .SelectionMode = DataGridViewSelectionMode.CellSelect,
+                .RowHeadersVisible = False,
+                .Margin = New Padding(0, 5, 0, 10),
+                .ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize,
+                .EnableHeadersVisualStyles = True
+            }
+
+            Dim colSegment As New DataGridViewTextBoxColumn() With {
+                .HeaderText = "Segment",
+                .Name = "colSegment",
+                .ReadOnly = True,
+                .Width = 100
+            }
+            Dim colPlaceholder As New DataGridViewTextBoxColumn() With {
+                .HeaderText = "Placeholder",
+                .Name = "colPlaceholder",
+                .ReadOnly = True,
+                .Width = 150
+            }
+            Dim colValue As New DataGridViewTextBoxColumn() With {
+                .HeaderText = "Your Value",
+                .Name = "colValue",
+                .ReadOnly = False,
+                .Width = 200
+            }
+            Dim colContext As New DataGridViewTextBoxColumn() With {
+                .HeaderText = "Used In",
+                .Name = "colContext",
+                .ReadOnly = True,
+                .Width = 200
+            }
+
+            dgv.Columns.AddRange(colSegment, colPlaceholder, colValue, colContext)
+
+            For Each mp In missingPlaceholders
+                Dim segmentDisplay = If(String.IsNullOrEmpty(mp.SegmentName), "(global)", mp.SegmentName)
+                dgv.Rows.Add(segmentDisplay, mp.Placeholder, "", TruncateValue(mp.SampleContext, 60))
+            Next
+
+            ' Ensure column headers are properly sized
+            dgv.AutoResizeColumnHeadersHeight()
+            tblMain.Controls.Add(dgv, 0, 1)
+
+            ' Buttons
+            Dim pnlButtons As New FlowLayoutPanel() With {
+                .Dock = DockStyle.Fill,
+                .FlowDirection = FlowDirection.LeftToRight,
+                .AutoSize = True,
+                .AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                .Margin = New Padding(0, 5, 0, 5)
+            }
+            tblMain.Controls.Add(pnlButtons, 0, 2)
+
+            Dim dialogResult As Boolean = False
+
+            Dim btnOK As New Button() With {
+                .Text = "Apply Values",
+                .AutoSize = True,
+                .Padding = New Padding(10, 5, 10, 5),
+                .Margin = New Padding(0, 0, 10, 0)
+            }
+            Dim btnCancel As New Button() With {
+                .Text = "Skip These Updates",
+                .AutoSize = True,
+                .Padding = New Padding(10, 5, 10, 5)
+            }
+
+            pnlButtons.Controls.Add(btnOK)
+            pnlButtons.Controls.Add(btnCancel)
+
+            AddHandler btnCancel.Click, Sub() form.Close()
+
+            AddHandler btnOK.Click, Sub()
+                                        ' Validate all values are filled
+                                        Dim allFilled = True
+                                        For i As Integer = 0 To dgv.Rows.Count - 1
+                                            Dim cellValue = dgv.Rows(i).Cells("colValue").Value
+                                            If cellValue Is Nothing OrElse String.IsNullOrWhiteSpace(cellValue.ToString()) Then
+                                                allFilled = False
+                                                dgv.Rows(i).Cells("colValue").Style.BackColor = Color.FromArgb(255, 230, 230)
+                                            Else
+                                                dgv.Rows(i).Cells("colValue").Style.BackColor = SystemColors.Window
+                                            End If
+                                        Next
+
+                                        If Not allFilled Then
+                                            ShowCustomMessageBox("Please provide values for all placeholders (highlighted in red).")
+                                            Return
+                                        End If
+
+                                        ' Collect values
+                                        For i As Integer = 0 To dgv.Rows.Count - 1
+                                            missingPlaceholders(i).UserValue = dgv.Rows(i).Cells("colValue").Value?.ToString()
+                                        Next
+
+                                        dialogResult = True
+                                        form.Close()
+                                    End Sub
+
+            form.ShowDialog()
+
+            Return dialogResult
+        End Function
+
+        ''' <summary>
+        ''' Generates the pending updates comment block for silent mode when placeholders are missing.
+        ''' </summary>
+        ''' <param name="changes">All changes for the segment/file.</param>
+        ''' <param name="missingPlaceholders">Placeholders that need values.</param>
+        ''' <param name="segmentName">Segment name for context.</param>
+        ''' <returns>List of comment lines to insert.</returns>
+        Private Shared Function GeneratePendingUpdatesBlock(
+            changes As List(Of IniParameterChange),
+            missingPlaceholders As List(Of String),
+            segmentName As String) As List(Of String)
+
+            Dim lines As New List(Of String)()
+            Dim timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+
+            lines.Add("")
+            lines.Add($"; === PENDING UPDATES ({timestamp}) ===")
+            lines.Add("; The following updates could not be applied automatically because")
+            lines.Add("; placeholder values are missing. To apply these updates:")
+            lines.Add(";   1. Fill in the placeholder values below")
+            lines.Add(";   2. Uncomment the parameter lines you want to apply")
+            lines.Add(";   3. Comment out or DELETE the existing parameter lines below that are being replaced")
+            lines.Add(";   4. Remove this comment block when done")
+            lines.Add(";")
+            lines.Add("; Required placeholder values:")
+
+            For Each placeholder In missingPlaceholders.Distinct(StringComparer.OrdinalIgnoreCase)
+                lines.Add($"; {placeholder} = ")
+            Next
+
+            lines.Add(";")
+            lines.Add("; Pending parameter changes:")
+
+            For Each change In changes
+                Dim changeInfo = If(change.OldValue = "(new key)", "(NEW)", $"(replaces existing value)")
+                lines.Add($"; {change.ParameterKey} = {change.NewValue}  {changeInfo}")
+            Next
+
+            lines.Add("; === END PENDING UPDATES ===")
+            lines.Add("")  ' Empty line after block
+
+            Return lines
+        End Function
+
+        ''' <summary>
+        ''' Writes placeholder definition comments to the INI file.
+        ''' </summary>
+        ''' <param name="filePath">Path to the INI file.</param>
+        ''' <param name="segmentName">Segment name (empty for global).</param>
+        ''' <param name="placeholderValues">Dictionary of placeholder → value to write.</param>
+        Private Shared Sub WriteNewPlaceholderDefinitions(
+            filePath As String,
+            segmentName As String,
+            placeholderValues As Dictionary(Of String, String))
+
+            If Not File.Exists(filePath) OrElse placeholderValues Is Nothing OrElse placeholderValues.Count = 0 Then
+                Return
+            End If
+
+            Try
+                Dim lines = File.ReadAllLines(filePath, Encoding.UTF8).ToList()
+                Dim insertIndex As Integer = -1
+
+                If String.IsNullOrEmpty(segmentName) Then
+                    ' Global scope - insert at the beginning (after any existing comments/blank lines at top)
+                    insertIndex = 0
+                    For i As Integer = 0 To lines.Count - 1
+                        Dim line = lines(i).Trim()
+                        If line.StartsWith("[") Then
+                            insertIndex = i
+                            Exit For
+                        ElseIf Not String.IsNullOrEmpty(line) AndAlso Not line.StartsWith(";") Then
+                            insertIndex = i
+                            Exit For
+                        End If
+                    Next
+                    If insertIndex = -1 Then insertIndex = lines.Count
+                Else
+                    ' Find the segment header and insert right after it
+                    For i As Integer = 0 To lines.Count - 1
+                        Dim line = lines(i).Trim()
+                        If line.StartsWith("[") AndAlso line.EndsWith("]") Then
+                            Dim name = line.Substring(1, line.Length - 2).Trim()
+                            If name.Equals(segmentName, StringComparison.OrdinalIgnoreCase) Then
+                                insertIndex = i + 1
+                                Exit For
+                            End If
+                        End If
+                    Next
+                End If
+
+                If insertIndex = -1 Then Return
+
+                ' Build placeholder comment lines
+                Dim newLines As New List(Of String)()
+                For Each kvp In placeholderValues
+                    newLines.Add($"; {kvp.Key} = {kvp.Value}")
+                Next
+
+                ' Insert the lines
+                lines.InsertRange(insertIndex, newLines)
+
+                File.WriteAllLines(filePath, lines, Encoding.UTF8)
+
+            Catch ex As Exception
+                Debug.WriteLine($"Error writing placeholder definitions: {ex.Message}")
+            End Try
+        End Sub
+
+        ''' <summary>
+        ''' Writes the pending updates comment block to the INI file.
+        ''' </summary>
+        ''' <param name="filePath">Path to the INI file.</param>
+        ''' <param name="segmentName">Segment name (empty for global).</param>
+        ''' <param name="commentLines">Lines to insert.</param>
+        Private Shared Sub WritePendingUpdatesBlock(
+            filePath As String,
+            segmentName As String,
+            commentLines As List(Of String))
+
+            If Not File.Exists(filePath) OrElse commentLines Is Nothing OrElse commentLines.Count = 0 Then
+                Return
+            End If
+
+            Try
+                Dim lines = File.ReadAllLines(filePath, Encoding.UTF8).ToList()
+                Dim insertIndex As Integer = -1
+
+                If String.IsNullOrEmpty(segmentName) Then
+                    ' Global scope - insert at the end of the file
+                    insertIndex = lines.Count
+                Else
+                    ' Find the segment header and insert right after it
+                    For i As Integer = 0 To lines.Count - 1
+                        Dim line = lines(i).Trim()
+                        If line.StartsWith("[") AndAlso line.EndsWith("]") Then
+                            Dim name = line.Substring(1, line.Length - 2).Trim()
+                            If name.Equals(segmentName, StringComparison.OrdinalIgnoreCase) Then
+                                insertIndex = i + 1
+                                Exit For
+                            End If
+                        End If
+                    Next
+                End If
+
+                If insertIndex = -1 Then Return
+
+                ' Insert the comment block
+                lines.InsertRange(insertIndex, commentLines)
+
+                File.WriteAllLines(filePath, lines, Encoding.UTF8)
+
+                LogIniUpdateEvent("Pending Updates Written",
+                    $"Wrote pending updates block to {Path.GetFileName(filePath)}" &
+                    If(String.IsNullOrEmpty(segmentName), "", $" [{segmentName}]"),
+                    alwaysLog:=True)
+
+            Catch ex As Exception
+                Debug.WriteLine($"Error writing pending updates block: {ex.Message}")
+            End Try
+        End Sub
 
 #End Region
 
@@ -1005,6 +1640,13 @@ Namespace SharedLibrary
                 If String.IsNullOrWhiteSpace(sourceInfo.UpdatePath) Then Return changes
                 If sourceInfo.UpdateKeys Is Nothing OrElse sourceInfo.UpdateKeys.Count = 0 Then Return changes
 
+                ' Circular reference check
+                If IsSameFile(localPath, sourceInfo.UpdatePath) Then
+                    Debug.WriteLine($"INI Update: Skipping self-referencing update source for {fileName}")
+                    LogIniUpdateEvent("Skipped", $"Self-referencing UpdateSource detected for {fileName} - update source points to itself")
+                    Return changes
+                End If
+
                 ' Load remote content (with signature validation)
                 Dim remoteContent = LoadUpdateSourceContent(sourceInfo.UpdatePath, sourceInfo.PublicKey, signatureErrors, failedSources)
                 If String.IsNullOrWhiteSpace(remoteContent) Then Return changes
@@ -1059,6 +1701,10 @@ Namespace SharedLibrary
                     keysToCheck.Remove(excludedKey)
                 Next
 
+                ' Parse placeholder definitions from local file
+                Dim localLines = File.ReadAllLines(localPath, Encoding.UTF8)
+                Dim placeholderDefs = ParsePlaceholderDefinitions(localLines, If(segmentName, ""))
+
                 ' Compare values
                 For Each key In keysToCheck
                     ' Skip protected keys
@@ -1070,22 +1716,32 @@ Namespace SharedLibrary
                     Dim localValue As String = Nothing
                     localIni.GlobalParameters.TryGetValue(key, localValue)
 
+                    ' Apply placeholder substitutions to remote value
+                    Dim effectiveRemoteValue = remoteValue
+                    Dim placeholdersInValue = ExtractPlaceholders(remoteValue)
+
+                    If placeholdersInValue.Count > 0 Then
+                        effectiveRemoteValue = ApplyPlaceholders(remoteValue, placeholderDefs)
+                    End If
+
                     ' Check if values differ (or key is new)
-                    If Not String.Equals(localValue, remoteValue, StringComparison.Ordinal) Then
+                    If Not String.Equals(localValue, effectiveRemoteValue, StringComparison.Ordinal) Then
                         Dim isNewKey = localValue Is Nothing
                         Dim change As New IniParameterChange() With {
                             .IniFile = fileName,
                             .SegmentName = If(segmentName, ""),
                             .ParameterKey = key,
                             .OldValue = If(localValue, "(new key)"),
-                            .NewValue = remoteValue,
+                            .NewValue = effectiveRemoteValue,
                             .IsSelected = True,
-                            .IsSuspicious = IsPathOrUrlChange(localValue, remoteValue)
+                            .IsSuspicious = IsPathOrUrlChange(localValue, effectiveRemoteValue),
+                            .RemoteTemplateValue = If(placeholdersInValue.Count > 0, remoteValue, Nothing),
+                            .Placeholders = If(placeholdersInValue.Count > 0, placeholdersInValue, Nothing)
                         }
 
                         ' Suspicious changes and new keys with URLs/paths are not selected by default
                         If change.IsSuspicious Then change.IsSelected = False
-                        If isNewKey AndAlso IsPathOrUrlChange("", remoteValue) Then change.IsSelected = False
+                        If isNewKey AndAlso IsPathOrUrlChange("", effectiveRemoteValue) Then change.IsSelected = False
 
                         changes.Add(change)
                     End If
@@ -1121,6 +1777,13 @@ Namespace SharedLibrary
                     ' Skip segments without UpdateSource
                     If String.IsNullOrWhiteSpace(segment.UpdatePath) Then Continue For
                     If segment.UpdateKeys Is Nothing OrElse segment.UpdateKeys.Count = 0 Then Continue For
+
+                    ' Circular reference Check
+                    If IsSameFile(localPath, segment.UpdatePath) Then
+                        Debug.WriteLine($"INI Update: Skipping self-referencing update source for {fileName}[{segment.Name}]")
+                        LogIniUpdateEvent("Skipped", $"Self-referencing UpdateSource in segment [{segment.Name}] of {fileName}")
+                        Continue For
+                    End If
 
                     ' Track update source for LocalTrusted mode
                     ' Use segment-specific key: "filename|segmentname" to handle multiple segments
@@ -1180,6 +1843,10 @@ Namespace SharedLibrary
                         keysToCheck.Remove(excludedKey)
                     Next
 
+                    ' Parse placeholder definitions for this segment
+                    Dim localLines = File.ReadAllLines(localPath, Encoding.UTF8)
+                    Dim placeholderDefs = ParsePlaceholderDefinitions(localLines, segment.Name)
+
                     ' Compare values
                     For Each key As String In keysToCheck
                         If IsProtectedKey(key) Then Continue For
@@ -1189,24 +1856,35 @@ Namespace SharedLibrary
                         Dim localValue As String = Nothing
                         segment.Parameters.TryGetValue(key, localValue)
 
-                        If Not String.Equals(localValue, remoteValue, StringComparison.Ordinal) Then
+                        ' Apply placeholder substitutions to remote value
+                        Dim effectiveRemoteValue = remoteValue
+                        Dim placeholdersInValue = ExtractPlaceholders(remoteValue)
+
+                        If placeholdersInValue.Count > 0 Then
+                            effectiveRemoteValue = ApplyPlaceholders(remoteValue, placeholderDefs)
+                        End If
+
+                        If Not String.Equals(localValue, effectiveRemoteValue, StringComparison.Ordinal) Then
                             Dim isNewKey As Boolean = localValue Is Nothing
                             Dim change As New IniParameterChange() With {
                                 .IniFile = fileName,
                                 .SegmentName = segment.Name,
                                 .ParameterKey = key,
                                 .OldValue = If(localValue, "(new key)"),
-                                .NewValue = remoteValue,
+                                .NewValue = effectiveRemoteValue,
                                 .IsSelected = True,
-                                .IsSuspicious = IsPathOrUrlChange(localValue, remoteValue)
+                                .IsSuspicious = IsPathOrUrlChange(localValue, effectiveRemoteValue),
+                                .RemoteTemplateValue = If(placeholdersInValue.Count > 0, remoteValue, Nothing),
+                                .Placeholders = If(placeholdersInValue.Count > 0, placeholdersInValue, Nothing)
                             }
 
                             If change.IsSuspicious Then change.IsSelected = False
-                            If isNewKey AndAlso IsPathOrUrlChange("", remoteValue) Then change.IsSelected = False
+                            If isNewKey AndAlso IsPathOrUrlChange("", effectiveRemoteValue) Then change.IsSelected = False
 
                             changes.Add(change)
                         End If
                     Next
+
                 Next
 
             Catch ex As Exception
@@ -1214,6 +1892,42 @@ Namespace SharedLibrary
             End Try
 
             Return changes
+        End Function
+
+        ''' <summary>
+        ''' Determines whether two paths refer to the same file (handles environment variables, relative paths, UNC variations).
+        ''' </summary>
+        ''' <param name="path1">First path to compare.</param>
+        ''' <param name="path2">Second path to compare.</param>
+        ''' <returns><c>True</c> if both paths resolve to the same file; otherwise <c>False</c>.</returns>
+        Private Shared Function IsSameFile(path1 As String, path2 As String) As Boolean
+            If String.IsNullOrWhiteSpace(path1) OrElse String.IsNullOrWhiteSpace(path2) Then
+                Return False
+            End If
+
+            ' Skip comparison for remote URLs - they can't be the same as local files
+            If path1.StartsWith("http://", StringComparison.OrdinalIgnoreCase) OrElse
+       path1.StartsWith("https://", StringComparison.OrdinalIgnoreCase) OrElse
+       path2.StartsWith("http://", StringComparison.OrdinalIgnoreCase) OrElse
+       path2.StartsWith("https://", StringComparison.OrdinalIgnoreCase) Then
+                Return False
+            End If
+
+            Try
+                ' Expand environment variables and resolve to full paths
+                Dim expanded1 = ExpandEnvironmentVariables(path1)
+                Dim expanded2 = ExpandEnvironmentVariables(path2)
+
+                ' Get canonical full paths (resolves relative paths, normalizes separators)
+                Dim fullPath1 = Path.GetFullPath(expanded1)
+                Dim fullPath2 = Path.GetFullPath(expanded2)
+
+                ' Compare case-insensitively (Windows file system)
+                Return String.Equals(fullPath1, fullPath2, StringComparison.OrdinalIgnoreCase)
+            Catch
+                ' If path resolution fails, fall back to simple string comparison
+                Return String.Equals(path1, path2, StringComparison.OrdinalIgnoreCase)
+            End Try
         End Function
 
         ''' <summary>
@@ -1325,7 +2039,6 @@ Namespace SharedLibrary
         End Function
 
 #End Region
-
 
 #Region "Ignored Parameters Management"
 
@@ -1627,13 +2340,14 @@ Namespace SharedLibrary
             Dim form As New Form() With {
                 .Text = $"{AN} - Manage Ignored Update Parameters",
                 .Size = New Size(750, 520),
-                .StartPosition = FormStartPosition.CenterScreen,
+                .StartPosition = FormStartPosition.CenterParent,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
                 .MinimumSize = New Size(550, 400),
-                .AutoScaleMode = AutoScaleMode.Dpi,
-                .TopMost = True
+                .AutoScaleMode = AutoScaleMode.Dpi
             }
+
+
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -1769,7 +2483,7 @@ Namespace SharedLibrary
                                           form.Close()
                                       End Sub
 
-            form.ShowDialog(GetDialogOwner())
+            form.ShowDialog()
         End Sub
 
 #End Region
@@ -1787,13 +2501,15 @@ Namespace SharedLibrary
             Dim form As New Form() With {
                 .Text = $"{AN} - Configuration Updates Available",
                 .Size = New Size(950, 600),
-                .StartPosition = FormStartPosition.CenterScreen,
+                .StartPosition = FormStartPosition.CenterParent,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
                 .MinimumSize = New Size(800, 450),
-                .AutoScaleMode = AutoScaleMode.Dpi,
-                .TopMost = True
+                .AutoScaleMode = AutoScaleMode.Dpi
             }
+
+
+
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -1993,7 +2709,7 @@ Namespace SharedLibrary
                                             form.Close()
                                         End Sub
 
-            form.ShowDialog(GetDialogOwner())
+            form.ShowDialog()
 
             Return result
         End Function
@@ -2009,13 +2725,13 @@ Namespace SharedLibrary
             Dim form As New Form() With {
         .Text = $"{AN} - Ignore Future Updates?",
         .Size = New Size(750, 480),
-        .StartPosition = FormStartPosition.CenterScreen,
+        .StartPosition = FormStartPosition.CenterParent,
         .FormBorderStyle = FormBorderStyle.Sizable,
         .Font = New Font("Segoe UI", 9.0F),
         .MinimumSize = New Size(550, 350),
-        .AutoScaleMode = AutoScaleMode.Dpi,
-        .TopMost = True
-    }
+        .AutoScaleMode = AutoScaleMode.Dpi
+            }
+
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -2117,7 +2833,7 @@ Namespace SharedLibrary
                                             form.Close()
                                         End Sub
 
-            form.ShowDialog(GetDialogOwner())
+            form.ShowDialog()
         End Sub
 
 
@@ -2138,7 +2854,7 @@ Namespace SharedLibrary
 #Region "Apply Updates"
 
         ''' <summary>
-        ''' Writes approved changes to the corresponding local INI files and creates backups via <c>.bak</c>.
+        ''' Writes approved changes to the corresponding local INI files and creates timestamped backups.
         ''' </summary>
         ''' <param name="changes">Approved changes to apply.</param>
         ''' <param name="context">Shared context used to resolve INI file paths.</param>
@@ -2154,15 +2870,20 @@ Namespace SharedLibrary
                 Dim mainIniPath = GetDefaultINIPath(context.RDV)
                 Dim mainIniName = Path.GetFileName(mainIniPath)
 
+                ' Check main INI file
                 If fileName.Equals(mainIniName, StringComparison.OrdinalIgnoreCase) Then
                     filePath = mainIniPath
-                ElseIf Not String.IsNullOrWhiteSpace(context.INI_AlternateModelPath) Then
+                End If
+
+                ' Check AlternateModelPath (independent check, not ElseIf)
+                If filePath Is Nothing AndAlso Not String.IsNullOrWhiteSpace(context.INI_AlternateModelPath) Then
                     Dim altPath = ExpandEnvironmentVariables(context.INI_AlternateModelPath)
                     If Path.GetFileName(altPath).Equals(fileName, StringComparison.OrdinalIgnoreCase) Then
                         filePath = altPath
                     End If
                 End If
 
+                ' Check SpecialServicePath (independent check)
                 If filePath Is Nothing AndAlso Not String.IsNullOrWhiteSpace(context.INI_SpecialServicePath) Then
                     Dim svcPath = ExpandEnvironmentVariables(context.INI_SpecialServicePath)
                     If Path.GetFileName(svcPath).Equals(fileName, StringComparison.OrdinalIgnoreCase) Then
@@ -2170,14 +2891,23 @@ Namespace SharedLibrary
                     End If
                 End If
 
-                If String.IsNullOrWhiteSpace(filePath) OrElse Not File.Exists(filePath) Then Continue For
+                If String.IsNullOrWhiteSpace(filePath) OrElse Not File.Exists(filePath) Then
+                    Debug.WriteLine($"ApplyApprovedUpdates: Could not resolve path for file '{fileName}' - skipping")
+                    Continue For
+                End If
 
                 Try
-                    ' Create backup
-                    RenameFileToBak(filePath)
+                    ' Create timestamped backup (preserves original extension)
+                    Dim backupPath = CreateTimestampedBackup(filePath)
+                    If String.IsNullOrWhiteSpace(backupPath) Then
+                        Debug.WriteLine($"Warning: Could not create backup for {filePath}")
+                        LogIniUpdateEvent("Backup Warning", $"Could not create backup for {filePath}")
+                    Else
+                        LogIniUpdateEvent("Backup Created", $"{filePath} → {backupPath}")
+                    End If
 
-                    ' Read current content from backup
-                    Dim lines = File.ReadAllLines(filePath & ".bak", Encoding.UTF8).ToList()
+                    ' Read current content from original file
+                    Dim lines = File.ReadAllLines(filePath, Encoding.UTF8).ToList()
                     Dim updatedLines As New List(Of String)()
 
                     ' Build lookup of changes by segment
@@ -2298,17 +3028,104 @@ Namespace SharedLibrary
                 Catch ex As Exception
                     Debug.WriteLine($"Error applying updates to {filePath}: {ex.Message}")
                     ShowCustomMessageBox($"Failed to update {fileName}: {ex.Message}")
-                    ' Try to restore backup
-                    Try
-                        If File.Exists(filePath & ".bak") Then
-                            If File.Exists(filePath) Then File.Delete(filePath)
-                            File.Move(filePath & ".bak", filePath)
-                        End If
-                    Catch
-                    End Try
                 End Try
             Next
         End Sub
+
+#End Region
+
+#Region "Client Identification"
+
+        ''' <summary>
+        ''' Returns the current client identifier used for UpdateClients matching.
+        ''' This uses the Windows computer name (Environment.MachineName).
+        ''' </summary>
+        ''' <returns>The client identifier string (computer name).</returns>
+        Public Shared Function GetCurrentClientIdentifier() As String
+            Try
+                Return Environment.MachineName
+            Catch
+                Return String.Empty
+            End Try
+        End Function
+
+        ''' <summary>
+        ''' Determines whether the current client is allowed to perform INI updates
+        ''' based on the UpdateClients parameter.
+        ''' </summary>
+        ''' <returns>True if this client can update; False otherwise.</returns>
+        Private Shared Function IsClientAllowedToUpdate() As Boolean
+            Try
+                ' Get the UpdateClients setting from context
+                Dim updateClients As String = _iniUpdateContext.INI_UpdateClients
+
+                ' If not configured, any client can update
+                If String.IsNullOrWhiteSpace(updateClients) Then
+                    Return True
+                End If
+
+                Dim currentClient As String = GetCurrentClientIdentifier()
+                If String.IsNullOrWhiteSpace(currentClient) Then
+                    LogIniUpdateEvent("Client Check", "Could not determine current client identifier - allowing update")
+                    Return True
+                End If
+
+                ' Parse the comma-separated list of allowed clients
+                Dim allowedClients = updateClients.Split(","c).
+                    Select(Function(c) c.Trim()).
+                    Where(Function(c) Not String.IsNullOrWhiteSpace(c)).
+                    ToList()
+
+                If allowedClients.Count = 0 Then
+                    Return True
+                End If
+
+                ' Check if current client is in the allowed list (case-insensitive)
+                Dim isAllowed = allowedClients.Any(Function(c) c.Equals(currentClient, StringComparison.OrdinalIgnoreCase))
+
+                If Not isAllowed Then
+                    LogIniUpdateEvent("Client Check",
+                        $"Client '{currentClient}' is not in UpdateClients list: {updateClients} - skipping update")
+                End If
+
+                Return isAllowed
+
+            Catch ex As Exception
+                Debug.WriteLine($"Error checking client authorization: {ex.Message}")
+                Return True ' On error, allow update to proceed
+            End Try
+        End Function
+
+#End Region
+
+#Region "Timestamped Backup Helper"
+
+        ''' <summary>
+        ''' Creates a timestamped backup of the specified file, preserving the original extension.
+        ''' Format: filename.ext_yyyyMMdd_HHmmss_fff.bak
+        ''' </summary>
+        ''' <param name="filePath">Path to the file to back up.</param>
+        ''' <returns>The path to the created backup file, or Nothing on failure.</returns>
+        Private Shared Function CreateTimestampedBackup(filePath As String) As String
+            Try
+                If String.IsNullOrWhiteSpace(filePath) OrElse Not File.Exists(filePath) Then
+                    Return Nothing
+                End If
+
+                Dim directory As String = Path.GetDirectoryName(filePath)
+                Dim fileName As String = Path.GetFileName(filePath)
+                Dim timestamp As String = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff")
+                Dim backupFileName As String = $"{fileName}_{timestamp}.bak"
+                Dim backupPath As String = Path.Combine(directory, backupFileName)
+
+                File.Copy(filePath, backupPath, overwrite:=False)
+
+                Return backupPath
+            Catch ex As Exception
+                Debug.WriteLine($"Failed to create timestamped backup for {filePath}: {ex.Message}")
+                Return Nothing
+            End Try
+        End Function
 
 #End Region
 
@@ -2433,7 +3250,6 @@ Namespace SharedLibrary
 
 #End Region
 
-
 #Region "Signature Management UI"
 
         ''' <summary>
@@ -2443,12 +3259,13 @@ Namespace SharedLibrary
             Dim form As New Form() With {
                 .Text = $"{AN} - Update Signature Management",
                 .Size = New Size(750, 380),
-                .StartPosition = FormStartPosition.CenterScreen,
+                .StartPosition = FormStartPosition.CenterParent,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
-                .MinimumSize = New Size(700, 350),
-                .TopMost = True
+                .MinimumSize = New Size(700, 350)
             }
+
+
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -2866,7 +3683,8 @@ Namespace SharedLibrary
             }
             tabHelp.Controls.Add(txtHelp)
 
-            form.ShowDialog(GetDialogOwner())
+            form.ShowDialog()
+
         End Sub
 
         ''' <summary>
@@ -2918,6 +3736,8 @@ Namespace SharedLibrary
 
 #End Region
 
+
+
 #Region "Batch Signing Utility"
 
         ''' <summary>
@@ -2955,13 +3775,14 @@ Namespace SharedLibrary
             Dim form As New Form() With {
                 .Text = $"{AN} - Batch Sign Files",
                 .Size = New Size(750, 520),
-                .StartPosition = FormStartPosition.CenterScreen,
+                .StartPosition = FormStartPosition.CenterParent,
                 .FormBorderStyle = FormBorderStyle.Sizable,
                 .Font = New Font("Segoe UI", 9.0F),
                 .MinimumSize = New Size(600, 400),
-                .AutoScaleMode = AutoScaleMode.Dpi,
-                .TopMost = True
-            }
+                .AutoScaleMode = AutoScaleMode.Dpi
+                            }
+
+
 
             Try
                 Dim bmp As New Bitmap(My.Resources.Red_Ink_Logo)
@@ -3138,7 +3959,7 @@ Namespace SharedLibrary
                                              ShowCustomMessageBox(sb.ToString())
                                          End Sub
 
-            form.ShowDialog(GetDialogOwner())
+            form.ShowDialog()
         End Sub
 
 #End Region
