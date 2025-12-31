@@ -249,17 +249,16 @@ Namespace SharedLibrary
                 context.INI_ShortcutsWordExcel = If(configDict.ContainsKey("ShortcutsWordExcel"), configDict("ShortcutsWordExcel"), "")
                 context.INI_ContextMenu = ParseBoolean(configDict, "ContextMenu", DEFAULT_BOOL_CONTEXTMENU)
 
-                ' Set runtime ignore prompt based on INI_Ignore.
-                If context.INI_Ignore Then context.Ignore = context.SP_Ignore Else context.Ignore = ""
-
                 ' Other parameters.
 
+                context.INI_NoHelperDownload = ParseBoolean(configDict, "NoHelperDownload")
                 context.INI_UpdateCheckInterval = If(configDict.ContainsKey("UpdateCheckInterval"), CInt(configDict("UpdateCheckInterval")), DefaultUpdateIntervalDays)
                 context.INI_UpdatePath = If(configDict.ContainsKey("UpdatePath"), configDict("UpdatePath"), "")
                 context.INI_UpdateIni = ParseBoolean(configDict, "UpdateIni", DEFAULT_BOOL_UPDATEINI)
                 context.INI_UpdateIniAllowRemote = ParseBoolean(configDict, "UpdateIniAllowRemote", DEFAULT_BOOL_UPDATEINI_ALLOWREMOTE)
                 context.INI_UpdateIniNoSignature = ParseBoolean(configDict, "UpdateIniNoSignature", False)
                 context.INI_UpdateSource = If(configDict.ContainsKey("UpdateSource"), configDict("UpdateSource"), "")
+                context.INI_UpdateClients = If(configDict.ContainsKey("UpdateClients"), configDict("UpdateClients"), "")
                 context.INI_UpdateIniIgnoreOverride = If(configDict.ContainsKey("UpdateIniIgnoreOverride"), configDict("UpdateIniIgnoreOverride"), "")
                 context.INI_UpdateIniSilentMode = If(configDict.ContainsKey("UpdateIniSilentMode"), CInt(configDict("UpdateIniSilentMode")), DEFAULT_UPDATE_INI_SILENT_MODE)
                 context.INI_UpdateIniSilentLog = ParseBoolean(configDict, "UpdateIniSilentLog", DEFAULT_BOOL_UPDATEINISILENTLOG)
@@ -273,6 +272,8 @@ Namespace SharedLibrary
                 context.INI_ExtractorPathLocal = If(configDict.ContainsKey("ExtractorPathLocal"), configDict("ExtractorPathLocal"), "")
                 context.INI_RenameLibPath = If(configDict.ContainsKey("RenameLibPath"), configDict("RenameLibPath"), "")
                 context.INI_RenameLibPathLocal = If(configDict.ContainsKey("RenameLibPathLocal"), configDict("RenameLibPathLocal"), "")
+
+                context.INI_Location = If(configDict.ContainsKey("Location"), configDict("Location"), "")
 
                 context.INI_SpeechModelPath = If(configDict.ContainsKey("SpeechModelPath"), configDict("SpeechModelPath"), "")
                 context.INI_TTSEndpoint = If(configDict.ContainsKey("TTSEndpoint"), configDict("TTSEndpoint"), "")
@@ -366,6 +367,11 @@ Namespace SharedLibrary
                         context.INI_OAuth2ATExpiry_2 = If(configDict.ContainsKey("OAuth2ATExpiry_2"), CLng(configDict("OAuth2ATExpiry_2")), DEFAULT_OAUTH2_AT_EXPIRY_2)
                     End If
                 End If
+
+                ' Set runtime ignore prompt based on INI_Ignore. Same with Location.
+                If context.INI_Ignore Then context.Ignore = context.SP_Ignore Else context.Ignore = ""
+                context.Location = context.INI_Location.Trim()
+
 
                 ' Resolve Codebasis (used to decode encrypted API keys) if required.
                 If context.INI_APIEncrypted OrElse context.INI_APIEncrypted_2 Then

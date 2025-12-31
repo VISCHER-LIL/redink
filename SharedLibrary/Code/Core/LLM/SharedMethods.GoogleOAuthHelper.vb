@@ -140,6 +140,7 @@ Namespace SharedLibrary
                 Return $"{unsignedToken}.{signatureBase64}"
             End Function
 
+
             ' Get Access Token
 
             ''' <summary>
@@ -147,25 +148,162 @@ Namespace SharedLibrary
             ''' </summary>
             ''' <returns>Access token string on success; otherwise an empty string.</returns>
             Public Shared Async Function GetAccessToken() As Task(Of String)
-                Dim jwt = GenerateJWT()
-                Dim requestBody As String = JsonConvert.SerializeObject(New With {
-                                .grant_type = "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                                .assertion = jwt
-                                            })
-
-                Using client As New HttpClient()
-                    Dim content = New StringContent(requestBody, Encoding.UTF8, "application/json")
-                    Dim response = Await client.PostAsync(token_uri, content)
-
-                    If response.IsSuccessStatusCode Then
-                        Dim responseBody = Await response.Content.ReadAsStringAsync()
-                        Dim tokenData = JsonConvert.DeserializeObject(Of Dictionary(Of String, String))(responseBody)
-                        Return tokenData("access_token")
-                    Else
-                        ShowCustomMessageBox($"Error getting access token: {response.ReasonPhrase}")
+                Try
+                    ' Validate configuration before attempting request
+                    If String.IsNullOrWhiteSpace(client_email) Then
+                        ShowCustomMessageBox("OAuth configuration error: client_email is not configured.")
                         Return ""
                     End If
-                End Using
+
+                    If String.IsNullOrWhiteSpace(private_key) Then
+                        ShowCustomMessageBox("OAuth configuration error: private_key is not configured.")
+                        Return ""
+                    End If
+
+                    If String.IsNullOrWhiteSpace(token_uri) Then
+                        ShowCustomMessageBox("OAuth configuration error: token_uri is not configured.")
+                        Return ""
+                    End If
+
+                    Dim jwt As String
+                    Try
+                        jwt = GenerateJWT()
+                    Catch ex As Exception
+                        ShowCustomMessageBox($"Error generating OAuth JWT token:{vbCrLf}{vbCrLf}" &
+                                           $"This usually indicates a problem with the private key format.{vbCrLf}{vbCrLf}" &
+                                           $"Details: {ex.Message}")
+                        Return ""
+                    End Try
+
+                    Dim requestBody As String = JsonConvert.SerializeObject(New With {
+                        .grant_type = "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                        .assertion = jwt
+                    })
+
+                    Using client As New HttpClient()
+                        client.Timeout = TimeSpan.FromSeconds(30)
+
+                        Dim content = New StringContent(requestBody, Encoding.UTF8, "application/json")
+                        Dim response = Await client.PostAsync(token_uri, content)
+
+                        Dim responseBody = Await response.Content.ReadAsStringAsync()
+
+                        If response.IsSuccessStatusCode Then
+                            Try
+                                Dim tokenData = JsonConvert.DeserializeObject(Of Dictionary(Of String, Object))(responseBody)
+                                If tokenData IsNot Nothing AndAlso tokenData.ContainsKey("access_token") Then
+                                    Return tokenData("access_token")?.ToString()
+                                Else
+                                    ShowCustomMessageBox("OAuth error: The token response did not contain an access_token.")
+                                    Return ""
+                                End If
+                            Catch ex As Exception
+                                ShowCustomMessageBox($"OAuth error: Failed to parse token response.{vbCrLf}{vbCrLf}Details: {ex.Message}")
+                                Return ""
+                            End Try
+                        Else
+                            ' Try to extract error details from Google's error response
+                            Dim errorMessage = BuildOAuthErrorMessage(response.StatusCode, response.ReasonPhrase, responseBody)
+                            ShowCustomMessageBox(errorMessage)
+                            Return ""
+                        End If
+                    End Using
+
+                Catch ex As HttpRequestException
+                    ShowCustomMessageBox($"Network error while requesting OAuth token:{vbCrLf}{vbCrLf}" &
+                                       $"Unable to connect to the authentication server. Please check your internet connection.{vbCrLf}{vbCrLf}" &
+                                       $"Details: {ex.Message}")
+                    Return ""
+
+                Catch ex As TaskCanceledException
+                    ShowCustomMessageBox("OAuth request timed out.{vbCrLf}{vbCrLf}" &
+                                       "The authentication server did not respond in time. Please try again later.")
+                    Return ""
+
+                Catch ex As Exception
+                    ShowCustomMessageBox($"Unexpected error during OAuth authentication:{vbCrLf}{vbCrLf}{ex.Message}")
+                    Return ""
+                End Try
+            End Function
+
+            ''' <summary>
+            ''' Builds a user-friendly error message from an OAuth error response.
+            ''' </summary>
+            ''' <param name="statusCode">HTTP status code.</param>
+            ''' <param name="reasonPhrase">HTTP reason phrase.</param>
+            ''' <param name="responseBody">Response body that may contain JSON error details.</param>
+            ''' <returns>Formatted error message for display.</returns>
+            Private Shared Function BuildOAuthErrorMessage(statusCode As Net.HttpStatusCode,
+                                                           reasonPhrase As String,
+                                                           responseBody As String) As String
+                Dim sb As New StringBuilder()
+                sb.AppendLine("OAuth authentication failed.")
+                sb.AppendLine()
+
+                ' Try to parse Google's error response format
+                Dim errorDescription As String = Nothing
+                Dim errorCode As String = Nothing
+
+                Try
+                    If Not String.IsNullOrWhiteSpace(responseBody) Then
+                        Dim errorData = JsonConvert.DeserializeObject(Of Dictionary(Of String, Object))(responseBody)
+                        If errorData IsNot Nothing Then
+                            If errorData.ContainsKey("error") Then
+                                errorCode = errorData("error")?.ToString()
+                            End If
+                            If errorData.ContainsKey("error_description") Then
+                                errorDescription = errorData("error_description")?.ToString()
+                            End If
+                        End If
+                    End If
+                Catch
+                    ' Ignore parse errors - we'll fall back to generic message
+                End Try
+
+                ' Provide context based on status code
+                Select Case CInt(statusCode)
+                    Case 400
+                        sb.AppendLine("The authentication request was invalid.")
+                        If Not String.IsNullOrWhiteSpace(errorDescription) Then
+                            sb.AppendLine($"Reason: {errorDescription}")
+                        Else
+                            sb.AppendLine("This may indicate an issue with the service account configuration.")
+                        End If
+
+                    Case 401
+                        sb.AppendLine("Authentication credentials are invalid or expired.")
+                        sb.AppendLine("Please verify your service account credentials are correct.")
+
+                    Case 403
+                        sb.AppendLine("Access denied.")
+                        sb.AppendLine("The service account may not have the required permissions, or the API may not be enabled.")
+
+                    Case 404
+                        sb.AppendLine("The authentication endpoint was not found.")
+                        sb.AppendLine("Please verify the token_uri configuration.")
+
+                    Case 429
+                        sb.AppendLine("Too many authentication requests.")
+                        sb.AppendLine("Please wait a moment and try again.")
+
+                    Case >= 500
+                        sb.AppendLine("The authentication server is temporarily unavailable.")
+                        sb.AppendLine("This is usually a temporary issue. Please try again later.")
+
+                    Case Else
+                        sb.AppendLine($"HTTP {CInt(statusCode)}: {reasonPhrase}")
+                        If Not String.IsNullOrWhiteSpace(errorDescription) Then
+                            sb.AppendLine($"Details: {errorDescription}")
+                        End If
+                End Select
+
+                ' Add error code if available
+                If Not String.IsNullOrWhiteSpace(errorCode) AndAlso errorDescription Is Nothing Then
+                    sb.AppendLine()
+                    sb.AppendLine($"Error code: {errorCode}")
+                End If
+
+                Return sb.ToString()
             End Function
         End Class
 

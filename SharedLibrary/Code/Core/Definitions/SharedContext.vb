@@ -60,6 +60,7 @@ Namespace SharedLibrary
             Property INI_DoubleS As Boolean
             Property INI_Clean As Boolean
             Property INI_Ignore As Boolean
+            Property INI_Location As String
             Property INI_NoDash As Boolean
             Property INI_MarkdownBubbles As Boolean
             Property INI_PreCorrection As String
@@ -254,16 +255,21 @@ Namespace SharedLibrary
             Property SP_MergePrompt2 As String
             Property SP_Add_MergePrompt As String
             Property Ignore As String
+            Property Location As String
+
+            Property INI_NoHelperDownload As Boolean
 
             ' Master switch for INI update mechanism
             Property INI_UpdateIni As Boolean
-            ' Allow HTTPS sources (vs local/network only)
+            ' Clients that are permitted to run updates from remote sources
             Property INI_UpdateIniAllowRemote As Boolean
             ' Skip signature verification if True
             Property INI_UpdateIniNoSignature As Boolean
             ' Update source for redink.ini: "path; keylist; base64_public_key"
             Property INI_UpdateSource As String
             ' Override ignore settings with file-specific and segment-specific rules
+            Property INI_UpdateClients As String
+            ' Allow HTTPS sources (vs local/network only)
             Property INI_UpdateIniIgnoreOverride As String
             ' Silent update mode: Controls whether updates are applied without user interaction
             Property INI_UpdateIniSilentMode As Integer
@@ -295,6 +301,7 @@ Namespace SharedLibrary
         Public Property INI_DoubleS As Boolean Implements ISharedContext.INI_DoubleS
         Public Property INI_Clean As Boolean Implements ISharedContext.INI_Clean
         Public Property INI_Ignore As Boolean Implements ISharedContext.INI_Ignore
+        Public Property INI_Location As String Implements ISharedContext.INI_Location
         Public Property INI_NoDash As Boolean Implements ISharedContext.INI_NoDash
         Public Property INI_MarkdownBubbles As Boolean Implements ISharedContext.INI_MarkdownBubbles
         Public Property INI_PreCorrection As String Implements ISharedContext.INI_PreCorrection
@@ -498,7 +505,9 @@ Namespace SharedLibrary
         Public Property SP_MergePrompt2 As String Implements ISharedContext.SP_MergePrompt2
         Public Property SP_Add_MergePrompt As String Implements ISharedContext.SP_Add_MergePrompt
 
+        Public Property INI_NoHelperDownload As Boolean Implements ISharedContext.INI_NoHelperDownload
         Public Property INI_UpdateIni As Boolean Implements ISharedContext.INI_UpdateIni
+        Public Property INI_UpdateClients As String Implements ISharedContext.INI_UpdateClients
         Public Property INI_UpdateIniAllowRemote As Boolean Implements ISharedContext.INI_UpdateIniAllowRemote
         Public Property INI_UpdateIniNoSignature As Boolean Implements ISharedContext.INI_UpdateIniNoSignature
         Public Property INI_UpdateSource As String Implements ISharedContext.INI_UpdateSource
@@ -507,6 +516,8 @@ Namespace SharedLibrary
         Public Property INI_UpdateIniSilentLog As Boolean Implements ISharedContext.INI_UpdateIniSilentLog
 
         Public Property Ignore As String Implements ISharedContext.Ignore
+
+        Public Property Location As String Implements ISharedContext.Location
 
     End Class
 End Namespace

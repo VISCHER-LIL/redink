@@ -380,6 +380,9 @@ Namespace SharedLibrary
                     helperButton.Text = "Remove Helper"
                 Else
                     helperButton.Text = "Install Helper"
+                    If context.INI_NoHelperDownload Then
+                        helperButton.Enabled = False
+                    End If
                 End If
                 Dim HelperButtonSize As System.Drawing.Size = TextRenderer.MeasureText(helperButton.Text, standardFont)
                 helperButton.Size = New System.Drawing.Size(HelperButtonSize.Width + 20, HelperButtonSize.Height + 10)
@@ -387,7 +390,6 @@ Namespace SharedLibrary
                 settingsForm.Controls.Add(helperButton)
             End If
             Dim CapturedContext As ISharedContext = context
-
 
             AddHandler getMoreStuffButton.Click, Sub(sender, e)
                                                      Try
@@ -784,7 +786,7 @@ Namespace SharedLibrary
         "KeepFormat2", "KeepParaFormatInline", "ReplaceText2", "DoMarkupOutlook", "DoMarkupWord",
         "APIDebug", "ISearch_Approve", "ISearch", "Lib", "ContextMenu", "SecondAPI", "APIEncrypted", "APIEncrypted_2",
         "OAuth2", "OAuth2_2", "PromptLib", "Ignore",
-        "UpdateIni", "UpdateIniAllowRemote", "UpdateIniNoSignature", "UpdateIniSilentLog"
+        "UpdateIni", "UpdateIniAllowRemote", "UpdateIniNoSignature", "UpdateIniSilentLog", "NoHelperDownload"
             }
             Return booleanSettings.Contains(settingKey)
         End Function
@@ -879,6 +881,8 @@ Namespace SharedLibrary
                     Return context.INI_Clean.ToString()
                 Case "Ignore"
                     Return context.INI_Ignore.ToString()
+                Case "Location"
+                    Return context.INI_Location
                 Case "NoEmDash"
                     Return context.INI_NoDash.ToString()
                 Case "MarkdownBubbles"
@@ -1043,6 +1047,8 @@ Namespace SharedLibrary
                     Return context.INI_OAuth2.ToString()
                 Case "OAuth2_2"
                     Return context.INI_OAuth2_2.ToString()
+                Case "NoHelperDownload"
+                    Return context.INI_NoHelperDownload.ToString()
                 Case "UpdateIni"
                     Return context.INI_UpdateIni.ToString()
                 Case "UpdateIniAllowRemote"
@@ -1051,6 +1057,8 @@ Namespace SharedLibrary
                     Return context.INI_UpdateIniNoSignature.ToString()
                 Case "UpdateSource"
                     Return context.INI_UpdateSource
+                Case "UpdateClients"
+                    Return context.INI_UpdateClients
                 Case "UpdateIniIgnoreOverride"
                     Return context.INI_UpdateIniIgnoreOverride
                 Case "UpdateIniSilentMode"
@@ -1149,6 +1157,8 @@ Namespace SharedLibrary
                     context.INI_Clean = Boolean.Parse(value)
                 Case "Ignore"
                     context.INI_Ignore = Boolean.Parse(value)
+                Case "Location"
+                    context.INI_Location = value
                 Case "NoEmDash"
                     context.INI_NoDash = Boolean.Parse(value)
                 Case "MarkdownBubbles"
@@ -1305,6 +1315,8 @@ Namespace SharedLibrary
                     context.INI_RenameLibPath = value
                 Case "RenameLibPathLocal"
                     context.INI_RenameLibPathLocal = value
+                Case "NoHelperDownload"
+                    context.INI_NoHelperDownload = Boolean.Parse(value)
                 Case "UpdateIni"
                     context.INI_UpdateIni = Boolean.Parse(value)
                 Case "UpdateIniAllowRemote"
@@ -1313,6 +1325,8 @@ Namespace SharedLibrary
                     context.INI_UpdateIniNoSignature = Boolean.Parse(value)
                 Case "UpdateSource"
                     context.INI_UpdateSource = value
+                Case "UpdateClients"
+                    context.INI_UpdateClients = value
                 Case "UpdateIniIgnoreOverride"
                     context.INI_UpdateIniIgnoreOverride = value
                 Case "UpdateIniSilentMode"
@@ -1326,6 +1340,7 @@ Namespace SharedLibrary
 
             If context.INI_PromptLibPath.Trim() = "" And context.INI_PromptLibPathLocal.Trim() = "" Then context.INI_PromptLib = False Else context.INI_PromptLib = True
             If context.INI_Ignore Then context.Ignore = context.SP_Ignore Else context.Ignore = ""
+            context.Location = context.INI_Location.Trim()
 
         End Sub
 
@@ -1507,6 +1522,7 @@ Namespace SharedLibrary
                     {"DoubleS", context.INI_DoubleS.ToString()},
                     {"Clean", context.INI_Clean.ToString()},
                     {"Ignore", context.INI_Ignore.ToString()},
+                    {"Location", context.INI_Location},
                     {"NoEmDash", context.INI_NoDash.ToString()},
                     {"DefaultPrefix", context.INI_DefaultPrefix},
                     {"MarkdownBubbles", context.INI_MarkdownBubbles.ToString()},
@@ -1673,10 +1689,12 @@ Namespace SharedLibrary
                     {"SP_MergePrompt", context.SP_MergePrompt},
                     {"SP_MergePrompt2", context.SP_MergePrompt2},
                     {"SP_Add_MergePrompt", context.SP_Add_MergePrompt},
+                    {"NoHelperDownload", context.INI_NoHelperDownload.ToString()},
                     {"UpdateIni", context.INI_UpdateIni.ToString()},
                     {"UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote.ToString()},
                     {"UpdateIniNoSignature", context.INI_UpdateIniNoSignature.ToString()},
                     {"UpdateSource", context.INI_UpdateSource},
+                    {"UpdateClients", context.INI_UpdateClients},
                     {"UpdateIniIgnoreOverride", context.INI_UpdateIniIgnoreOverride},
                     {"UpdateIniSilentMode", context.INI_UpdateIniSilentMode.ToString()},
                     {"UpdateIniSilentLog", context.INI_UpdateIniSilentLog.ToString()}
@@ -2106,10 +2124,12 @@ Namespace SharedLibrary
                     {"DiscussInkyPathLocal", context.INI_DiscussInkyPathLocal},
                     {"UpdateCheckInterval", context.INI_UpdateCheckInterval.ToString()},
                     {"UpdatePath", context.INI_UpdatePath},
+                    {"NoHelperDownload", context.INI_NoHelperDownload.ToString()},
                     {"UpdateIni", context.INI_UpdateIni.ToString()},
                     {"UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote.ToString()},
                     {"UpdateIniNoSignature", context.INI_UpdateIniNoSignature.ToString()},
                     {"UpdateSource", context.INI_UpdateSource},
+                    {"UpdateClients", context.INI_UpdateClients},
                     {"UpdateIniIgnoreOverride", context.INI_UpdateIniIgnoreOverride},
                     {"UpdateIniSilentMode", context.INI_UpdateIniSilentMode.ToString()},
                     {"UpdateIniSilentLog", context.INI_UpdateIniSilentLog.ToString()}
@@ -2568,6 +2588,7 @@ Namespace SharedLibrary
             variableValues.Add("DoubleS", context.INI_DoubleS)
             variableValues.Add("Clean", context.INI_Clean)
             variableValues.Add("Ignore", context.INI_Ignore)
+            variableValues.Add("Location", context.INI_Location)
             variableValues.Add("NoEmDash", context.INI_NoDash)
             variableValues.Add("DefaultPrefix", context.INI_DefaultPrefix)
             variableValues.Add("MarkdownBubbles", context.INI_MarkdownBubbles)
@@ -2740,10 +2761,12 @@ Namespace SharedLibrary
             variableValues.Add("SP_FindPrompts", context.SP_FindPrompts)
             variableValues.Add("SP_MergePrompt", context.SP_MergePrompt)
             variableValues.Add("SP_MergePrompt2", context.SP_MergePrompt2)
+            variableValues.Add("NoHelperDownload", context.INI_NoHelperDownload)
             variableValues.Add("UpdateIni", context.INI_UpdateIni)
             variableValues.Add("UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote)
             variableValues.Add("UpdateIniNoSignature", context.INI_UpdateIniNoSignature)
             variableValues.Add("UpdateSource", context.INI_UpdateSource)
+            variableValues.Add("UpdateClients", context.INI_UpdateClients)
             variableValues.Add("UpdateIniIgnoreOverride", context.INI_UpdateIniIgnoreOverride)
             variableValues.Add("UpdateIniSilentMode", context.INI_UpdateIniSilentMode)
             variableValues.Add("UpdateIniSilentLog", context.INI_UpdateIniSilentLog)
@@ -2773,6 +2796,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("DoubleS") Then context.INI_DoubleS = CBool(updatedValues("DoubleS"))
                 If updatedValues.ContainsKey("Clean") Then context.INI_Clean = CBool(updatedValues("Clean"))
                 If updatedValues.ContainsKey("Ignore") Then context.INI_Ignore = CBool(updatedValues("Ignore"))
+                If updatedValues.ContainsKey("Location") Then context.INI_Location = CStr(updatedValues("Location"))
                 If updatedValues.ContainsKey("NoEmDash") Then context.INI_NoDash = CBool(updatedValues("NoEmDash"))
                 If updatedValues.ContainsKey("DefaultPrefix") Then context.INI_DefaultPrefix = CStr(updatedValues("DefaultPrefix"))
                 If updatedValues.ContainsKey("MarkdownBubbles") Then context.INI_MarkdownBubbles = CBool(updatedValues("MarkdownBubbles"))
@@ -2945,10 +2969,12 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("DocStylePath") Then context.INI_DocStylePath = CStr(updatedValues("DocStylePath"))
                 If updatedValues.ContainsKey("DocStylePathLocal") Then context.INI_DocStylePathLocal = CStr(updatedValues("DocStylePathLocal"))
                 If updatedValues.ContainsKey("PromptLib_Transcript") Then context.INI_PromptLibPath_Transcript = CStr(updatedValues("PromptLib_Transcript"))
+                If updatedValues.ContainsKey("NoHelperDownload") Then context.INI_NoHelperDownload = CBool(updatedValues("NoHelperDownload"))
                 If updatedValues.ContainsKey("UpdateIni") Then context.INI_UpdateIni = CBool(updatedValues("UpdateIni"))
                 If updatedValues.ContainsKey("UpdateIniAllowRemote") Then context.INI_UpdateIniAllowRemote = CBool(updatedValues("UpdateIniAllowRemote"))
                 If updatedValues.ContainsKey("UpdateIniNoSignature") Then context.INI_UpdateIniNoSignature = CBool(updatedValues("UpdateIniNoSignature"))
                 If updatedValues.ContainsKey("UpdateSource") Then context.INI_UpdateSource = CStr(updatedValues("UpdateSource"))
+                If updatedValues.ContainsKey("UpdateClients") Then context.INI_UpdateClients = CStr(updatedValues("UpdateClients"))
                 If updatedValues.ContainsKey("UpdateIniIgnoreOverride") Then context.INI_UpdateIniIgnoreOverride = CStr(updatedValues("UpdateIniIgnoreOverride"))
                 If updatedValues.ContainsKey("UpdateIniSilentMode") Then context.INI_UpdateIniSilentMode = CInt(updatedValues("UpdateIniSilentMode"))
                 If updatedValues.ContainsKey("UpdateIniSilentLog") Then context.INI_UpdateIniSilentLog = CBool(updatedValues("UpdateIniSilentLog"))

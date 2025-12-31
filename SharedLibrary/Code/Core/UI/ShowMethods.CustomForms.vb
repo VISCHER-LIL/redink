@@ -757,7 +757,7 @@ Namespace SharedLibrary
             }
 
             bodyLabel.MaximumSize = New Size(contentWidth, 0)
-            bodyLabel.Location = New Point(PADDING, PADDING)  ' Respect the left and top padding
+            bodyLabel.Location = New System.Drawing.Point(PADDING, PADDING)  ' Respect the left and top padding
             bodyScrollPanel.Controls.Add(bodyLabel)
 
             If needsScroll Then

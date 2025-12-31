@@ -71,11 +71,34 @@ Public NotInheritable Class IniImportManager
 
     ''' <summary>
     ''' Validates backup filenames created by this module for rollback selection.
+    ''' Matches: anyname.ini_yyyyMMdd_HHmmss.bak or anyname.ini_yyyyMMdd_HHmmss_fff.bak
     ''' </summary>
     Private Shared ReadOnly BAK_SIGNATURE_REGEX As New System.Text.RegularExpressions.Regex(
-        "^" & System.Text.RegularExpressions.Regex.Escape(AN2) & "\.(ini|bak)_\d{8}_\d{6}(_\d{3})?\.bak$",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase Or System.Text.RegularExpressions.RegexOptions.CultureInvariant
-    )
+    "^.+\.ini_\d{8}_\d{6}(_\d{3})?\.bak$",
+    System.Text.RegularExpressions.RegexOptions.IgnoreCase Or System.Text.RegularExpressions.RegexOptions.CultureInvariant
+)
+
+    ''' <summary>
+    ''' Represents a placeholder that was successfully resolved during import processing,
+    ''' including the placeholder name and the user-provided replacement value.
+    ''' </summary>
+    ''' <remarks>
+    ''' Instances of this class are collected during placeholder resolution and later used
+    ''' to inject explanatory comments into the resulting INI output.
+    ''' </remarks>
+    Private NotInheritable Class ResolvedPlaceholder
+        ''' <summary>
+        ''' The placeholder name without surrounding brackets (e.g. "API_KEY").
+        ''' </summary>
+        Public Property Name As System.String
+
+        ''' <summary>
+        ''' The value entered by the user that replaced the placeholder.
+        ''' </summary>
+        Public Property Value As System.String
+    End Class
+
+
 
     ''' <summary>
     ''' When True, user-facing summaries include download/parsing errors for skipped items.
@@ -156,17 +179,6 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
-        ' Return True only if the main configuration file content changes.
-        Dim mainIniWasRolledBack As System.Boolean = False
-
-        Dim beforeFingerprint As System.String = Nothing
-        Try
-            beforeFingerprint = GetFileFingerprint(activeIniPath)
-        Catch ex As System.Exception
-            ShowCustomMessageBox("Could not read current configuration file: " & ex.Message)
-            Return False
-        End Try
-
         Dim configDir As System.String = System.IO.Path.GetDirectoryName(activeIniPath)
         If System.String.IsNullOrWhiteSpace(configDir) OrElse Not System.IO.Directory.Exists(configDir) Then
             ShowCustomMessageBox("Could not determine configuration directory.")
@@ -194,14 +206,40 @@ Public NotInheritable Class IniImportManager
             Return False
         End If
 
+        ' Determine the original INI filename from the backup name
+        Dim originalIniName As System.String = ExtractOriginalIniName(latestBak.Name)
+        If System.String.IsNullOrWhiteSpace(originalIniName) Then
+            ShowCustomMessageBox("Could not determine the original file name from backup: " & latestBak.Name)
+            Return False
+        End If
+
+        ' Build the target path (the file to restore)
+        Dim targetIniPath As System.String = System.IO.Path.Combine(configDir, originalIniName)
+
+        ' Check if the target file exists; if not, we can still restore (creates the file)
+        Dim targetExists As System.Boolean = System.IO.File.Exists(targetIniPath)
+
+        ' Return True only if the main configuration file content changes.
+        Dim mainIniWasRolledBack As System.Boolean = False
+
+        Dim beforeFingerprint As System.String = Nothing
+        If targetExists Then
+            Try
+                beforeFingerprint = GetFileFingerprint(targetIniPath)
+            Catch ex As System.Exception
+                ShowCustomMessageBox("Could not read current configuration file: " & ex.Message)
+                Return False
+            End Try
+        End If
+
         Dim msg As System.String =
             "A configuration rollback was requested." & System.Environment.NewLine & System.Environment.NewLine &
-            "Active file:" & System.Environment.NewLine &
-            "  " & activeIniPath & System.Environment.NewLine & System.Environment.NewLine &
+            "Target file to restore:" & System.Environment.NewLine &
+            "  " & targetIniPath & System.Environment.NewLine & System.Environment.NewLine &
             "Latest backup found:" & System.Environment.NewLine &
             "  " & latestBak.FullName & System.Environment.NewLine &
             "  (" & latestBak.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") & ")" & System.Environment.NewLine & System.Environment.NewLine &
-            "Proceed with rollback? The current configuration will be backed up first."
+            If(targetExists, "Proceed with rollback? The current file will be backed up first.", "Proceed with rollback? The file will be created from the backup.")
 
         Dim decision As System.Int32 = ShowCustomYesNoBox(msg, "Yes, rollback", "No, cancel", TITLE_IMPORT)
         If decision <> 1 Then
@@ -209,30 +247,34 @@ Public NotInheritable Class IniImportManager
         End If
 
         Dim ts As System.String = System.DateTime.Now.ToString("yyyyMMdd_HHmmss_fff")
-        Dim baseName As System.String = System.IO.Path.GetFileNameWithoutExtension(activeIniPath)
-        Dim baseExt As System.String = System.IO.Path.GetExtension(activeIniPath)
-        Dim safetyBackup As System.String = System.IO.Path.Combine(configDir, baseName & baseExt & "_rollback_" & ts & ".bak")
+        Dim safetyBackup As System.String = System.IO.Path.Combine(configDir, originalIniName & "_rollback_" & ts & ".bak")
 
-        Try
-            System.IO.File.Copy(activeIniPath, safetyBackup, overwrite:=False)
-        Catch ex As System.Exception
-            ShowCustomMessageBox("Could not create safety backup before rollback: " & ex.Message)
-            Return False
-        End Try
+        If targetExists Then
+            Try
+                System.IO.File.Copy(targetIniPath, safetyBackup, overwrite:=False)
+            Catch ex As System.Exception
+                ShowCustomMessageBox("Could not create safety backup before rollback: " & ex.Message)
+                Return False
+            End Try
+        End If
 
-        Dim tmpPath As System.String = activeIniPath & ".tmp"
+        Dim tmpPath As System.String = targetIniPath & ".tmp"
 
         Try
             System.IO.File.Copy(latestBak.FullName, tmpPath, overwrite:=True)
 
             Try
-                System.IO.File.Replace(tmpPath, activeIniPath, Nothing, True)
+                If targetExists Then
+                    System.IO.File.Replace(tmpPath, targetIniPath, Nothing, True)
+                Else
+                    System.IO.File.Move(tmpPath, targetIniPath)
+                End If
             Catch
                 Try
-                    System.IO.File.Delete(activeIniPath)
+                    If System.IO.File.Exists(targetIniPath) Then System.IO.File.Delete(targetIniPath)
                 Catch
                 End Try
-                System.IO.File.Move(tmpPath, activeIniPath)
+                System.IO.File.Move(tmpPath, targetIniPath)
             End Try
 
         Catch ex As System.Exception
@@ -245,24 +287,64 @@ Public NotInheritable Class IniImportManager
             Return False
         End Try
 
-        Try
-            Dim afterFingerprint As System.String = GetFileFingerprint(activeIniPath)
-            mainIniWasRolledBack =
-                Not System.String.Equals(beforeFingerprint, afterFingerprint, System.StringComparison.Ordinal)
-        Catch
-            mainIniWasRolledBack = False
-        End Try
+        ' Determine if the main INI was affected
+        Dim isMainIni As System.Boolean = System.String.Equals(
+            targetIniPath, activeIniPath, System.StringComparison.OrdinalIgnoreCase)
 
-        ShowCustomMessageBox(
+        If isMainIni AndAlso targetExists Then
+            Try
+                Dim afterFingerprint As System.String = GetFileFingerprint(targetIniPath)
+                mainIniWasRolledBack =
+                    Not System.String.Equals(beforeFingerprint, afterFingerprint, System.StringComparison.Ordinal)
+            Catch
+                mainIniWasRolledBack = False
+            End Try
+        ElseIf isMainIni AndAlso Not targetExists Then
+            mainIniWasRolledBack = True
+        End If
+
+        Dim summaryMsg As System.String =
             "Rollback completed." & System.Environment.NewLine & System.Environment.NewLine &
-            "Active configuration was restored from:" & System.Environment.NewLine &
-            latestBak.FullName & System.Environment.NewLine & System.Environment.NewLine &
-            "Safety backup of the previous active configuration:" & System.Environment.NewLine &
-            safetyBackup & System.Environment.NewLine
-        )
+            "Restored file:" & System.Environment.NewLine &
+            targetIniPath & System.Environment.NewLine & System.Environment.NewLine &
+            "From backup:" & System.Environment.NewLine &
+            latestBak.FullName & System.Environment.NewLine
+
+        If targetExists Then
+            summaryMsg &= System.Environment.NewLine &
+                "Safety backup of the previous file:" & System.Environment.NewLine &
+                safetyBackup & System.Environment.NewLine
+        End If
+
+        ShowCustomMessageBox(summaryMsg)
 
         Return mainIniWasRolledBack
 
+    End Function
+
+    ''' <summary>
+    ''' Extracts the original INI filename from a recognized backup filename.
+    ''' For example: "allmodels.ini_20251230_120000.bak" returns "allmodels.ini"
+    ''' </summary>
+    ''' <param name="bakFileName">Backup file name (no directory).</param>
+    ''' <returns>Original INI filename, or Nothing if not recognized.</returns>
+    Private Shared Function ExtractOriginalIniName(bakFileName As System.String) As System.String
+        If System.String.IsNullOrWhiteSpace(bakFileName) Then Return Nothing
+        If Not IsRecognizedIniBackupFile(bakFileName) Then Return Nothing
+
+        ' Pattern: anyname.ini_yyyyMMdd_HHmmss.bak or anyname.ini_yyyyMMdd_HHmmss_fff.bak
+        ' We need to extract "anyname.ini" from this.
+        Dim rx As New System.Text.RegularExpressions.Regex(
+            "^(.+\.ini)_\d{8}_\d{6}(_\d{3})?\.bak$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase Or System.Text.RegularExpressions.RegexOptions.CultureInvariant
+        )
+
+        Dim m As System.Text.RegularExpressions.Match = rx.Match(bakFileName)
+        If m.Success AndAlso m.Groups.Count >= 2 Then
+            Return m.Groups(1).Value
+        End If
+
+        Return Nothing
     End Function
 
     ''' <summary>
@@ -283,22 +365,21 @@ Public NotInheritable Class IniImportManager
 
     ''' <summary>
     ''' Returns True if a file name matches the full-backup naming convention used by this module.
+    ''' Rollback safety backups (*_rollback_*) are intentionally excluded to prevent restoring
+    ''' the state that was just rolled back from.
     ''' </summary>
     ''' <param name="fileName">Backup file name (no directory).</param>
     Private Shared Function IsRecognizedIniBackupFile(fileName As System.String) As System.Boolean
         If System.String.IsNullOrWhiteSpace(fileName) Then Return False
 
-        ' Only full backups are rollback candidates; removed-content backups are excluded.
-        ' Examples produced by this codebase today:
-        '   redink.ini_yyyyMMdd_HHmmss_fff.bak          (CommitDryRunPlan)
-        '   redink.ini_yyyyMMdd_HHmmss.bak              (sample files backup / older)
-        '   redink.ini_removed_yyyyMMdd_HHmmss.bak      (removed-content backup)  -> not a full backup
-        '   redink.ini_removed_yyyyMMdd_HHmmss_fff.bak  -> not a full backup
-        ' If fileName.IndexOf("_removed_", System.StringComparison.OrdinalIgnoreCase) >= 0 Then Return False
+        ' Only full backups are rollback candidates; removed-content backups and rollback safety
+        ' backups are excluded. The regex requires the pattern: name.ini_YYYYMMDD_HHMMSS[_fff].bak
+        ' which excludes *_rollback_* and *_removed_* patterns.
         If Not fileName.EndsWith(".bak", System.StringComparison.OrdinalIgnoreCase) Then Return False
 
         Return BAK_SIGNATURE_REGEX.IsMatch(fileName)
     End Function
+
 
     ' =========================================================================================
     '  SAMPLE FILE DOWNLOAD FEATURE
@@ -1071,6 +1152,8 @@ Public NotInheritable Class IniImportManager
             System.Windows.Forms.Application.DoEvents()
         End If
 
+        Dim kindSelected As System.Boolean = True
+
         Try
             Select Case mode
                 Case ImportMode.DirectOtherParameters
@@ -1078,12 +1161,12 @@ Public NotInheritable Class IniImportManager
 
                 Case ImportMode.InteractiveWithoutOtherParameters
                     If Not TryChooseImportKind(ownerForm, kind, True) Then
-                        Return False
+                        kindSelected = False
                     End If
 
                 Case Else
                     If Not TryChooseImportKind(ownerForm, kind, False) Then
-                        Return False
+                        kindSelected = False
                     End If
             End Select
         Finally
@@ -1094,14 +1177,26 @@ Public NotInheritable Class IniImportManager
             End If
         End Try
 
+        If Not kindSelected Then
+            Return False
+        End If
+
         Dim normalizedImportText As System.String = NormalizeImportTextForKind(sourceText, kind)
 
         Dim substitutedText As System.String = normalizedImportText
         Dim placeholderWarnings As New System.Collections.Generic.List(Of System.String)()
 
-        If Not TryResolvePlaceholders(ownerForm, substitutedText, placeholderWarnings) Then
+        Dim resolvedPlaceholders As New System.Collections.Generic.List(Of ResolvedPlaceholder)()
+
+        If Not TryResolvePlaceholders(
+        ownerForm,
+        substitutedText,
+        placeholderWarnings,
+        resolvedPlaceholders
+                ) Then
             Return False
         End If
+
 
         If placeholderWarnings.Count > 0 Then
             ShowCustomMessageBox(System.String.Join(System.Environment.NewLine & System.Environment.NewLine, placeholderWarnings))
@@ -1414,6 +1509,12 @@ Public NotInheritable Class IniImportManager
         If autoOptions Is Nothing Then
             Dim decision As System.Int32 = ShowCustomYesNoBox(sb.ToString(), "Yes, continue", "No, abort import")
             If decision <> 1 Then Return False
+        End If
+
+        If resolvedPlaceholders.Count > 0 Then
+            For Each p As DryRunPlan In plans
+                InjectPlaceholderCommentsIntoPlan(p, resolvedPlaceholders)
+            Next
         End If
 
         For Each p As DryRunPlan In plans
@@ -1989,15 +2090,37 @@ Public NotInheritable Class IniImportManager
     ' =========================================================================================
 
     ''' <summary>
-    ''' Prompts the user for values for each [[...]] placeholder and substitutes non-empty entries.
+    ''' Prompts the user for values for each [[...]] placeholder found in the input text and
+    ''' substitutes non-empty entries directly into the text.
     ''' </summary>
-    ''' <param name="ownerForm">Owner window.</param>
-    ''' <param name="text">Input/output text containing placeholders.</param>
-    ''' <param name="warnings">Collector for warnings about placeholders left unresolved.</param>
-    ''' <returns>True if processing should continue; otherwise False.</returns>
-    Private Shared Function TryResolvePlaceholders(ownerForm As System.Windows.Forms.Form,
-                                                  ByRef text As System.String,
-                                                  warnings As System.Collections.Generic.List(Of System.String)) As System.Boolean
+    ''' <param name="ownerForm">Owner window used for modal UI prompts.</param>
+    ''' <param name="text">
+    ''' Input/output text containing placeholders; updated in-place with resolved values.
+    ''' </param>
+    ''' <param name="warnings">
+    ''' Collector for warnings about placeholders that were left unresolved and remain in the text.
+    ''' </param>
+    ''' <param name="resolved">
+    ''' Collector for placeholders that were successfully resolved, including the placeholder
+    ''' name and the user-provided value. This list is later used to annotate the output INI file.
+    ''' </param>
+    ''' <returns>
+    ''' True if placeholder processing completed and import should continue; otherwise False
+    ''' if the user aborted the placeholder input dialog.
+    ''' </returns>
+
+    Private Shared Function TryResolvePlaceholders(
+    ownerForm As System.Windows.Forms.Form,
+    ByRef text As System.String,
+    warnings As System.Collections.Generic.List(Of System.String),
+    ByRef resolved As System.Collections.Generic.List(Of ResolvedPlaceholder)
+) As System.Boolean
+
+
+        If resolved Is Nothing Then
+            resolved = New System.Collections.Generic.List(Of ResolvedPlaceholder)()
+        End If
+
 
         If warnings Is Nothing Then warnings = New System.Collections.Generic.List(Of System.String)()
         If System.String.IsNullOrWhiteSpace(text) Then Return True
@@ -2060,6 +2183,11 @@ Public NotInheritable Class IniImportManager
                 Dim keyRx As New System.Text.RegularExpressions.Regex("\[\[" & System.Text.RegularExpressions.Regex.Escape(name) & "\]\]",
                                                                      System.Text.RegularExpressions.RegexOptions.IgnoreCase)
                 text = keyRx.Replace(text, value)
+                resolved.Add(New ResolvedPlaceholder With {
+                        .Name = name,
+                        .Value = value
+                    })
+
             Else
                 warnings.Add("Warning: Placeholder '[[ " & name & " ]]' was left empty and remains in the configuration." & System.Environment.NewLine &
                              "You can later fill it using the 'Edit .ini Files' feature or directly access the file.")
@@ -2427,6 +2555,112 @@ Public NotInheritable Class IniImportManager
         ApplyMainIniKeyReplaceAppend(plan, existingLines, kv)
         Return plan
     End Function
+
+    ''' <summary>
+    ''' Injects explanatory comment lines for resolved placeholders into a dry-run plan's
+    ''' generated output content.
+    ''' </summary>
+    ''' <remarks>
+    ''' For sectioned INI files (alternate models or special services), the comments are inserted
+    ''' at the beginning of each affected section, preceded and followed by exactly one empty line.
+    ''' For global (non-sectioned) INI files, the comments are appended at the end of the file,
+    ''' also surrounded by exactly one empty line before and after the comment block.
+    '''
+    ''' The injected comments use the format:
+    '''   ; [[placeholder]] = uservalue
+    '''
+    ''' This method modifies <see cref="DryRunPlan.NewFileLines"/> in-place and does not affect
+    ''' parsing, backup generation, or commit semantics.
+    ''' </remarks>
+    ''' <param name="plan">
+    ''' The dry-run plan whose generated output lines will be annotated.
+    ''' </param>
+    ''' <param name="resolved">
+    ''' The list of placeholders that were resolved during import processing.
+    ''' If empty or Nothing, no changes are made.
+    ''' </param>
+    Private Shared Sub InjectPlaceholderCommentsIntoPlan(
+    plan As DryRunPlan,
+    resolved As System.Collections.Generic.List(Of ResolvedPlaceholder)
+)
+        If plan Is Nothing OrElse
+       resolved Is Nothing OrElse
+       resolved.Count = 0 OrElse
+       plan.NewFileLines Is Nothing Then
+            Return
+        End If
+
+        Dim commentLines As New System.Collections.Generic.List(Of System.String)()
+        For Each rp As ResolvedPlaceholder In resolved
+            commentLines.Add("; [[" & rp.Name & "]] = " & rp.Value)
+        Next
+
+        ' ==========================================================
+        ' SECTIONED INI (AlternateModel / SpecialService)
+        ' ==========================================================
+        If plan.Kind = ImportKind.AlternateModel OrElse
+       plan.Kind = ImportKind.SpecialService Then
+
+            For Each sectionName As System.String In plan.SectionNames
+
+                Dim startIndex As System.Int32 = -1
+                Dim endIndex As System.Int32 = -1
+
+                FindSectionRange(plan.NewFileLines, sectionName, startIndex, endIndex)
+                If startIndex < 0 Then Continue For
+
+                Dim insertIndex As System.Int32 = startIndex + 1
+
+                ' Remove all empty lines directly after the section header
+                While insertIndex < plan.NewFileLines.Count AndAlso
+                  plan.NewFileLines(insertIndex).Trim().Length = 0
+                    plan.NewFileLines.RemoveAt(insertIndex)
+                End While
+
+                ' Insert ONE empty line before comments
+                plan.NewFileLines.Insert(insertIndex, "")
+                insertIndex += 1
+
+                ' Insert comments
+                For Each c As System.String In commentLines
+                    plan.NewFileLines.Insert(insertIndex, c)
+                    insertIndex += 1
+                Next
+
+                ' Remove all empty lines after comments
+                While insertIndex < plan.NewFileLines.Count AndAlso
+                  plan.NewFileLines(insertIndex).Trim().Length = 0
+                    plan.NewFileLines.RemoveAt(insertIndex)
+                End While
+
+                ' Insert ONE empty line after comments
+                plan.NewFileLines.Insert(insertIndex, "")
+            Next
+
+        Else
+            ' ==========================================================
+            ' GLOBAL INI
+            ' ==========================================================
+
+            ' Remove trailing empty lines
+            While plan.NewFileLines.Count > 0 AndAlso
+              plan.NewFileLines(plan.NewFileLines.Count - 1).Trim().Length = 0
+                plan.NewFileLines.RemoveAt(plan.NewFileLines.Count - 1)
+            End While
+
+            ' ONE empty line before comments
+            plan.NewFileLines.Add("")
+
+            ' Comments
+            For Each c As System.String In commentLines
+                plan.NewFileLines.Add(c)
+            Next
+
+            ' ONE empty line after comments
+            plan.NewFileLines.Add("")
+        End If
+    End Sub
+
 
     ''' <summary>
     ''' Commits a dry-run plan by writing backups and replacing the target file content (atomic replace when possible).
