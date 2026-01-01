@@ -37,6 +37,7 @@ Option Explicit On
 
 Imports System.Windows.Forms
 Imports SharedLibrary.SharedLibrary.SharedContext
+Imports UglyToad.PdfPig.Graphics.Operations.PathPainting
 
 Namespace SharedLibrary
     Partial Public Class SharedMethods
@@ -183,6 +184,7 @@ Namespace SharedLibrary
                 context.SP_Add_KeepFormulasIntact = If(configDict.ContainsKey("SP_Add_KeepFormulasIntact"), configDict("SP_Add_KeepFormulasIntact"), Default_SP_Add_KeepFormulasIntact)
                 context.SP_Add_KeepHTMLIntact = If(configDict.ContainsKey("SP_Add_KeepHTMLIntact"), configDict("SP_Add_KeepHTMLIntact"), Default_SP_Add_KeepHTMLIntact)
                 context.SP_Add_KeepInlineIntact = If(configDict.ContainsKey("SP_Add_KeepInlineIntact"), configDict("SP_Add_KeepInlineIntact"), Default_SP_Add_KeepInlineIntact)
+                context.SP_Add_Tooling = If(configDict.ContainsKey("SP_Add_Tooling"), configDict("SP_Add_Tooling"), Default_SP_Add_Tooling)
                 context.SP_Add_Bubbles = If(configDict.ContainsKey("SP_Add_Bubbles"), configDict("SP_Add_Bubbles"), Default_SP_Add_Bubbles)
                 context.SP_Add_BubblesExtract = If(configDict.ContainsKey("SP_Add_BubblesExtract"), configDict("SP_Add_BubblesExtract"), Default_SP_Add_BubblesExtract)
                 context.SP_Add_BubblesReply = If(configDict.ContainsKey("SP_Add_BubblesReply"), configDict("SP_Add_BubblesReply"), Default_SP_Add_BubblesReply)
@@ -248,6 +250,12 @@ Namespace SharedLibrary
                 context.INI_APIEncrypted = ParseBoolean(configDict, "APIKeyEncrypted")
                 context.INI_ShortcutsWordExcel = If(configDict.ContainsKey("ShortcutsWordExcel"), configDict("ShortcutsWordExcel"), "")
                 context.INI_ContextMenu = ParseBoolean(configDict, "ContextMenu", DEFAULT_BOOL_CONTEXTMENU)
+
+                ' Tooling settings
+
+                context.INI_ToolingLogWindow = ParseBoolean(configDict, "ToolingLogWindow", DEFAULT_BOOL_TOOLINGLOGWINDOW)
+                context.INI_ToolingDryRun = ParseBoolean(configDict, "ToolingDryRun")
+                context.INI_ToolingMaximumIterations = If(configDict.ContainsKey("ToolingMaximumIterations"), CInt(configDict("ToolingMaximumIterations")), DEFAULT_TOOLING_MAXIMUMITERATIONS)
 
                 ' Other parameters.
 

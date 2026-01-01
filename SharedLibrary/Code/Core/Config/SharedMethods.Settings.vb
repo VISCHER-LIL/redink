@@ -785,7 +785,7 @@ Namespace SharedLibrary
         "DoubleS", "NoEmDash", "Clean", "MarkdownBubbles", "KeepFormat1", "MarkdownConvert", "ReplaceText1",
         "KeepFormat2", "KeepParaFormatInline", "ReplaceText2", "DoMarkupOutlook", "DoMarkupWord",
         "APIDebug", "ISearch_Approve", "ISearch", "Lib", "ContextMenu", "SecondAPI", "APIEncrypted", "APIEncrypted_2",
-        "OAuth2", "OAuth2_2", "PromptLib", "Ignore",
+        "OAuth2", "OAuth2_2", "PromptLib", "Ignore", "ToolingLogWindow", "ToolingDryRun",
         "UpdateIni", "UpdateIniAllowRemote", "UpdateIniNoSignature", "UpdateIniSilentLog", "NoHelperDownload"
             }
             Return booleanSettings.Contains(settingKey)
@@ -1049,6 +1049,12 @@ Namespace SharedLibrary
                     Return context.INI_OAuth2_2.ToString()
                 Case "NoHelperDownload"
                     Return context.INI_NoHelperDownload.ToString()
+                Case "ToolingLogWindow"
+                    Return context.INI_ToolingLogWindow.ToString()
+                Case "ToolingDryRun"
+                    Return context.INI_ToolingDryRun.ToString()
+                Case "ToolingMaximumIterations"
+                    Return context.INI_ToolingMaximumIterations.ToString()
                 Case "UpdateIni"
                     Return context.INI_UpdateIni.ToString()
                 Case "UpdateIniAllowRemote"
@@ -1317,6 +1323,12 @@ Namespace SharedLibrary
                     context.INI_RenameLibPathLocal = value
                 Case "NoHelperDownload"
                     context.INI_NoHelperDownload = Boolean.Parse(value)
+                Case "ToolingLogWindow"
+                    context.INI_ToolingLogWindow = Boolean.Parse(value)
+                Case "ToolingDryRun"
+                    context.INI_ToolingDryRun = Boolean.Parse(value)
+                Case "ToolingMaximumIterations"
+                    context.INI_ToolingMaximumIterations = Integer.Parse(value)
                 Case "UpdateIni"
                     context.INI_UpdateIni = Boolean.Parse(value)
                 Case "UpdateIniAllowRemote"
@@ -1674,6 +1686,7 @@ Namespace SharedLibrary
                     {"SP_Add_BubblesExtract", context.SP_Add_BubblesExtract},
                     {"SP_Add_Bubbles_Format", context.SP_Add_Bubbles_Format},
                     {"SP_Add_Batch", context.SP_Add_Batch},
+                    {"SP_Add_Tooling", context.SP_Add_Tooling},
                     {"SP_Add_Slides", context.SP_Add_Slides},
                     {"SP_BubblesExcel", context.SP_BubblesExcel},
                     {"SP_Add_Revisions", context.SP_Add_Revisions},
@@ -1690,6 +1703,9 @@ Namespace SharedLibrary
                     {"SP_MergePrompt2", context.SP_MergePrompt2},
                     {"SP_Add_MergePrompt", context.SP_Add_MergePrompt},
                     {"NoHelperDownload", context.INI_NoHelperDownload.ToString()},
+                    {"ToolingLogWindow", context.INI_ToolingLogWindow.ToString()},
+                    {"ToolingDryRun", context.INI_ToolingDryRun.ToString()},
+                    {"ToolingMaximumIterations", context.INI_ToolingMaximumIterations.ToString()},
                     {"UpdateIni", context.INI_UpdateIni.ToString()},
                     {"UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote.ToString()},
                     {"UpdateIniNoSignature", context.INI_UpdateIniNoSignature.ToString()},
@@ -1757,6 +1773,7 @@ Namespace SharedLibrary
                     {"SP_Add_BubblesExtract", Default_SP_Add_BubblesExtract},
                     {"SP_Add_Bubbles_Format", Default_SP_Add_Bubbles_Format},
                     {"SP_Add_Batch", Default_SP_Add_Batch},
+                    {"SP_Add_Tooling", Default_SP_Add_Tooling},
                     {"SP_Add_Slides", Default_SP_Add_Slides},
                     {"SP_BubblesExcel", Default_SP_BubblesExcel},
                     {"SP_Add_Revisions", Default_SP_Add_Revisions},
@@ -1791,6 +1808,8 @@ Namespace SharedLibrary
                     {"DoMarkupWord", DEFAULT_BOOL_DOMARKUPWORD},
                     {"ContextMenu", DEFAULT_BOOL_CONTEXTMENU},
                     {"ISearch", DEFAULT_BOOL_ISEARCH_ENABLED},
+                    {"ToolingLogWindow", DEFAULT_BOOL_TOOLINGLOGWINDOW},
+                    {"ToolingMaximumIterations", DEFAULT_TOOLING_MAXIMUMITERATIONS},
                     {"UpdateIni", DEFAULT_BOOL_UPDATEINI},
                     {"UpdateIniAllowRemote", DEFAULT_BOOL_UPDATEINI_ALLOWREMOTE},
                     {"UpdateIniSilentLog", DEFAULT_BOOL_UPDATEINISILENTLOG},
@@ -2125,6 +2144,9 @@ Namespace SharedLibrary
                     {"UpdateCheckInterval", context.INI_UpdateCheckInterval.ToString()},
                     {"UpdatePath", context.INI_UpdatePath},
                     {"NoHelperDownload", context.INI_NoHelperDownload.ToString()},
+                    {"ToolingLogWindow", context.INI_ToolingLogWindow.ToString()},
+                    {"ToolingDryRun", context.INI_ToolingDryRun.ToString()},
+                    {"ToolingMaximumIterations", context.INI_ToolingMaximumIterations.ToString()},
                     {"UpdateIni", context.INI_UpdateIni.ToString()},
                     {"UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote.ToString()},
                     {"UpdateIniNoSignature", context.INI_UpdateIniNoSignature.ToString()},
@@ -2746,6 +2768,7 @@ Namespace SharedLibrary
             variableValues.Add("SP_Add_BubblesExtract", context.SP_Add_BubblesExtract)
             variableValues.Add("SP_Add_Bubbles_Format", context.SP_Add_Bubbles_Format)
             variableValues.Add("SP_Add_Batch", context.SP_Add_Batch)
+            variableValues.Add("SP_Add_Tooling", context.SP_Add_Tooling)
             variableValues.Add("SP_Add_Slides", context.SP_Add_Slides)
             variableValues.Add("SP_BubblesExcel", context.SP_BubblesExcel)
             variableValues.Add("SP_Add_Revisions", context.SP_Add_Revisions)
@@ -2762,6 +2785,9 @@ Namespace SharedLibrary
             variableValues.Add("SP_MergePrompt", context.SP_MergePrompt)
             variableValues.Add("SP_MergePrompt2", context.SP_MergePrompt2)
             variableValues.Add("NoHelperDownload", context.INI_NoHelperDownload)
+            variableValues.Add("ToolingLogWindow", context.INI_ToolingLogWindow)
+            variableValues.Add("ToolingDryRun", context.INI_ToolingDryRun)
+            variableValues.Add("ToolingMaximumIterations", context.INI_ToolingMaximumIterations)
             variableValues.Add("UpdateIni", context.INI_UpdateIni)
             variableValues.Add("UpdateIniAllowRemote", context.INI_UpdateIniAllowRemote)
             variableValues.Add("UpdateIniNoSignature", context.INI_UpdateIniNoSignature)
@@ -2901,6 +2927,7 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("SP_Add_BubblesExtract") Then context.SP_Add_BubblesExtract = CStr(updatedValues("SP_Add_BubblesExtract"))
                 If updatedValues.ContainsKey("SP_Add_Bubbles_Format") Then context.SP_Add_Bubbles_Format = CStr(updatedValues("SP_Add_Bubbles_Format"))
                 If updatedValues.ContainsKey("SP_Add_Batch") Then context.SP_Add_Batch = CStr(updatedValues("SP_Add_Batch"))
+                If updatedValues.ContainsKey("SP_Add_Tooling") Then context.SP_Add_Tooling = CStr(updatedValues("SP_Add_Tooling"))
                 If updatedValues.ContainsKey("SP_Add_Slides") Then context.SP_Add_Slides = CStr(updatedValues("SP_Add_Slides"))
                 If updatedValues.ContainsKey("SP_BubblesExcel") Then context.SP_BubblesExcel = CStr(updatedValues("SP_BubblesExcel"))
                 If updatedValues.ContainsKey("SP_Add_Revisions") Then context.SP_Add_Revisions = CStr(updatedValues("SP_Add_Revisions"))
@@ -2970,6 +2997,9 @@ Namespace SharedLibrary
                 If updatedValues.ContainsKey("DocStylePathLocal") Then context.INI_DocStylePathLocal = CStr(updatedValues("DocStylePathLocal"))
                 If updatedValues.ContainsKey("PromptLib_Transcript") Then context.INI_PromptLibPath_Transcript = CStr(updatedValues("PromptLib_Transcript"))
                 If updatedValues.ContainsKey("NoHelperDownload") Then context.INI_NoHelperDownload = CBool(updatedValues("NoHelperDownload"))
+                If updatedValues.ContainsKey("ToolingLogWindow") Then context.INI_ToolingLogWindow = CBool(updatedValues("ToolingLogWindow"))
+                If updatedValues.ContainsKey("ToolingDryRun") Then context.INI_ToolingDryRun = CBool(updatedValues("ToolingDryRun"))
+                If updatedValues.ContainsKey("ToolingMaximumIterations") Then context.INI_ToolingMaximumIterations = CInt(updatedValues("ToolingMaximumIterations"))
                 If updatedValues.ContainsKey("UpdateIni") Then context.INI_UpdateIni = CBool(updatedValues("UpdateIni"))
                 If updatedValues.ContainsKey("UpdateIniAllowRemote") Then context.INI_UpdateIniAllowRemote = CBool(updatedValues("UpdateIniAllowRemote"))
                 If updatedValues.ContainsKey("UpdateIniNoSignature") Then context.INI_UpdateIniNoSignature = CBool(updatedValues("UpdateIniNoSignature"))

@@ -3,22 +3,27 @@
 '
 ' =============================================================================
 ' File: SharedMethods.AlternateModels.vb
-' Purpose: Provides functionality to load, select, and apply alternative LLM/model
-'          configurations ("alternate models") from an INI file, and to transfer
-'          configuration values between `ISharedContext` and `ModelConfig`.
+' Purpose: Loads, filters, and applies alternative LLM/model configurations ("alternate models")
+'          from an INI file, and transfers configuration values between `ISharedContext` and
+'          `ModelConfig` for UI-driven selection and task-driven switching.
 '
 ' Architecture:
-'  - INI Parsing: `LoadAlternativeModels` parses an INI file into per-section dictionaries
-'    (`Dictionary(Of String, String)`) and materializes each section as a `ModelConfig`.
-'  - ModelConfig Materialization: `CreateModelConfigFromDict` maps keys to `ModelConfig`
-'    properties and resolves API key material via `RealAPIKeyMC` depending on OAuth2 usage.
+'  - INI Parsing: `LoadAlternativeModels` reads an INI file, parses each section into a
+'    `Dictionary(Of String, String)`, and materializes each section as a `ModelConfig`.
+'  - ModelConfig Materialization: `CreateModelConfigFromDict` maps INI keys to `ModelConfig`
+'    properties, initializes OAuth2-related fields, and resolves key material using `RealAPIKeyMC`.
 '  - Context Snapshot/Restore: `GetCurrentConfig` snapshots the active configuration from
 '    `ISharedContext`; `ApplyModelConfig` writes a `ModelConfig` back into `ISharedContext`.
+'  - Filtering Rules: `ProcessModelSection` excludes deprecated entries and optionally excludes
+'    `ToolOnly` entries; can also filter to only tool-capable definitions.
 '  - UI Integration: `ShowModelSelection` uses `ModelSelectorForm` (single selection) and
-'    `ShowMultipleModelSelection` uses `MultiModelSelectorForm` (multi-selection) to let
-'    the user choose model configurations.
-'  - Task-Based Selection: `GetSpecialTaskModel` scans the INI sections for a given flag key
-'    (e.g., task name) set to a truthy value and applies the first match.
+'    `ShowMultipleModelSelection` uses `MultiModelSelectorForm` (multi-selection).
+'  - Task-Based Selection: `GetSpecialTaskModel` scans INI sections for a given key (task flag)
+'    set to a truthy value and applies the first matching section.
+'
+' Notes:
+'  - The INI key `APIKeyEncrypted` is parsed into `ModelConfig.APIEncrypted`.
+'  - Deprecated can be configured via both `Deprecated` and `NotAvailable`.
 ' =============================================================================
 
 Option Strict On
@@ -32,15 +37,14 @@ Namespace SharedLibrary
 
     Partial Public Class SharedMethods
 
-
         ''' <summary>
-        ''' Creates a <see cref="ModelConfig"/> instance from a dictionary built from an INI section.
-        ''' Also resolves API key material via <c>RealAPIKeyMC</c> and initializes OAuth2-related fields
-        ''' used by callers.
+        ''' Creates a <see cref="ModelConfig"/> instance from an INI-section dictionary.
+        ''' Populates properties from known keys, initializes OAuth2-related fields, and resolves
+        ''' API key material using <c>RealAPIKeyMC</c>.
         ''' </summary>
         ''' <param name="configDict">Key/value pairs parsed from an INI section.</param>
-        ''' <param name="context">Shared context used for prompt defaults and API key resolution.</param>
-        ''' <param name="Description">Model description (typically taken from the INI section name).</param>
+        ''' <param name="context">Shared context used for defaults and API key resolution.</param>
+        ''' <param name="Description">Model display description (typically taken from the INI section name).</param>
         ''' <returns>A populated <see cref="ModelConfig"/> instance.</returns>
         Public Shared Function CreateModelConfigFromDict(ByVal configDict As Dictionary(Of String, String), context As ISharedContext, Description As String) As ModelConfig
             Dim mc As New ModelConfig()
@@ -73,24 +77,57 @@ Namespace SharedLibrary
 
                 mc.APIKeyBack = mc.APIKey
 
-                ' Additional configurations for OAuth2
+                ' OAuth2-related runtime fields (default values for later refresh/usage).
                 mc.TokenExpiry = Microsoft.VisualBasic.DateAndTime.DateAdd(Microsoft.VisualBasic.DateInterval.Year, -1, DateTime.Now)
                 mc.DecodedAPI = ""
 
-                ' Check and decrypt API keys
+                ' API key resolution:
+                ' - OAuth2: use RealAPIKeyMC(...) as returned and strip literal "\n" sequences.
+                ' - Non-OAuth2: store decoded key material in DecodedAPI; APIKey remains the original configured value.
                 If mc.OAuth2 Then
                     mc.APIKey = Trim(Replace(RealAPIKeyMC(mc.APIKey, True, mc, context), "\n", ""))
                 Else
                     mc.DecodedAPI = RealAPIKeyMC(mc.APIKey, False, mc, context)
                 End If
 
+                ' === TOOLING PROPERTIES ===
+                ' Tooling configuration used by LLM/tool-call related features.
+                mc.Tool = ParseBoolean(configDict, "Tool")
+                mc.ToolOnly = ParseBoolean(configDict, "ToolOnly")
+                mc.Deprecated = ParseBoolean(configDict, "Off") OrElse ParseBoolean(configDict, "Deprecated")
+
+                mc.APICall_ToolInstructions = If(configDict.ContainsKey("APICall_ToolInstructions"), configDict("APICall_ToolInstructions"), "")
+                mc.APICall_ToolInstructions_Template = If(configDict.ContainsKey("APICall_ToolInstructions_Template"), configDict("APICall_ToolInstructions_Template"), "")
+                mc.APICall_ToolResponses = If(configDict.ContainsKey("APICall_ToolResponses"), configDict("APICall_ToolResponses"), "")
+                mc.APICall_ToolResponses_Template = If(configDict.ContainsKey("APICall_ToolResponses_Template"), configDict("APICall_ToolResponses_Template"), "")
+                mc.APICall_ToolCallPart_Template = If(configDict.ContainsKey("APICall_ToolCallPart_Template"), configDict("APICall_ToolCallPart_Template"), "")
+                mc.ToolCallDetectionPattern = If(configDict.ContainsKey("ToolCallDetectionPattern"), configDict("ToolCallDetectionPattern"), "")
+                mc.ToolCallExtractionMap = If(configDict.ContainsKey("ToolCallExtractionMap"), configDict("ToolCallExtractionMap"), "")
+
+                mc.ToolName = If(configDict.ContainsKey("ToolName"), configDict("ToolName"), "")
+                mc.ToolInstructionsPrompt = If(configDict.ContainsKey("ToolInstructionsPrompt"), configDict("ToolInstructionsPrompt"), "")
+                mc.ToolDefinition = If(configDict.ContainsKey("ToolDefinition"), configDict("ToolDefinition"), "")
+                mc.ToolAPICall = If(configDict.ContainsKey("ToolAPICall"), configDict("ToolAPICall"), "")
+                mc.ToolErrorHandling = If(configDict.ContainsKey("ToolErrorHandling"), configDict("ToolErrorHandling"), "skip")
+                mc.ToolParameterDefaults = If(configDict.ContainsKey("ToolParameterDefaults"), configDict("ToolParameterDefaults"), "")
+
+                If configDict.ContainsKey("ToolPriority") Then
+                    Dim priorityVal As Integer
+                    If Integer.TryParse(configDict("ToolPriority"), priorityVal) Then
+                        mc.ToolPriority = priorityVal
+                    Else
+                        mc.ToolPriority = 100
+                    End If
+                Else
+                    mc.ToolPriority = 100
+                End If
+
             Catch ex As System.Exception
                 MessageBox.Show("Error in CreateModelConfigFromDict: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             End Try
+
             Return mc
         End Function
-
-
 
         ''' <summary>
         ''' Creates a <see cref="ModelConfig"/> snapshot from values currently stored in <see cref="ISharedContext"/>.
@@ -100,7 +137,7 @@ Namespace SharedLibrary
         Public Shared Function GetCurrentConfig(ByVal context As ISharedContext) As ModelConfig
             Dim mc As New ModelConfig()
             Try
-                ' Here we simulate reading from a config dictionary by using the context values.
+                ' Copy active context values into a ModelConfig snapshot.
                 mc.APIKey = If(String.IsNullOrEmpty(context.INI_APIKey_2), "", context.INI_APIKey_2)
                 mc.APIKeyBack = If(String.IsNullOrEmpty(context.INI_APIKeyBack_2), "", context.INI_APIKeyBack_2)
                 mc.Endpoint = If(String.IsNullOrEmpty(context.INI_Endpoint_2), "", context.INI_Endpoint_2)
@@ -126,6 +163,15 @@ Namespace SharedLibrary
                 mc.DecodedAPI = context.DecodedAPI_2
                 mc.TokenExpiry = context.TokenExpiry_2
 
+                ' === CAPTURE TOOLING PROPERTIES ===
+                mc.APICall_ToolInstructions = context.INI_APICall_ToolInstructions_2
+                mc.APICall_ToolInstructions_Template = context.INI_APICall_ToolInstructions_Template_2
+                mc.APICall_ToolResponses = context.INI_APICall_ToolResponses_2
+                mc.APICall_ToolResponses_Template = context.INI_APICall_ToolResponses_Template_2
+                mc.APICall_ToolCallPart_Template = context.INI_APICall_ToolCallPart_Template_2
+                mc.ToolCallDetectionPattern = context.INI_ToolCallDetectionPattern_2
+                mc.ToolCallExtractionMap = context.INI_ToolCallExtractionMap_2
+
             Catch ex As System.Exception
                 MessageBox.Show("Error in GetCurrentConfig: " & ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error)
             End Try
@@ -133,8 +179,7 @@ Namespace SharedLibrary
         End Function
 
         ''' <summary>
-        ''' Applies the specified <see cref="ModelConfig"/> to the provided <see cref="ISharedContext"/> by copying
-        ''' configuration values into the context fields used by callers.
+        ''' Applies the specified <see cref="ModelConfig"/> to the provided <see cref="ISharedContext"/>.
         ''' </summary>
         ''' <param name="context">Target context to receive the configuration values.</param>
         ''' <param name="config">Source configuration values to apply.</param>
@@ -173,6 +218,16 @@ Namespace SharedLibrary
                 context.SP_MergePrompt = If(Not String.IsNullOrEmpty(config.MergePrompt), config.MergePrompt, "")
                 SP_QueryPrompt = If(Not String.IsNullOrEmpty(config.QueryPrompt), config.QueryPrompt, "")
 
+                ' === APPLY TOOLING PROPERTIES ===
+                ' These are shared/module-level variables used by LLM() for tool-related behavior.
+                context.INI_APICall_ToolInstructions_2 = If(Not String.IsNullOrEmpty(config.APICall_ToolInstructions), config.APICall_ToolInstructions, "")
+                context.INI_APICall_ToolInstructions_Template_2 = If(Not String.IsNullOrEmpty(config.APICall_ToolInstructions_Template), config.APICall_ToolInstructions_Template, "")
+                context.INI_APICall_ToolResponses_2 = If(Not String.IsNullOrEmpty(config.APICall_ToolResponses), config.APICall_ToolResponses, "")
+                context.INI_APICall_ToolResponses_Template_2 = If(Not String.IsNullOrEmpty(config.APICall_ToolResponses_Template), config.APICall_ToolResponses_Template, "")
+                context.INI_APICall_ToolCallPart_Template_2 = If(Not String.IsNullOrEmpty(config.APICall_ToolCallPart_Template), config.APICall_ToolCallPart_Template, "")
+                context.INI_ToolCallDetectionPattern_2 = If(Not String.IsNullOrEmpty(config.ToolCallDetectionPattern), config.ToolCallDetectionPattern, "")
+                context.INI_ToolCallExtractionMap_2 = If(Not String.IsNullOrEmpty(config.ToolCallExtractionMap), config.ToolCallExtractionMap, "")
+
                 ErrorFlag = False
 
             Catch ex As System.Exception
@@ -192,17 +247,25 @@ Namespace SharedLibrary
             ApplyModelConfig(context, originalConfig)
         End Sub
 
-
         ''' <summary>
-        ''' Loads alternative model configurations from an INI file and returns them as a list of <see cref="ModelConfig"/>.
-        ''' Each INI section is treated as one model configuration; section names are stored in <see cref="ModelConfig.ModelDescription"/>.
-        ''' Models with Depreciated=True are excluded. If ModelNote exists, it is appended to the description in brackets.
+        ''' Loads alternative model configurations from an INI file.
+        ''' Each INI section is treated as one model configuration; section names are stored in
+        ''' <see cref="ModelConfig.ModelDescription"/> (possibly extended with <c>ModelNote</c> and tooling suffix).
+        ''' Deprecation and tool-only filters are applied in <c>ProcessModelSection</c>.
         ''' </summary>
         ''' <param name="iniFilePath">Path to the INI file.</param>
         ''' <param name="context">Shared context used when creating <see cref="ModelConfig"/> instances.</param>
-        ''' <param name="title">The purpose for which the models are used.</param>
-        ''' <returns>List of parsed <see cref="ModelConfig"/> entries (empty if file not found or contains no sections).</returns>
-        Public Shared Function LoadAlternativeModels(ByVal iniFilePath As String, context As ISharedContext, Optional Title As String = "") As List(Of ModelConfig)
+        ''' <param name="Title">The purpose for which the models are used (used only for error message text).</param>
+        ''' <param name="includeToolOnly">If <c>True</c>, includes <c>ToolOnly</c> entries; otherwise excludes them.</param>
+        ''' <param name="toolsOnly">
+        ''' If <c>True</c>, only returns entries that contain a <c>ToolDefinition</c> or <c>ToolInstructionsPrompt</c>.
+        ''' </param>
+        ''' <returns>List of parsed <see cref="ModelConfig"/> entries (empty if the file is missing or has no sections).</returns>
+        Public Shared Function LoadAlternativeModels(ByVal iniFilePath As String,
+                                                      context As ISharedContext,
+                                                      Optional Title As String = "",
+                                                      Optional includeToolOnly As Boolean = False,
+                                                      Optional toolsOnly As Boolean = False) As List(Of ModelConfig)
             Dim models As New List(Of ModelConfig)()
             Try
                 If Not File.Exists(iniFilePath) Then
@@ -212,22 +275,18 @@ Namespace SharedLibrary
 
                 Dim currentDict As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
                 Dim Description As String = ""
+
                 For Each XLine In File.ReadAllLines(iniFilePath)
                     Dim trimmedLine As String = XLine.Trim()
-                    ' Skip empty lines and comments.
+                    ' Skip empty lines and comments (';').
                     If String.IsNullOrEmpty(trimmedLine) OrElse trimmedLine.StartsWith(";") Then
                         Continue For
                     End If
 
-                    ' Section header (e.g., [Model1]) indicates a new model.
+                    ' Section header (e.g., [Model1]) starts a new model section.
                     If trimmedLine.StartsWith("[") AndAlso trimmedLine.EndsWith("]") Then
                         If currentDict.Count > 0 Then
-                            ' Check if model is deprecated before adding
-                            If Not ParseBoolean(currentDict, "Depreciated") Then
-                                ' Build description with ModelNote if present
-                                Dim finalDescription As String = BuildModelDescription(Description, currentDict)
-                                models.Add(CreateModelConfigFromDict(currentDict, context, finalDescription))
-                            End If
+                            ProcessModelSection(currentDict, Description, context, models, includeToolOnly, toolsOnly)
                             currentDict.Clear()
                         End If
                         Description = trimmedLine.Substring(1, trimmedLine.Length - 2).Trim()
@@ -239,7 +298,6 @@ Namespace SharedLibrary
                     If tokens.Length = 2 Then
                         Dim key As String = tokens(0).Trim()
                         Dim value As String = tokens(1).Trim()
-                        ' Store the key/value pair.
                         If Not currentDict.ContainsKey(key) Then
                             currentDict.Add(key, value)
                         Else
@@ -247,26 +305,72 @@ Namespace SharedLibrary
                         End If
                     End If
                 Next
-                ' Add the last model if any and not deprecated.
+
+                ' Materialize the final section (if any).
                 If currentDict.Count > 0 Then
-                    If Not ParseBoolean(currentDict, "Depreciated") Then
-                        Dim finalDescription As String = BuildModelDescription(Description, currentDict)
-                        models.Add(CreateModelConfigFromDict(currentDict, context, finalDescription))
-                    End If
+                    ProcessModelSection(currentDict, Description, context, models, includeToolOnly, toolsOnly)
                 End If
+
             Catch ex As System.Exception
                 ShowCustomMessageBox($"Error reading INI file for models {If(String.IsNullOrWhiteSpace(Title), " ", $"for '{Title}' ")}({iniFilePath}): " & ex.Message)
             End Try
             Return models
         End Function
 
+        ''' <summary>
+        ''' Processes a single INI section dictionary and adds a corresponding <see cref="ModelConfig"/> to <paramref name="models"/>
+        ''' if the section passes deprecation and tool-related filters.
+        ''' </summary>
+        ''' <param name="currentDict">The parsed key/value pairs for the current INI section.</param>
+        ''' <param name="description">The base description derived from the INI section header.</param>
+        ''' <param name="context">Shared context passed to <see cref="CreateModelConfigFromDict"/>.</param>
+        ''' <param name="models">The destination list for accepted model configurations.</param>
+        ''' <param name="includeToolOnly">Whether to include <c>ToolOnly</c> entries.</param>
+        ''' <param name="toolsOnly">Whether to only include tool definitions.</param>
+        Private Shared Sub ProcessModelSection(currentDict As Dictionary(Of String, String),
+                                               description As String,
+                                               context As ISharedContext,
+                                               models As List(Of ModelConfig),
+                                               includeToolOnly As Boolean,
+                                               toolsOnly As Boolean)
+            ' Exclude deprecated sections.
+            If ParseBoolean(currentDict, "Depreciated") OrElse ParseBoolean(currentDict, "Deprecated") Then
+                Return
+            End If
+
+            ' Exclude ToolOnly sections unless explicitly included.
+            Dim isToolOnly = ParseBoolean(currentDict, "ToolOnly")
+            If isToolOnly AndAlso Not includeToolOnly Then
+                Return
+            End If
+
+            ' If selecting tools only, require a tool definition or tool prompt.
+            If toolsOnly Then
+                Dim hasToolDef = currentDict.ContainsKey("ToolDefinition") AndAlso Not String.IsNullOrWhiteSpace(currentDict("ToolDefinition"))
+                Dim hasToolPrompt = currentDict.ContainsKey("ToolInstructionsPrompt") AndAlso Not String.IsNullOrWhiteSpace(currentDict("ToolInstructionsPrompt"))
+                If Not hasToolDef AndAlso Not hasToolPrompt Then
+                    Return
+                End If
+            End If
+
+            ' Build description with `ModelNote` and tooling suffix (if applicable).
+            Dim finalDescription As String = BuildModelDescription(description, currentDict)
+
+            Dim supportsTool = ParseBoolean(currentDict, "Tool") OrElse currentDict.ContainsKey("APICall_ToolInstructions")
+            If supportsTool AndAlso Not finalDescription.EndsWith(ToolingSuffix) Then
+                finalDescription &= ToolingSuffix
+            End If
+
+            Dim mc = CreateModelConfigFromDict(currentDict, context, finalDescription)
+            models.Add(mc)
+        End Sub
 
         ''' <summary>
-        ''' Builds the model description by combining the section header with the ModelNote parameter if present.
+        ''' Builds the model display description by combining the section header with the optional <c>ModelNote</c> value.
         ''' </summary>
         ''' <param name="sectionHeader">The INI section header (e.g., "GPT-4").</param>
         ''' <param name="configDict">The configuration dictionary for the section.</param>
-        ''' <returns>The combined description: "SectionHeader (ModelNote)" or just "SectionHeader" if no ModelNote.</returns>
+        ''' <returns>The combined description: "SectionHeader - ModelNote" or "SectionHeader" if no ModelNote is present.</returns>
         Private Shared Function BuildModelDescription(ByVal sectionHeader As String, ByVal configDict As Dictionary(Of String, String)) As String
             Dim modelNote As String = ""
             If configDict.ContainsKey("ModelNote") Then
@@ -279,7 +383,6 @@ Namespace SharedLibrary
                 Return sectionHeader
             End If
         End Function
-
 
         ''' <summary>
         ''' Snapshot of the default configuration captured prior to applying an alternate model.
@@ -308,18 +411,18 @@ Namespace SharedLibrary
 
         ''' <summary>
         ''' Displays a single-selection model picker dialog and applies the chosen configuration to the provided context.
+        ''' Also captures the current configuration into <see cref="originalConfig"/> for optional restoration.
         ''' </summary>
         ''' <param name="context">Shared context to be updated.</param>
         ''' <param name="iniFilePath">Path to the INI file containing alternative models.</param>
         ''' <param name="Title">Dialog title.</param>
         ''' <param name="Listtype">Dialog label above the listbox.</param>
         ''' <param name="OptionText">Checkbox label controlling reset-to-default behavior.</param>
-        ''' <param name="UseCase">Selection mode (see <c>ModelSelectorForm</c>).</param>
+        ''' <param name="UseCase">Selection mode (passed to <c>ModelSelectorForm</c>).</param>
         ''' <returns><c>True</c> if the dialog completed with OK; otherwise <c>False</c>.</returns>
         Public Shared Function ShowModelSelection(ByVal context As ISharedContext, iniFilePath As String, Optional Title As String = "Freestyle", Optional Listtype As String = "Select the model you want to use:", Optional OptionText As String = "Reset to default model after use", Optional UseCase As Integer = 1) As Boolean
             Try
-                ' Back up the current (default) configuration.
-
+                ' Back up the current configuration into `originalConfig` for restore behavior.
                 originalConfig = GetCurrentConfig(context)
                 originalConfigLoaded = True
 
@@ -345,7 +448,6 @@ Namespace SharedLibrary
                 Return False
             End Try
         End Function
-
 
         ''' <summary>
         ''' Displays a multi-selection model picker dialog and stores the chosen models in <see cref="SelectedAlternateModels"/>.
@@ -386,8 +488,6 @@ Namespace SharedLibrary
             End Try
         End Function
 
-
-
         ''' <summary>
         ''' Retrieves and applies the first model whose INI section contains a key matching <paramref name="Task"/>
         ''' with a truthy value (True/Yes/Wahr/Ja/On/1).
@@ -395,7 +495,7 @@ Namespace SharedLibrary
         ''' <param name="context">Shared context to receive the selected model configuration.</param>
         ''' <param name="iniFilePath">Path to the INI file.</param>
         ''' <param name="Task">Key name to locate in each INI section.</param>
-        ''' <param name="UseCase">Selection mode (currently used only for compatibility with other call sites).</param>
+        ''' <param name="UseCase">Selection mode (currently unused by this method).</param>
         ''' <returns><c>True</c> if a matching model was found and applied; otherwise <c>False</c>.</returns>
         Public Shared Function GetSpecialTaskModel(ByVal context As ISharedContext,
                                                ByVal iniFilePath As String,
@@ -408,7 +508,7 @@ Namespace SharedLibrary
                     Return False
                 End If
 
-                ' Backup current (default) config like ShowModelSelection
+                ' Back up the current configuration into `originalConfig` (same pattern as ShowModelSelection).
                 originalConfigLoaded = False
                 originalConfig = GetCurrentConfig(context)
                 originalConfigLoaded = True
@@ -421,22 +521,25 @@ Namespace SharedLibrary
                 Dim currentDict As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
                 Dim description As String = ""
 
+                ' Applies the current section if it contains the task key set to a truthy value.
                 Dim applyIfMatch As Func(Of Boolean) =
                     Function()
                         If currentDict.Count = 0 Then Return False
                         If currentDict.ContainsKey(normalizedTask) Then
                             Dim raw As String = currentDict(normalizedTask)
                             If raw Is Nothing Then raw = ""
-                            ' Strip inline comments ; or # (common INI patterns)
+
+                            ' Strip inline comments ';' or '#', then trim and remove surrounding quotes.
                             Dim scIdx = raw.IndexOf(";"c)
                             If scIdx >= 0 Then raw = raw.Substring(0, scIdx)
                             Dim hashIdx = raw.IndexOf("#"c)
                             If hashIdx >= 0 Then raw = raw.Substring(0, hashIdx)
                             raw = raw.Trim()
-                            ' Remove surrounding quotes if present
+
                             If raw.Length >= 2 AndAlso ((raw.StartsWith("""") AndAlso raw.EndsWith("""")) OrElse (raw.StartsWith("'") AndAlso raw.EndsWith("'"))) Then
                                 raw = raw.Substring(1, raw.Length - 2).Trim()
                             End If
+
                             Dim lowered = raw.ToLowerInvariant()
                             If truthy.Contains(lowered) OrElse lowered = "1" Then
                                 Dim mc = CreateModelConfigFromDict(currentDict, context, description)
@@ -453,7 +556,7 @@ Namespace SharedLibrary
                         Continue For
                     End If
 
-                    ' Section header
+                    ' Section header.
                     If line.StartsWith("[") AndAlso line.EndsWith("]") Then
                         If applyIfMatch() Then
                             Return True
@@ -463,7 +566,7 @@ Namespace SharedLibrary
                         Continue For
                     End If
 
-                    ' key=value
+                    ' Parse key=value.
                     Dim tokens = line.Split(New Char() {"="c}, 2)
                     If tokens.Length = 2 Then
                         Dim key = tokens(0).Trim()
@@ -472,7 +575,7 @@ Namespace SharedLibrary
                     End If
                 Next
 
-                ' Final section
+                ' Final section.
                 If applyIfMatch() Then
                     Return True
                 End If

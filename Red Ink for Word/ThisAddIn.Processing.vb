@@ -95,6 +95,9 @@ Partial Public Class ThisAddIn
     ' - SlideDeck: String containing the file path to the PowerPoint deck to be created or modified.
     ' - AddDocs: Boolean flag indicating whether insertdocs should be added
     ' - DoMyStyle: Boolean flag whether MyStyleInsert shall be used
+    ' - DoBubblesExtract: Boolean flag whether text shall be extracted from bubbles
+    ' - DoPushback: Boolean flag whether a pushback to bubbles shall be done
+    ' - SelectedTools: List of ModelConfig indicating the tools selected for tooling runs
 
     ''' <summary>
     ''' Stores paragraph-level style, font, list, alignment, and spacing information for reapplication after text processing.
@@ -170,8 +173,36 @@ Partial Public Class ThisAddIn
     ''' <param name="DoMyStyle">Use MyStyle insertion.</param>
     ''' <param name="DoBubblesExtract">Extract text from bubbles.</param>
     ''' <param name="DoPushback">Reply to bubbles.</param>
+    ''' <param name="SelectedTools">Tools selected for Tooling</param>
     ''' <returns>Empty string on completion.</returns>
-    Private Async Function ProcessSelectedText(SysCommand As String, CheckMaxToken As Boolean, KeepFormat As Boolean, ParaFormatInline As Boolean, InPlace As Boolean, DoMarkup As Boolean, MarkupMethod As Integer, PutInClipboard As Boolean, PutInBubbles As Boolean, SelectionMandatory As Boolean, UseSecondAPI As Boolean, FormattingCap As Integer, Optional DoTPMarkup As Boolean = False, Optional TPMarkupname As String = "", Optional CreatePodcast As Boolean = False, Optional FileObject As String = "", Optional DoPane As Boolean = False, Optional ChunkSize As Integer = 0, Optional NoFormatAndFieldSaving As Boolean = False, Optional DoNewDoc As Boolean = False, Optional SlideDeck As String = "", Optional AddDocs As Boolean = False, Optional DoMyStyle As Boolean = False, Optional DoBubblesExtract As Boolean = False, Optional DoPushback As Boolean = False) As Task(Of String)
+    Public Async Function ProcessSelectedText(
+     SysCommand As String,
+     CheckMaxToken As Boolean,
+     KeepFormat As Boolean,
+     ParaFormatInline As Boolean,
+     InPlace As Boolean,
+     DoMarkup As Boolean,
+     MarkupMethod As Integer,
+     PutInClipboard As Boolean,
+     PutInBubbles As Boolean,
+     SelectionMandatory As Boolean,
+     UseSecondAPI As Boolean,
+     FormattingCap As Integer,
+     Optional DoTPMarkup As Boolean = False,
+     Optional TPMarkupname As String = "",
+     Optional CreatePodcast As Boolean = False,
+     Optional FileObject As String = "",
+     Optional DoPane As Boolean = False,
+     Optional ChunkSize As Integer = 0,
+     Optional NoFormatAndFieldSaving As Boolean = False,
+     Optional DoNewDoc As Boolean = False,
+     Optional SlideDeck As String = "",
+     Optional AddDocs As Boolean = False,
+     Optional DoMyStyle As Boolean = False,
+     Optional DoBubblesExtract As Boolean = False,
+     Optional DoPushback As Boolean = False,
+     Optional SelectedTools As List(Of ModelConfig) = Nothing) As Task(Of String)
+
 
         Dim application As Word.Application = Globals.ThisAddIn.Application
         Dim selection As Microsoft.Office.Interop.Word.Selection = application.Selection
@@ -224,7 +255,7 @@ Partial Public Class ThisAddIn
 
                 If selection.Type = WdSelectionType.wdSelectionIP Or selection.Tables.Count = 0 Or PutInClipboard Or PutInBubbles Or DoPushback Then
 
-                    Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, CreatePodcast, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, AddDocs, DoMyStyle, DoBubblesExtract, False, DoPushback)
+                    Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, CreatePodcast, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, AddDocs, DoMyStyle, DoBubblesExtract, False, DoPushback, SelectedTools)
 
                 Else
 
@@ -296,7 +327,7 @@ Partial Public Class ThisAddIn
                                         InPlace, DoMarkup, MarkupMethod, PutInClipboard,
                                         PutInBubbles, SelectionMandatory, UseSecondAPI,
                                         FormattingCap, DoTPMarkup, TPMarkupname, False,
-                                        FileObject, DoPane, 0, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
+                                        FileObject, DoPane, 0, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True, SelectedTools:=SelectedTools)
 
                                     ' Throttle so Word doesn't lock up
                                     Await System.Threading.Tasks.Task.Delay(500)
@@ -346,7 +377,7 @@ Partial Public Class ThisAddIn
                                         ' Also verify it's not empty
                                         If textChunk.Start < textChunk.End Then
                                             textChunk.Select()
-                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
+                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True, SelectedTools:=SelectedTools)
                                             Await System.Threading.Tasks.Task.Delay(500)
                                         End If
                                     Else
@@ -357,7 +388,7 @@ Partial Public Class ThisAddIn
 
                                         If textChunk.Tables.Count = 0 AndAlso textChunk.Start < textChunk.End Then
                                             textChunk.Select()
-                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
+                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True, SelectedTools:=SelectedTools)
                                             Await System.Threading.Tasks.Task.Delay(500)
                                         End If
 
@@ -389,7 +420,7 @@ Partial Public Class ThisAddIn
                                         cellRange.End -= 1  ' Exclude cell marker
                                         If cellRange.Start < cellRange.End Then
                                             cellRange.Select()
-                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, 0, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
+                                            Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, 0, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True, SelectedTools:=SelectedTools)
                                             Await System.Threading.Tasks.Task.Delay(500)
                                         End If
                                     Next
@@ -409,7 +440,7 @@ Partial Public Class ThisAddIn
 
                                     finalChunk.Select()
                                     Dim text = selection.Text
-                                    Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
+                                    Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True, SelectedTools:=SelectedTools)
                                 Else
                                     Do
                                         finalChunk.Start += 1
@@ -419,7 +450,7 @@ Partial Public Class ThisAddIn
 
                                     If finalChunk.Tables.Count = 0 AndAlso finalChunk.Start < finalChunk.End Then
                                         finalChunk.Select()
-                                        Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True)
+                                        Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, False, FileObject, DoPane, ChunkSize * -1, NoFormatAndFieldSaving, DoNewDoc, "", AddDocs, DoMyStyle, DoBubblesExtract, True, SelectedTools:=SelectedTools)
                                     End If
                                 End If
                             End If
@@ -429,7 +460,7 @@ Partial Public Class ThisAddIn
 
                     ElseIf userdialog = 1 Then
 
-                        Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, CreatePodcast, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, AddDocs, DoMyStyle, DoBubblesExtract, False, DoPushback)
+                        Dim Result = Await TrueProcessSelectedText(SysCommand, CheckMaxToken, KeepFormat, ParaFormatInline, InPlace, DoMarkup, MarkupMethod, PutInClipboard, PutInBubbles, SelectionMandatory, UseSecondAPI, FormattingCap, DoTPMarkup, TPMarkupname, CreatePodcast, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, AddDocs, DoMyStyle, DoBubblesExtract, False, DoPushback, SelectedTools)
 
                     End If
 
@@ -483,8 +514,36 @@ Partial Public Class ThisAddIn
     ''' <param name="DoBubblesExtract">Extract from bubbles.</param>
     ''' <param name="InTable">Processing within table context.</param>
     ''' <param name="DoPushback">Reply to bubbles.</param>
+    ''' <param name="SelectedTools">The tools selected for tooling runs</param>
     ''' <returns>Empty string on completion.</returns>
-    Private Async Function TrueProcessSelectedText(SysCommand As String, CheckMaxToken As Boolean, KeepFormat As Boolean, ParaFormatInline As Boolean, InPlace As Boolean, DoMarkup As Boolean, MarkupMethod As Integer, PutInClipboard As Boolean, PutInBubbles As Boolean, SelectionMandatory As Boolean, UseSecondAPI As Boolean, FormattingCap As Integer, Optional DoTPMarkup As Boolean = False, Optional TPMarkupname As String = "", Optional CreatePodcast As Boolean = False, Optional FileObject As String = "", Optional DoPane As Boolean = False, Optional ChunkSize As Integer = 0, Optional NoFormatAndFieldSaving As Boolean = False, Optional DoNewDoc As Boolean = False, Optional SlideDeck As String = "", Optional AddDocs As Boolean = False, Optional DoMyStyle As Boolean = False, Optional DoBubblesExtract As Boolean = False, Optional InTable As Boolean = False, Optional DoPushback As Boolean = False) As Task(Of String)
+    Private Async Function TrueProcessSelectedText(SysCommand As String,
+       CheckMaxToken As Boolean,
+       KeepFormat As Boolean,
+       ParaFormatInline As Boolean,
+       InPlace As Boolean,
+       DoMarkup As Boolean,
+       MarkupMethod As Integer,
+       PutInClipboard As Boolean,
+       PutInBubbles As Boolean,
+       SelectionMandatory As Boolean,
+       UseSecondAPI As Boolean,
+       FormattingCap As Integer,
+       Optional DoTPMarkup As Boolean = False,
+       Optional TPMarkupname As String = "",
+       Optional CreatePodcast As Boolean = False,
+       Optional FileObject As String = "",
+       Optional DoPane As Boolean = False,
+       Optional ChunkSize As Integer = 0,
+       Optional NoFormatAndFieldSaving As Boolean = False,
+       Optional DoNewDoc As Boolean = False,
+       Optional SlideDeck As String = "",
+       Optional AddDocs As Boolean = False,
+       Optional DoMyStyle As Boolean = False,
+       Optional DoBubblesExtract As Boolean = False,
+       Optional InTable As Boolean = False,
+       Optional DoPushback As Boolean = False,
+       Optional SelectedTools As List(Of ModelConfig) = Nothing) As Task(Of String)
+
 
         Dim application As Word.Application = Globals.ThisAddIn.Application
         Dim selection As Microsoft.Office.Interop.Word.Selection = application.Selection
@@ -934,20 +993,44 @@ Partial Public Class ThisAddIn
 
                 Dim LLMResult As String = ""
 
-                If SelectedAlternateModels Is Nothing OrElse SelectedAlternateModels.Count = 0 OrElse DoMarkup OrElse PutInBubbles OrElse DoPushback OrElse SlideInsert <> "" Then
-
-                    LLMResult = Await LLM(SysCommand & If(String.IsNullOrWhiteSpace(BubblesText), "", " " & SP_Add_BubblesExtract) & If(DoTPMarkup, " " & SP_Add_Revisions, "") & " " & If(SlideDeck = "", If(NoFormatting, "", If(KeepFormat, " " & SP_Add_KeepHTMLIntact, " " & SP_Add_KeepInlineIntact)), " " & SP_Add_Slides) & If(DoMyStyle, " " & MyStyleInsert, ""), If(NoSelectedText, If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>" & If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert & " " & BubblesText), "", "", 0, UseSecondAPI, False, OtherPrompt, FileObject)
-
+                ' If tools are selected and the model supports tooling, enter the tool execution loop
+                If SelectedTools IsNot Nothing AndAlso SelectedTools.Count > 0 AndAlso UseSecondAPI Then
+                    LLMResult = Await ExecuteToolingLoop(
+                        SysCommand,
+                        SelectedText,
+                        SelectedTools,
+                        UseSecondAPI,
+                        FileObject,
+                        DoTPMarkup,
+                        BubblesText,
+                        NoFormatting,
+                        KeepFormat,
+                        SlideDeck,
+                        DoMyStyle,
+                        MyStyleInsert,
+                        AddDocs,
+                        InsertDocs,
+                        SlideInsert,
+                        OtherPrompt)
                 Else
 
-                    For Each mc As ModelConfig In SelectedAlternateModels
-                        Dim err As Boolean = False
-                        ApplyModelConfig(_context, mc, err)
+                    ' Other LLM calls w/o Tooling
 
-                        LLMResult += mc.ModelDescription & ":" & vbCrLf & vbCrLf & Await LLM(SysCommand & If(String.IsNullOrWhiteSpace(BubblesText), "", " " & SP_Add_BubblesExtract) & If(DoTPMarkup, " " & SP_Add_Revisions, "") & " " & If(SlideDeck = "", If(NoFormatting, "", If(KeepFormat, " " & SP_Add_KeepHTMLIntact, " " & SP_Add_KeepInlineIntact)), " " & SP_Add_Slides) & If(DoMyStyle, " " & MyStyleInsert, ""), If(NoSelectedText, If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>" & If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert & " " & BubblesText), "", "", 0, UseSecondAPI, False, OtherPrompt, FileObject) & vbCrLf
+                    If SelectedAlternateModels Is Nothing OrElse SelectedAlternateModels.Count = 0 OrElse DoMarkup OrElse PutInBubbles OrElse DoPushback OrElse SlideInsert <> "" Then
 
-                    Next
+                        LLMResult = Await LLM(SysCommand & If(String.IsNullOrWhiteSpace(BubblesText), "", " " & SP_Add_BubblesExtract) & If(DoTPMarkup, " " & SP_Add_Revisions, "") & " " & If(SlideDeck = "", If(NoFormatting, "", If(KeepFormat, " " & SP_Add_KeepHTMLIntact, " " & SP_Add_KeepInlineIntact)), " " & SP_Add_Slides) & If(DoMyStyle, " " & MyStyleInsert, ""), If(NoSelectedText, If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>" & If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert & " " & BubblesText), "", "", 0, UseSecondAPI, False, OtherPrompt, FileObject)
 
+                    Else
+
+                        For Each mc As ModelConfig In SelectedAlternateModels
+                            Dim err As Boolean = False
+                            ApplyModelConfig(_context, mc, err)
+
+                            LLMResult += mc.ModelDescription & ":" & vbCrLf & vbCrLf & Await LLM(SysCommand & If(String.IsNullOrWhiteSpace(BubblesText), "", " " & SP_Add_BubblesExtract) & If(DoTPMarkup, " " & SP_Add_Revisions, "") & " " & If(SlideDeck = "", If(NoFormatting, "", If(KeepFormat, " " & SP_Add_KeepHTMLIntact, " " & SP_Add_KeepInlineIntact)), " " & SP_Add_Slides) & If(DoMyStyle, " " & MyStyleInsert, ""), If(NoSelectedText, If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert, "<TEXTTOPROCESS>" & SelectedText & "</TEXTTOPROCESS>" & If(AddDocs, " " & InsertDocs & " ", "") & SlideInsert & " " & BubblesText), "", "", 0, UseSecondAPI, False, OtherPrompt, FileObject) & vbCrLf
+
+                        Next
+
+                    End If
                 End If
 
                 OtherPrompt = ""

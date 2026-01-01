@@ -38,6 +38,7 @@ Option Explicit On
 
 Imports System.Globalization
 Imports System.IO
+Imports System.Security.Cryptography.X509Certificates
 Imports System.Text
 Imports System.Text.RegularExpressions
 Imports System.Threading
@@ -82,8 +83,9 @@ Namespace SharedLibrary
         ''' <param name="AddUserPrompt">Optional additional user instruction used for placeholder replacement and logging.</param>
         ''' <param name="FileObject">Optional file/clipboard object reference used for object upload features.</param>
         ''' <param name="cancellationToken">Cancellation token propagated to network calls and linked to splash cancellation.</param>
+        ''' <param name="ToolExecution">If <c>True</c> then LLM expects to be in the tooling execution mode when calling an LLM (necessary for building APICall).</c>.</param>
         ''' <returns>Extracted text from the JSON response; returns an empty string on cancellation or on handled errors.</returns>
-        Public Shared Async Function LLM(context As ISharedContext, ByVal promptSystem As String, ByVal promptUser As String, Optional ByVal Model As String = "", Optional ByVal Temperature As String = "", Optional ByVal Timeout As Long = 0, Optional ByVal UseSecondAPI As Boolean = False, Optional ByVal Hidesplash As Boolean = False, Optional ByVal AddUserPrompt As String = "", Optional FileObject As String = "", Optional cancellationToken As Threading.CancellationToken = Nothing) As Task(Of String)
+        Public Shared Async Function LLM(context As ISharedContext, ByVal promptSystem As String, ByVal promptUser As String, Optional ByVal Model As String = "", Optional ByVal Temperature As String = "", Optional ByVal Timeout As Long = 0, Optional ByVal UseSecondAPI As Boolean = False, Optional ByVal Hidesplash As Boolean = False, Optional ByVal AddUserPrompt As String = "", Optional FileObject As String = "", Optional cancellationToken As Threading.CancellationToken = Nothing, Optional ToolExecution As Boolean = False) As Task(Of String)
 
             If cancellationToken.IsCancellationRequested Then
                 Return ""
@@ -224,6 +226,10 @@ Namespace SharedLibrary
                     ModelValue = If(String.IsNullOrEmpty(Model) OrElse Model = "Default", ModelPlaceholder, Model)
                     TimeoutValue = If(Timeout = 0, context.INI_Timeout, Timeout)
                     TokenCountString = context.INI_TokenCount
+
+                    ' Tooling not supported for primary model by definition
+                    ToolExecution = False
+
                 End If
 
                 Dim timeoutSeconds = CInt(TimeoutValue \ 1000)
@@ -237,18 +243,78 @@ Namespace SharedLibrary
                 If Not String.IsNullOrEmpty(ResponseKey) Then
                     Dim trigger As String = If(TryCast(NoThinkTrigger, String), String.Empty)
                     If Not String.IsNullOrEmpty(trigger) Then
-                        Dim respTrim As String = ResponseKey.TrimEnd()
-                        If respTrim.EndsWith(trigger, StringComparison.OrdinalIgnoreCase) Then
+
+                        Dim idx As Integer = ResponseKey.LastIndexOf(trigger, StringComparison.OrdinalIgnoreCase)
+                        If idx >= 0 Then
                             NoThink = True
-                            ResponseKey = respTrim.Substring(0, respTrim.Length - trigger.Length).TrimEnd()
+                            ' Remove ALL occurrences (case-insensitive) and trim.
+                            ResponseKey = Regex.Replace(ResponseKey,
+                                                        Regex.Escape(trigger),
+                                                        String.Empty,
+                                                        RegexOptions.IgnoreCase).Trim()
                         End If
+
                     End If
+                End If
+
+                ' --- ToolCallMatching trigger inside ResponseKey ---
+                ' Expected form: "(toolcall:<pattern>)" but we remove it even if malformed (e.g. missing ")", missing "<>").
+                ' Define the markers: ToolCallMatchingStart = "(toolcall:", ToolCallMatchingEnd = ")", ToolCallMatchingMiddle = ":"
+
+                Dim DetectToolCall As String = String.Empty
+
+                If Not String.IsNullOrEmpty(ResponseKey) Then
+
+                    Dim startMarker As String = ToolCallMatchingStart
+                    Dim startIdx As Integer = ResponseKey.IndexOf(startMarker, StringComparison.OrdinalIgnoreCase)
+
+                    If startIdx >= 0 Then
+                        ' Find the closing ")" after the marker; if missing, treat as malformed and consume to end.
+                        Dim endIdx As Integer = ResponseKey.IndexOf(ToolCallMatchingEnd, startIdx, StringComparison.OrdinalIgnoreCase)
+                        Dim triggerLen As Integer = If(endIdx >= 0,
+                               (endIdx - startIdx + ToolCallMatchingEnd.Length),
+                               (ResponseKey.Length - startIdx))
+
+                        Dim triggerText As String = ResponseKey.Substring(startIdx, triggerLen)
+
+                        ' 1) Extract pattern (prefer <...> if present)
+                        Dim lt As Integer = triggerText.IndexOf("<"c)
+                        Dim gt As Integer = triggerText.LastIndexOf(">"c)
+
+                        If lt >= 0 AndAlso gt > lt Then
+                            DetectToolCall = triggerText.Substring(lt + 1, gt - lt - 1).Trim()
+                        Else
+                            ' 2) Fallback: pattern starts after ":" and ends before ")" (or end of triggerText)
+                            Dim colonIdx As Integer = triggerText.IndexOf(ToolCallMatchingMiddle, StringComparison.OrdinalIgnoreCase)
+                            If colonIdx >= 0 Then
+                                Dim raw As String = triggerText.Substring(colonIdx + ToolCallMatchingMiddle.Length)
+                                Dim paren As Integer = raw.LastIndexOf(ToolCallMatchingEnd, StringComparison.OrdinalIgnoreCase)
+                                If paren >= 0 Then raw = raw.Substring(0, paren)
+                                DetectToolCall = raw.Trim()
+                            End If
+                        End If
+
+                        ' Validate .NET regex; if invalid, wipe it (but still remove trigger from ResponseKey)
+                        If Not String.IsNullOrWhiteSpace(DetectToolCall) Then
+                            Try
+                                Dim rx As New Regex(DetectToolCall)
+                            Catch ex As ArgumentException
+                                DetectToolCall = String.Empty
+                            End Try
+                        End If
+
+                        ' Remove the trigger block from ResponseKey (even if malformed)
+                        ResponseKey = (ResponseKey.Substring(0, startIdx) &
+                                       ResponseKey.Substring(startIdx + triggerLen)).Trim()
+                    End If
+
                 End If
 
                 ' Determine RKMode (default = 2) based on trigger markers optionally embedded in ResponseKey.
                 ' (rkmode_all)      -> 1
                 ' (rkmode_longest)  -> 2
                 ' (rkmode_first)    -> 3
+
                 ' If multiple markers somehow appear, the first one found in the list below (priority order) wins.
                 Dim RKMode As Integer = 2 ' default
                 If Not String.IsNullOrEmpty(ResponseKey) Then
@@ -330,6 +396,19 @@ Namespace SharedLibrary
                 requestBody = requestBody.Replace("{userinstruction}", CleanString(AddUserPrompt))
                 requestBody = requestBody.Replace("{temperature}", TemperatureValue)
 
+                ' Handle Tooling instructions if applicable
+
+                If ToolExecution Then
+                    requestBody = requestBody.Replace(LLM_APICall_Placeholder_ToolDefinitions, context.INI_APICall_ToolInstructions_2)
+                    requestBody = requestBody.Replace(LLM_APICall_Placeholder_ToolResponses, context.INI_APICall_ToolResponses_2)
+                Else
+                    ' Remove tool placeholders 
+                    requestBody = requestBody.Replace(LLM_APICall_Placeholder_ToolDefinitions, "")
+                    requestBody = requestBody.Replace(LLM_APICall_Placeholder_ToolResponses, "")
+                End If
+
+                ' Handle object upload if configured
+
                 Dim ObjectCall As String = If(UseSecondAPI, context.INI_APICall_Object_2, context.INI_APICall_Object)
                 Dim requiresMultipart As Boolean = ObjectCall.ToLowerInvariant().Trim().StartsWith("multipart:")
 
@@ -341,7 +420,7 @@ Namespace SharedLibrary
 
                 If Not String.IsNullOrWhiteSpace(ObjectCall) AndAlso Not String.IsNullOrWhiteSpace(FileObject) Then
 
-                    requestBody = requestBody.Replace("{objectcall}", ObjectCall)
+                    requestBody = requestBody.Replace(LLM_APICall_Placeholder_Objectcall, ObjectCall)
 
                     Try
                         Dim encodedData As String
@@ -733,12 +812,12 @@ Namespace SharedLibrary
                                     Select Case root2.Type
                                         Case Newtonsoft.Json.Linq.JTokenType.Object
                                             Dim obj2 As Newtonsoft.Json.Linq.JObject = CType(root2, Newtonsoft.Json.Linq.JObject)
-                                            Returnvalue = HandleObject(obj2, getResponseKey, getResponseText, RKMode)
+                                            Returnvalue = HandleObject(obj2, getResponseKey, getResponseText, RKMode, DetectToolCall)
 
                                         Case Newtonsoft.Json.Linq.JTokenType.Array
                                             For Each item2 As Newtonsoft.Json.Linq.JToken In CType(root2, Newtonsoft.Json.Linq.JArray)
                                                 If item2.Type = Newtonsoft.Json.Linq.JTokenType.Object Then
-                                                    Returnvalue &= HandleObject(CType(item2, Newtonsoft.Json.Linq.JObject), getResponseKey, getResponseText, RKMode)
+                                                    Returnvalue &= HandleObject(CType(item2, Newtonsoft.Json.Linq.JObject), getResponseKey, getResponseText, RKMode, DetectToolCall)
                                                 End If
                                             Next
 
@@ -751,13 +830,13 @@ Namespace SharedLibrary
                                     Select Case root.Type
                                         Case Newtonsoft.Json.Linq.JTokenType.Object
                                             Dim jsonObject As Newtonsoft.Json.Linq.JObject = CType(root, Newtonsoft.Json.Linq.JObject)
-                                            Returnvalue = HandleObject(jsonObject, ResponseKey, responseText, RKMode)
+                                            Returnvalue = HandleObject(jsonObject, ResponseKey, responseText, RKMode, DetectToolCall)
 
                                         Case Newtonsoft.Json.Linq.JTokenType.Array
                                             For Each item As Newtonsoft.Json.Linq.JToken In CType(root, Newtonsoft.Json.Linq.JArray)
                                                 If item.Type = Newtonsoft.Json.Linq.JTokenType.Object Then
                                                     Returnvalue &= HandleObject(CType(item, Newtonsoft.Json.Linq.JObject),
-                                                ResponseKey, responseText, RKMode)
+                                                ResponseKey, responseText, RKMode, DetectToolCall)
                                                 End If
                                             Next
 
@@ -1091,7 +1170,7 @@ Namespace SharedLibrary
         ''' <param name="ResponseText">Original response text used for error messages and "JSON" passthrough.</param>
         ''' <param name="RKMode">Response extraction mode passed through to <c>JsonTemplateFormatter</c>.</param>
         ''' <returns>Extracted response text; empty string on handled error.</returns>
-        Private Shared Function HandleObject(jsonObject As Newtonsoft.Json.Linq.JObject, ResponseKey As String, ResponseText As String, RKMode As Integer) As String
+        Private Shared Function HandleObject(jsonObject As Newtonsoft.Json.Linq.JObject, ResponseKey As String, ResponseText As String, RKMode As Integer, DetectToolCall As String) As String
 
             ' Extract the "error" segment
             Dim text As String = FindJsonProperty(jsonObject, "error")
@@ -1110,7 +1189,10 @@ Namespace SharedLibrary
                     text = text.Replace("\", "\\")
                 End If
 
-                If ResponseKey = "JSON" Then
+                If ResponseKey = "JSON" OrElse
+                  (Not String.IsNullOrWhiteSpace(DetectToolCall) AndAlso
+                   Regex.IsMatch(ResponseText, DetectToolCall, RegexOptions.Singleline Or RegexOptions.CultureInvariant)) Then
+
                     text = ResponseText
                 Else
                     text = text & JsonTemplateFormatter.FormatJsonWithTemplate(jsonObject, ResponseKey, RKMode)

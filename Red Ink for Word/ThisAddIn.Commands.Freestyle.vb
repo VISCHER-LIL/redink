@@ -18,6 +18,7 @@
 '    {chunk}, {doc}, {mystyle}, {object}, {multimodel}).
 '  - Model Selection: Supports primary/secondary models with optional alternate model
 '    configuration and multi-model execution.
+'  - Tooling Support: Allows model tooling selection when supported by the model.
 '  - Format Preservation: Configurable formatting retention (character/paragraph level)
 '    with special handling for fields and styles.
 '  - External Content Integration: Supports embedding external files ({doc} trigger),
@@ -234,6 +235,7 @@ Partial Public Class ThisAddIn
             Dim BubblesExtractInstruct As String = $"; add '{BubblesExtractTrigger}' for including bubble comments"
             Dim ObjectInstruct As String = $"; add '{ObjectTrigger}'/'{ObjectTrigger2}' for adding a file object"
             Dim MultiModelInstruct As String = $"; add '{MultiModelTrigger}' for multiple models"
+            Dim ToolSelectionInstruct As String = $"; add '{ToolSelectionTrigger}' to permit tool selection"
             Dim LastPromptInstruct As String = If(String.IsNullOrWhiteSpace(My.Settings.LastPrompt), "", "; Ctrl-P for your last prompt")
             Dim FileObject As String = ""
             Dim SlideDeck As String = ""
@@ -246,6 +248,14 @@ Partial Public Class ThisAddIn
 
             ' Check if no text is selected (insertion point only)
             If selection.Type = WdSelectionType.wdSelectionIP Then NoText = True
+
+            ' Check if the selected model supports tooling
+            Dim modelSupportsTool As Boolean = False
+            If UseSecondAPI Then
+                ' Check if current secondary model supports tooling
+                modelSupportsTool = Not String.IsNullOrWhiteSpace(INI_APICall_ToolInstructions_2) OrElse
+                                ModelSupportsTooling(LastFreestyleModelConfig)
+            End If
 
             ' Build additional instruction text based on configuration and selection state
             Dim AddOnInstruct As String = AllInstruct
@@ -273,6 +283,10 @@ Partial Public Class ThisAddIn
                 If Not String.IsNullOrWhiteSpace(INI_AlternateModelPath) Then
                     AddOnInstruct += MultiModelInstruct.Replace("; add", ", ")
                 End If
+                If Not String.IsNullOrWhiteSpace(INI_AlternateModelPath) And modelSupportsTool Then
+                    AddOnInstruct += ToolSelectionInstruct.Replace("; add", ", ")
+                End If
+
             Else
                 If Not String.IsNullOrWhiteSpace(INI_APICall_Object) Then
                     AddOnInstruct += ObjectInstruct.Replace("; add", ",")
@@ -758,6 +772,13 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
+            ' Select tools
+            If String.Equals(OtherPrompt.Trim(), "settools", StringComparison.OrdinalIgnoreCase) Then
+                Dim selectedToolsForSessionTemp As List(Of ModelConfig) = Nothing
+                selectedToolsForSessionTemp = SelectToolsForSession(True)
+                Return
+            End If
+
             ' === Prompt library integration ===
 
             ' Show prompt library selector if prompt is empty and library is enabled
@@ -985,6 +1006,32 @@ Partial Public Class ThisAddIn
                 OtherPrompt = OtherPrompt.Replace(NetTrigger, "").Trim()
                 DoNet = True
             End If
+
+            ' === TOOLING TRIGGER HANDLING ===
+
+            ' Check if user wants to (re)select tools
+            Dim DoToolSelection As Boolean = False
+            If OtherPrompt.IndexOf(ToolSelectionTrigger, StringComparison.OrdinalIgnoreCase) >= 0 And Not String.IsNullOrWhiteSpace(INI_AlternateModelPath) Then
+                If modelSupportsTool Then
+                    OtherPrompt = OtherPrompt.Replace(ToolSelectionTrigger, "").Trim()
+                    DoToolSelection = True
+                End If
+            End If
+
+            ' If model supports tooling, handle tool selection
+            Dim selectedToolsForSession As List(Of ModelConfig) = Nothing
+            If modelSupportsTool Then
+                selectedToolsForSession = SelectToolsForSession(DoToolSelection)
+                If selectedToolsForSession Is Nothing Then
+                    ' User cancelled tool selection
+                    If originalConfigLoaded Then
+                        RestoreDefaults(_context, originalConfig)
+                        originalConfigLoaded = False
+                    End If
+                    Return
+                End If
+            End If
+
 
             ' === Multi-model selection ===
 
@@ -1501,8 +1548,8 @@ Partial Public Class ThisAddIn
 
             ' === Execute LLM processing with configured parameters ===
 
-            ' Invoke ProcessSelectedText with all configured options
-            Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SysPrompt), True, DoKeepFormat, DoKeepParaFormat, DoInplace, DoMarkup, MarkupMethod, DoClipboard, DoBubbles, False, UseSecondAPI, KeepFormatCap, DoTPMarkup, TPMarkupName, False, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, InsertDocs <> "", DoMyStyle, DoBubblesExtract, DoPushback)
+            ' Invoke ProcessSelectedText with all configured options            
+            Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SysPrompt), True, DoKeepFormat, DoKeepParaFormat, DoInplace, DoMarkup, MarkupMethod, DoClipboard, DoBubbles, False, UseSecondAPI, KeepFormatCap, DoTPMarkup, TPMarkupName, False, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, InsertDocs <> "", DoMyStyle, DoBubblesExtract, DoPushback, selectedToolsForSession)
 
             ' Restore original model configuration if alternate model was used
             If UseSecondAPI And originalConfigLoaded Then
