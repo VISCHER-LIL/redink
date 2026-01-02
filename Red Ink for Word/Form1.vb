@@ -320,7 +320,7 @@ Public Class frmAIChat
     ''' Opens tool selection dialog to configure which tools are available.
     ''' Disabled when current model does not support tooling.
     ''' </summary>
-    Private WithEvents btnTools As New Button() With {.Text = "Tools", .AutoSize = True}
+    Private WithEvents btnTools As New Button() With {.Text = Globals.ThisAddIn.ToolFriendlyName, .AutoSize = True}
 
 
     ' =========================================================================
@@ -369,7 +369,7 @@ Public Class frmAIChat
     ''' Persisted to My.Settings.ChatEnableTooling.
     ''' </summary>
     Private WithEvents chkEnableTooling As New System.Windows.Forms.CheckBox() With {
-        .Text = "Enable tooling",
+        .Text = $"Enable {Globals.ThisAddIn.ToolFriendlyName.ToLower}",
         .AutoSize = True,
         .Checked = My.Settings.ChatEnableTooling
     }
@@ -892,21 +892,7 @@ Public Class frmAIChat
             _chatHistory.Add(("user", userPrompt.TrimEnd()))
 
             ' ──────────────────────────────────────────────────────────────
-            ' STEP 7: Display "Thinking..." Placeholder
-            ' ──────────────────────────────────────────────────────────────
-            Await UpdateUIAsync(Sub()
-                                    AppendToChatHistory($"{AN5}: Thinking...")
-                                End Sub)
-
-            Await UpdateUIAsync(Sub()
-                                    ShowAssistantThinking()
-                                End Sub)
-
-            ' ──────────────────────────────────────────────────────────────
-            ' STEP 8: Call LLM Asynchronously
-            ' ──────────────────────────────────────────────────────────────
-            ' ──────────────────────────────────────────────────────────────
-            ' STEP 8: Call LLM Asynchronously (with optional Tooling)
+            ' STEP 7: Determine if Tooling Should Be Used
             ' ──────────────────────────────────────────────────────────────
             Dim aiResponseOriginal As String
 
@@ -922,7 +908,8 @@ Public Class frmAIChat
                     currentConfig = SharedMethods.GetCurrentConfig(_context)
                 End If
 
-                useTooling = Globals.ThisAddIn.ModelSupportsTooling(currentConfig)
+                ' Use shared function - checks APICall_ToolInstructions
+                useTooling = SharedMethods.ModelSupportsTooling(currentConfig)
             End If
 
             If useTooling Then
@@ -945,6 +932,26 @@ Public Class frmAIChat
                 End If
             End If
 
+            ' ──────────────────────────────────────────────────────────────
+            ' STEP 8: Display "Thinking..." Placeholder
+            ' ──────────────────────────────────────────────────────────────
+            Dim thinkingMessage As String = If(useTooling,
+                $"{AN5}: Thinking (using {Globals.ThisAddIn.ToolFriendlyName.ToLower})...",
+                $"{AN5}: Thinking...")
+
+            Await UpdateUIAsync(Sub()
+                                    AppendToChatHistory(thinkingMessage)
+                                End Sub)
+
+            Await UpdateUIAsync(Sub()
+                                    ShowAssistantThinking(useTooling)
+                                End Sub)
+
+            ' ──────────────────────────────────────────────────────────────
+            ' STEP 9: Call LLM Asynchronously (with optional Tooling)
+            ' ──────────────────────────────────────────────────────────────
+
+
             If useTooling AndAlso _selectedToolsForChat IsNot Nothing AndAlso _selectedToolsForChat.Count > 0 Then
                 ' Apply alternate model config temporarily if selected
                 Dim backupConfig As ModelConfig = Nothing
@@ -957,24 +964,17 @@ Public Class frmAIChat
                         appliedAlternate = True
                     End If
 
-                    ' Call ExecuteToolingLoop instead of direct LLM
+                    ' Call ExecuteToolingLoop with the same fullPrompt as non-tooling calls
+                    ' hideSplash:=True suppresses splash during chat
+                    ' hideLogWindow:=True suppresses log window for chat integration
                     aiResponseOriginal = Await Globals.ThisAddIn.ExecuteToolingLoop(
                         SystemPrompt,
                         userPrompt,
                         _selectedToolsForChat,
                         _useSecondApi,
-                        fileObject:="",
-                        doTPMarkup:=False,
-                        bubblesText:="",
-                        noFormatting:=True,
-                        keepFormat:=False,
-                        slideDeck:="",
-                        doMyStyle:=False,
-                        myStyleInsert:="",
-                        addDocs:=chkIncludeOtherDocs.Checked,
-                        insertDocs:=If(chkIncludeOtherDocs.Checked, otherDocs, ""),
-                        slideInsert:="",
-                        otherPrompt:="")
+                        fullPromptOverride:=fullPrompt.ToString(),
+                        hideSplash:=True,
+                        hideLogWindow:=True)
                 Finally
                     If appliedAlternate AndAlso backupConfig IsNot Nothing Then
                         SharedMethods.RestoreDefaults(_context, backupConfig)
@@ -1473,7 +1473,7 @@ Public Class frmAIChat
         Dim wasTopMost As Boolean = Me.TopMost
         Try
             Me.TopMost = False
-            Dim selectedTools = Globals.ThisAddIn.SelectToolsForSession(forceDialog:=True)
+            Dim selectedTools = Globals.ThisAddIn.SelectToolsForSession(forceDialog:=True, Globals.ThisAddIn.ToolFriendlyName)
             If selectedTools IsNot Nothing Then
                 _selectedToolsForChat = selectedTools
             End If
@@ -1489,20 +1489,18 @@ Public Class frmAIChat
     Private Sub UpdateToolingControlsState()
         Dim currentConfig As ModelConfig = Nothing
 
-        ' Get the effective model config
         If _alternateModelSelected AndAlso _alternateModelConfig IsNot Nothing Then
             currentConfig = _alternateModelConfig
         Else
             currentConfig = SharedMethods.GetCurrentConfig(_context)
         End If
 
-        Dim supportsTooling As Boolean = Globals.ThisAddIn.ModelSupportsTooling(currentConfig)
+        ' Use shared function - checks APICall_ToolInstructions
+        Dim supportsTooling As Boolean = SharedMethods.ModelSupportsTooling(currentConfig)
 
-        ' Enable/disable controls based on model capability
         chkEnableTooling.Enabled = supportsTooling
         btnTools.Enabled = supportsTooling
 
-        ' Uncheck and clear selection if model doesn't support tooling
         If Not supportsTooling Then
             chkEnableTooling.Checked = False
             _selectedToolsForChat = Nothing
@@ -3955,9 +3953,13 @@ function removeById(id) {{
     ''' Shows "Thinking..." placeholder while waiting for LLM response.
     ''' Generates unique DOM ID for later removal.
     ''' </summary>
-    Public Sub ShowAssistantThinking()
+    ''' <param name="isTooling">When True, displays tooling-specific message.</param>
+    Public Sub ShowAssistantThinking(Optional isTooling As Boolean = False)
         _lastThinkingId = "thinking-" & Guid.NewGuid().ToString("N")
-        AppendHtml($"<div id=""{_lastThinkingId}"" class='msg assistant thinking'><span class='who'>{HtmlEncode(AN5)}:</span><span class='content'>Thinking...</span></div>")
+        Dim thinkingText As String = If(isTooling,
+            $"Thinking (using {Globals.ThisAddIn.ToolFriendlyName.ToLower})...",
+            "Thinking...")
+        AppendHtml($"<div id=""{_lastThinkingId}"" class='msg assistant thinking'><span class='who'>{HtmlEncode(AN5)}:</span><span class='content'>{thinkingText}</span></div>")
     End Sub
 
     ''' <summary>

@@ -235,7 +235,7 @@ Partial Public Class ThisAddIn
             Dim BubblesExtractInstruct As String = $"; add '{BubblesExtractTrigger}' for including bubble comments"
             Dim ObjectInstruct As String = $"; add '{ObjectTrigger}'/'{ObjectTrigger2}' for adding a file object"
             Dim MultiModelInstruct As String = $"; add '{MultiModelTrigger}' for multiple models"
-            Dim ToolSelectionInstruct As String = $"; add '{ToolSelectionTrigger}' to permit tool selection"
+            Dim ToolSelectionInstruct As String = $"; add '{ToolSelectionTrigger}' to permit {ToolFriendlyName.ToLower} selection"
             Dim LastPromptInstruct As String = If(String.IsNullOrWhiteSpace(My.Settings.LastPrompt), "", "; Ctrl-P for your last prompt")
             Dim FileObject As String = ""
             Dim SlideDeck As String = ""
@@ -249,12 +249,12 @@ Partial Public Class ThisAddIn
             ' Check if no text is selected (insertion point only)
             If selection.Type = WdSelectionType.wdSelectionIP Then NoText = True
 
-            ' Check if the selected model supports tooling
+            ' Check if the selected model supports tooling (can call tools)
             Dim modelSupportsTool As Boolean = False
             If UseSecondAPI Then
-                ' Check if current secondary model supports tooling
+                ' Check via SharedMethods - based on APICall_ToolInstructions
                 modelSupportsTool = Not String.IsNullOrWhiteSpace(INI_APICall_ToolInstructions_2) OrElse
-                                ModelSupportsTooling(LastFreestyleModelConfig)
+                                    SharedMethods.ModelSupportsTooling(LastFreestyleModelConfig)
             End If
 
             ' Build additional instruction text based on configuration and selection state
@@ -773,7 +773,7 @@ Partial Public Class ThisAddIn
             End If
 
             ' Select tools
-            If String.Equals(OtherPrompt.Trim(), "settools", StringComparison.OrdinalIgnoreCase) Then
+            If String.Equals(OtherPrompt.Trim(), "set" & ToolFriendlyName.ToLower, StringComparison.OrdinalIgnoreCase) Then
                 Dim selectedToolsForSessionTemp As List(Of ModelConfig) = Nothing
                 selectedToolsForSessionTemp = SelectToolsForSession(True)
                 Return
@@ -1021,7 +1021,7 @@ Partial Public Class ThisAddIn
             ' If model supports tooling, handle tool selection
             Dim selectedToolsForSession As List(Of ModelConfig) = Nothing
             If modelSupportsTool Then
-                selectedToolsForSession = SelectToolsForSession(DoToolSelection)
+                selectedToolsForSession = SelectToolsForSession(DoToolSelection, ToolFriendlyName)
                 If selectedToolsForSession Is Nothing Then
                     ' User cancelled tool selection
                     If originalConfigLoaded Then

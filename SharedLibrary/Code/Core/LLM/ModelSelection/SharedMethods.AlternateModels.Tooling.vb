@@ -4,22 +4,14 @@
 ' =============================================================================
 ' File: SharedMethods.AlternateModels.Tooling.vb
 ' Purpose: Provides tooling-related helpers for alternate model configurations.
-'          This file is a `Partial` extension of `SharedMethods` and groups helper
-'          logic that determines whether a given `ModelConfig` is tool-capable and
-'          how such models should be represented in UI strings.
 '
 ' Architecture:
-'  - Tool Capability Detection: `ModelSupportsTooling` returns True when the model configuration
-'    indicates tool support through `ModelConfig.Tool` or a non-empty `ModelConfig.APICall_ToolInstructions`.
-'  - UI Display Normalization: `GetModelDisplayWithToolingSuffix` returns the display label used in UI,
-'    based on `ModelConfig.ModelDescription` (fallback: `ModelConfig.Model`) and appends `ToolingSuffix`
-'    when tool support is detected.
-'
-' Notes:
-'  - `ToolingSuffix` is expected to be defined elsewhere in the `SharedMethods` partial type
-'    (typically in a constants/definitions file). This file only applies the suffix.
+'  - Tool Capability Detection: `ModelSupportsTooling` returns True when the model
+'    has a non-empty `APICall_ToolInstructions` (meaning the model can CALL tools).
+'    NOTE: `ModelConfig.Tool = True` means the entry IS a tool, not that it supports tooling.
+'  - UI Display Normalization: `GetModelDisplayWithToolingSuffix` appends `ToolingSuffix`
+'    to models that can call tools (for display in model selection dialogs).
 ' =============================================================================
-
 
 Option Strict On
 Option Explicit On
@@ -31,20 +23,25 @@ Namespace SharedLibrary
 
     Partial Public Class SharedMethods
 
-
         ''' <summary>
-        ''' Determines if a model supports tooling based on its configuration.
+        ''' Determines if a MODEL supports calling tools based on its configuration.
+        ''' Returns True when the model has APICall_ToolInstructions configured.
         ''' </summary>
         ''' <param name="config">ModelConfig to check.</param>
-        ''' <returns>True if the model supports tooling.</returns>
+        ''' <returns>True if the model can call tools/sources.</returns>
+        ''' <remarks>
+        ''' NOTE: This checks if a MODEL can CALL tools, not if the entry IS a tool.
+        ''' - ModelConfig.Tool = True means the entry IS a tool/source
+        ''' - APICall_ToolInstructions being set means a model CAN CALL tools
+        ''' </remarks>
         Public Shared Function ModelSupportsTooling(config As ModelConfig) As Boolean
             If config Is Nothing Then Return False
-            Return config.Tool OrElse
-                   Not String.IsNullOrWhiteSpace(config.APICall_ToolInstructions)
+            Return Not String.IsNullOrWhiteSpace(config.APICall_ToolInstructions)
         End Function
 
         ''' <summary>
         ''' Gets the display description for a model, including tooling suffix if applicable.
+        ''' Only adds suffix for MODELS that can call tools (not for tools themselves).
         ''' </summary>
         ''' <param name="config">ModelConfig to get description for.</param>
         ''' <returns>Display description with appropriate suffix.</returns>
@@ -52,7 +49,8 @@ Namespace SharedLibrary
             Dim baseDesc = If(Not String.IsNullOrWhiteSpace(config.ModelDescription),
                               config.ModelDescription, config.Model)
 
-            If ModelSupportsTooling(config) Then
+            ' Only add suffix for models that can CALL tools, not for tools themselves
+            If ModelSupportsTooling(config) AndAlso Not config.Tool Then
                 If Not baseDesc.EndsWith(ToolingSuffix) Then
                     baseDesc &= ToolingSuffix
                 End If

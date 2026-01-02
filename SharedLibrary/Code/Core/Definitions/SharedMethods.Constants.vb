@@ -39,7 +39,7 @@ Namespace SharedLibrary
         Public Const AN7 As String = "http://localhost:12333/inky"  ' Localhost URL for Inky
         Public Const AN8 As String = "Inky"
 
-        Public Shared CopyrightNotice As String = "Copyright © LawDigital Ltd. 2025"
+        Public Shared CopyrightNotice As String = "Copyright © LawDigital Ltd. 2025-"
 
         Public Const NoThinkTrigger As String = "(nothink)"
         Public Const RKModeTrigger1 As String = "(rkmode_all)"
@@ -345,7 +345,7 @@ Namespace SharedLibrary
 
         Public Const LLM_APICall_Placeholder_ToolDefinitions As String = "{toolinstructions}"
         Public Const LLM_APICall_Placeholder_ToolResponses As String = "{toolresponses}"
-        Public Const ToolingSuffix As String = " (Tooling)" ' Suffix displayed for tooling-enabled models in selection dialogs.
+        Public Const ToolingSuffix As String = " (can use sources)" ' Suffix displayed for tooling-enabled models in selection dialogs.
         Public Const ToolCallMatchingStart As String = "(toolcall:"   ' it follows <pattern> with the pattern to detect tool calls in LLM response, enclosed by < and >
         Public Const ToolCallMatchingMiddle As String = ":"
         Public Const ToolCallMatchingEnd As String = ")"

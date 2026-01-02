@@ -556,7 +556,7 @@ Partial Public Class ThisAddIn
     ''' or the user cancels. Tool call detection/extraction and response injection are controlled by the active tooling model config.
     ''' </summary>
     ''' <param name="sysCommand">Base system command prompt text.</param>
-    ''' <param name="userText">User prompt text.</param>
+    ''' <param name="userText">User prompt text (used only if fullPromptOverride is empty).</param>
     ''' <param name="selectedTools">Tool configurations available to the model.</param>
     ''' <param name="useSecondAPI">Whether to route LLM calls through the secondary API.</param>
     ''' <param name="fileObject">Optional file object payload passed to <c>LLM</c>.</param>
@@ -571,6 +571,10 @@ Partial Public Class ThisAddIn
     ''' <param name="insertDocs">Optional inserted document text appended to the user prompt when <paramref name="addDocs"/> is True.</param>
     ''' <param name="slideInsert">Optional slide text appended to the user prompt.</param>
     ''' <param name="otherPrompt">Optional additional user prompt passed to <c>LLM</c>.</param>
+    ''' <param name="fullPromptOverride">When provided, uses this as the complete user prompt instead of building one internally. 
+    ''' This ensures tooling calls receive the same context as non-tooling LLM calls.</param>
+    ''' <param name="hideSplash">When True, suppresses the splash/progress indicator during LLM calls.</param>
+    ''' <param name="hideLogWindow">When True, suppresses the tooling log window (useful for chat integration).</param>
     ''' <returns>The final LLM response string returned by the last iteration.</returns>
     Public Async Function ExecuteToolingLoop(
         sysCommand As String,
@@ -588,7 +592,11 @@ Partial Public Class ThisAddIn
         Optional addDocs As Boolean = False,
         Optional insertDocs As String = "",
         Optional slideInsert As String = "",
-        Optional otherPrompt As String = "") As Task(Of String)
+        Optional otherPrompt As String = "",
+        Optional fullPromptOverride As String = "",
+        Optional hideSplash As Boolean = False,
+        Optional hideLogWindow As Boolean = False) As Task(Of String)
+
 
         ToolingFileLogger.StartSession()
 
@@ -613,7 +621,8 @@ Partial Public Class ThisAddIn
             Next
         End If
 
-        If INI_ToolingLogWindow Then
+        ' Replace the existing log window creation block with:
+        If INI_ToolingLogWindow AndAlso Not hideLogWindow Then
             context.LogWindowForm = New LogWindow()
             context.LogWindowForm.Show()
             AddHandler context.LogWindowForm.CancelRequested, Sub() context.IsCancelled = True
@@ -694,30 +703,30 @@ Partial Public Class ThisAddIn
 
                 context.Log("Calling LLM...", "llm")
 
-                ' Build user prompt
+                ' Build user prompt - use override if provided, otherwise build internally
                 Dim fullUserPrompt As String
 
-                If noSelectedText Then
-                    ' No selected text: start with insertDocs if enabled
-                    fullUserPrompt = If(addDocs AndAlso Not String.IsNullOrWhiteSpace(insertDocs), " " & insertDocs & " ", "")
-                    ' Add slide insert
-                    If Not String.IsNullOrWhiteSpace(slideInsert) Then
-                        fullUserPrompt &= slideInsert
-                    End If
+                If Not String.IsNullOrWhiteSpace(fullPromptOverride) Then
+                    ' Use the caller-provided prompt (ensures same context as non-tooling calls)
+                    fullUserPrompt = fullPromptOverride
                 Else
-                    ' Wrap selected text in TEXTTOPROCESS tags (matching direct LLM() call)
-                    fullUserPrompt = "<TEXTTOPROCESS>" & userText & "</TEXTTOPROCESS>"
-                    ' Add insertDocs if enabled
-                    If addDocs AndAlso Not String.IsNullOrWhiteSpace(insertDocs) Then
-                        fullUserPrompt &= " " & insertDocs & " "
-                    End If
-                    ' Add slide insert
-                    If Not String.IsNullOrWhiteSpace(slideInsert) Then
-                        fullUserPrompt &= slideInsert
-                    End If
-                    ' Add bubbles text
-                    If Not String.IsNullOrWhiteSpace(bubblesText) Then
-                        fullUserPrompt &= " " & bubblesText
+                    ' Original internal prompt building logic
+                    If noSelectedText Then
+                        fullUserPrompt = If(addDocs AndAlso Not String.IsNullOrWhiteSpace(insertDocs), " " & insertDocs & " ", "")
+                        If Not String.IsNullOrWhiteSpace(slideInsert) Then
+                            fullUserPrompt &= slideInsert
+                        End If
+                    Else
+                        fullUserPrompt = "<TEXTTOPROCESS>" & userText & "</TEXTTOPROCESS>"
+                        If addDocs AndAlso Not String.IsNullOrWhiteSpace(insertDocs) Then
+                            fullUserPrompt &= " " & insertDocs & " "
+                        End If
+                        If Not String.IsNullOrWhiteSpace(slideInsert) Then
+                            fullUserPrompt &= slideInsert
+                        End If
+                        If Not String.IsNullOrWhiteSpace(bubblesText) Then
+                            fullUserPrompt &= " " & bubblesText
+                        End If
                     End If
                 End If
 
@@ -728,7 +737,7 @@ Partial Public Class ThisAddIn
                     fullUserPrompt,
                     "", "", 0,
                     useSecondAPI,
-                    False,
+                    hideSplash,
                     otherPrompt,
                     fileObject,
                     True)
@@ -873,17 +882,6 @@ Partial Public Class ThisAddIn
 
 #Region "Tooling Helper Functions"
 
-    ''' <summary>
-    ''' Determines whether a model configuration indicates support for tool calling based on its tooling properties.
-    ''' </summary>
-    ''' <param name="config">Model configuration to evaluate.</param>
-    ''' <returns>True if the model indicates tool capability; otherwise False.</returns>
-    Public Function ModelSupportsTooling(config As ModelConfig) As Boolean
-        If config Is Nothing Then Return False
-        Return config.Tool OrElse
-               Not String.IsNullOrWhiteSpace(config.APICall_ToolInstructions) OrElse
-               Not String.IsNullOrWhiteSpace(config.ToolCallDetectionPattern)
-    End Function
 
     ''' <summary>
     ''' Converts a canonical tool definition JSON string to a model-specific format using a template string.
@@ -1540,7 +1538,7 @@ Partial Public Class ThisAddIn
         End If
 
         Try
-            Dim allModels = LoadAlternativeModels(iniPath, _context, "Tools", includeToolOnly:=True, toolsOnly:=toolsOnly)
+            Dim allModels = LoadAlternativeModels(iniPath, _context, StartWithUpcase(ToolFriendlyName), includeToolOnly:=True, toolsOnly:=toolsOnly)
 
             For Each mc In allModels
                 If mc.Deprecated Then Continue For
@@ -1570,25 +1568,22 @@ Partial Public Class ThisAddIn
     ''' <param name="availableTools">List of available tool configurations.</param>
     ''' <param name="preselectAll">Unused parameter in this method body (caller passes a value).</param>
     ''' <returns>Selected tools when the dialog result is OK; otherwise Nothing.</returns>
-    Public Function ShowToolSelectionDialog(availableTools As List(Of ModelConfig), Optional preselectAll As Boolean = True) As List(Of ModelConfig)
+    Public Function ShowToolSelectionDialog(availableTools As List(Of ModelConfig), Optional preselectAll As Boolean = True, Optional FriendlyName As String = "Tools") As List(Of ModelConfig)
         If availableTools Is Nothing OrElse availableTools.Count = 0 Then
             Return New List(Of ModelConfig)()
         End If
 
-        For Each tool In availableTools
-            If Not String.IsNullOrWhiteSpace(tool.ModelDescription) AndAlso
-           Not tool.ModelDescription.EndsWith(ToolingSuffix) AndAlso
-           Not tool.ModelDescription.EndsWith(InternalToolSuffix) Then
-                tool.ModelDescription = tool.ModelDescription & ToolingSuffix
-            End If
-        Next
+        ' Note: Do NOT add ToolingSuffix here. ToolingSuffix is for models that CAN USE tools/sources,
+        ' not for the tools/sources themselves. The tools in this list ARE the sources.
+        ' InternalToolSuffix is already applied to the internal web tool in GetInternalWebTool().
 
         Dim selector As New MultiModelSelectorForm(
         availableTools,
         "",
-        $"{AN} - Select Tools",
+        $"{AN} - Select {FriendlyName}",
         resetChecked:=False,
-        preselectMany:=If(SelectedToolNames, New List(Of String)()))
+        preselectMany:=If(SelectedToolNames, New List(Of String)()),
+        "Select the sources you want to make available to the model:")
 
         If selector.ShowDialog() = DialogResult.OK Then
             Dim selected = selector.SelectedModels
@@ -1641,11 +1636,11 @@ Partial Public Class ThisAddIn
     ''' </summary>
     ''' <param name="forceDialog">If True, always shows the selection dialog.</param>
     ''' <returns>Selected tool configurations, or Nothing when the dialog is canceled or no tools are available.</returns>
-    Public Function SelectToolsForSession(Optional forceDialog As Boolean = False) As List(Of ModelConfig)
+    Public Function SelectToolsForSession(Optional forceDialog As Boolean = False, Optional FriendlyName As String = ToolFriendlyName) As List(Of ModelConfig)
         Dim availableTools = GetAvailableTools()
 
         If availableTools.Count = 0 Then
-            ShowCustomMessageBox("No tools are available. Configure tools in the Special Services configuration file.")
+            ShowCustomMessageBox($"No {FriendlyName.ToLower} are available. Configure 'Tooling' in the Special Services configuration file.")
             Return Nothing
         End If
 
@@ -1666,7 +1661,7 @@ Partial Public Class ThisAddIn
         Dim hasPersistedSelection As Boolean = (SelectedToolNames IsNot Nothing AndAlso SelectedToolNames.Count > 0)
 
         ' Only preselect all on first use (no persisted selection yet).
-        Return ShowToolSelectionDialog(availableTools, preselectAll:=Not hasPersistedSelection)
+        Return ShowToolSelectionDialog(availableTools, preselectAll:=Not hasPersistedSelection, FriendlyName)
     End Function
 
 #End Region

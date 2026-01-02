@@ -456,6 +456,27 @@ Namespace SharedLibrary
             End If
         End Function
 
+
+        ''' <summary>
+        ''' Uppercases the first character of a string (culture-invariant) and leaves the rest unchanged.
+        ''' </summary>
+        Public Shared Function StartWithUpcase(value As String) As String
+            If String.IsNullOrEmpty(value) Then Return If(value, "")
+
+            Dim first As Char = value(0)
+            Dim upperFirst As Char = Char.ToUpperInvariant(first)
+
+            If value.Length = 1 Then
+                Return upperFirst.ToString()
+            End If
+
+            If upperFirst = first Then
+                Return value
+            End If
+
+            Return upperFirst & value.Substring(1)
+        End Function
+
     End Class
 
 End Namespace

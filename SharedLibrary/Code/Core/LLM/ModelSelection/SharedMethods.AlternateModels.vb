@@ -353,12 +353,20 @@ Namespace SharedLibrary
                 End If
             End If
 
-            ' Build description with `ModelNote` and tooling suffix (if applicable).
+            ' Build description with ModelNote
             Dim finalDescription As String = BuildModelDescription(description, currentDict)
 
-            Dim supportsTool = ParseBoolean(currentDict, "Tool") OrElse currentDict.ContainsKey("APICall_ToolInstructions")
-            If supportsTool AndAlso Not finalDescription.EndsWith(ToolingSuffix) Then
-                finalDescription &= ToolingSuffix
+            ' Only add ToolingSuffix for MODELS that can call tools (have APICall_ToolInstructions),
+            ' NOT for tools/sources themselves (toolsOnly=True or Tool=True).
+            If Not toolsOnly Then
+                Dim hasToolInstructions = currentDict.ContainsKey("APICall_ToolInstructions") AndAlso
+                                          Not String.IsNullOrWhiteSpace(currentDict("APICall_ToolInstructions"))
+                Dim isTool = ParseBoolean(currentDict, "Tool")
+
+                ' Add suffix only if: can call tools AND is not itself a tool
+                If hasToolInstructions AndAlso Not isTool AndAlso Not finalDescription.EndsWith(ToolingSuffix) Then
+                    finalDescription &= ToolingSuffix
+                End If
             End If
 
             Dim mc = CreateModelConfigFromDict(currentDict, context, finalDescription)
@@ -470,7 +478,7 @@ Namespace SharedLibrary
                     Return False
                 End If
 
-                Using form As New MultiModelSelectorForm(alternativeModels, LastAlternateModel, AN & " - Select Alternate Models", True)
+                Using form As New MultiModelSelectorForm(alternativeModels, LastAlternateModel, AN & " - Select Alternate Models", True, "")
                     If form.ShowDialog() <> System.Windows.Forms.DialogResult.OK Then
                         Return False
                     End If

@@ -1,7 +1,7 @@
 ﻿' Part of "Red Ink for Word"
 ' Copyright (c) LawDigital Ltd., Switzerland. All rights reserved. For license to use see https://redink.ai.
 '
-' 1.1.2026
+' 2.1.2026
 '
 ' The compiled version of Red Ink also ...
 '
@@ -47,7 +47,7 @@ Partial Public Class ThisAddIn
 
     ' Hardcoded config values
 
-    Public Shared Version As String = "V.010126" & SharedMethods.VersionQualifier
+    Public Shared Version As String = "V.020126" & SharedMethods.VersionQualifier
 
     Public Const AN As String = "Red Ink"
     Public Const AN2 As String = "redink"
@@ -105,7 +105,8 @@ Partial Public Class ThisAddIn
     Private Const ChunkTrigger As String = "(iterate)"
     Private Const EmbedTrigger As String = "(embed)"
     Private Const RefreshTrigger As String = "(refresh)"
-    Private Const ToolSelectionTrigger As String = "(tools)"  ' Trigger in OtherPrompt to re-select tools for tooling-enabled models.
+    Private Const ToolSelectionTrigger As String = "(sources)"  ' Trigger in OtherPrompt to re-select tools for tooling-enabled models.
+    Public Const ToolFriendlyName As String = "Sources"  ' How to refer to tools (e.g., sources) towards the user
 
     Private Const MaxFilibuster As Integer = 10000 ' Maximum number of words for filibuster mode 
     Private Const ArgueAgainstDefault As Integer = 50 ' Number of words to propose for Argue Against

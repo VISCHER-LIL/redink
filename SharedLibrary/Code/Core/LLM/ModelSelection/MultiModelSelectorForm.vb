@@ -137,10 +137,12 @@ Namespace SharedLibrary
         ''' <param name="preselect">Optional preselection key (label, <see cref="ModelConfig.ModelDescription"/>, or <see cref="ModelConfig.Model"/>).</param>
         ''' <param name="title">Optional window title.</param>
         ''' <param name="resetChecked">Initial value for the reset checkbox.</param>
+        ''' <param name="instruction">Optional instruction text displayed above the filter input.</param>
         Public Sub New(models As System.Collections.Generic.List(Of ModelConfig),
                    preselect As System.String,
                    Optional title As System.String = Nothing,
-                   Optional resetChecked As System.Boolean = True)
+                   Optional resetChecked As System.Boolean = True,
+                   Optional instruction As System.String = "")
             Me.altModels = If(models, New System.Collections.Generic.List(Of ModelConfig))
             Me.preselectKey = preselect
             InitializeComponent(title, resetChecked)
@@ -156,11 +158,13 @@ Namespace SharedLibrary
         ''' <param name="title">Optional window title.</param>
         ''' <param name="resetChecked">Initial value for the reset checkbox.</param>
         ''' <param name="preselectMany">Optional set of labels/keys to preselect (multi-select).</param>
+        ''' <param name="instruction">Optional instruction text displayed above the filter input.</param>
         Public Sub New(models As System.Collections.Generic.List(Of ModelConfig),
                    preselect As System.String,
                    Optional title As System.String = Nothing,
                    Optional resetChecked As System.Boolean = True,
-                   Optional preselectMany As System.Collections.Generic.IEnumerable(Of System.String) = Nothing)
+                   Optional preselectMany As System.Collections.Generic.IEnumerable(Of System.String) = Nothing,
+                   Optional instruction As String = "")
 
             Me.altModels = If(models, New System.Collections.Generic.List(Of ModelConfig))
             Me.preselectKey = preselect
@@ -171,7 +175,7 @@ Namespace SharedLibrary
                 Next
             End If
 
-            InitializeComponent(title, resetChecked)
+            InitializeComponent(title, resetChecked, instruction)
 
             ' Seed selectedLabels from preselectMany by resolving against unique display labels.
             If preselectKeys.Count > 0 Then
@@ -234,7 +238,7 @@ Namespace SharedLibrary
         ''' <summary>
         ''' Creates and configures all UI controls and event handlers for the dialog.
         ''' </summary>
-        Private Sub InitializeComponent(Optional title As System.String = Nothing, Optional resetChecked As System.Boolean = True)
+        Private Sub InitializeComponent(Optional title As System.String = Nothing, Optional resetChecked As System.Boolean = True, Optional instruction As System.String = "Select one or more alternate models:")
             Me.Text = If(String.IsNullOrWhiteSpace(title), SharedMethods.AN & " - Select Alternate Models", title)
             Me.Icon = Icon.FromHandle((New System.Drawing.Bitmap(My.Resources.Red_Ink_Logo)).GetHicon())
             Me.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent
@@ -258,7 +262,7 @@ Namespace SharedLibrary
             Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize))
 
             Me.lblTitle = New System.Windows.Forms.Label() With {
-                .Text = "Select one or more alternate models:",
+                .Text = instruction,
                 .Dock = System.Windows.Forms.DockStyle.Top,
                 .Height = 28,
                 .TextAlign = System.Drawing.ContentAlignment.MiddleLeft
@@ -271,7 +275,7 @@ Namespace SharedLibrary
                 Sub()
                     Try
                         Dim showEvenIfFocused As IntPtr = CType(1, IntPtr)
-                        SendMessage(Me.txtFilter.Handle, EM_SETCUEBANNER, showEvenIfFocused, "Filter models…")
+                        SendMessage(Me.txtFilter.Handle, EM_SETCUEBANNER, showEvenIfFocused, "Filter…")
                     Catch
                     End Try
                 End Sub
