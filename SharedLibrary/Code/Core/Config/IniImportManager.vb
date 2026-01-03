@@ -1186,28 +1186,14 @@ Public NotInheritable Class IniImportManager
         Dim substitutedText As System.String = normalizedImportText
         Dim placeholderWarnings As New System.Collections.Generic.List(Of System.String)()
 
-        Dim resolvedPlaceholders As New System.Collections.Generic.List(Of ResolvedPlaceholder)()
-
-        If Not TryResolvePlaceholders(
-        ownerForm,
-        substitutedText,
-        placeholderWarnings,
-        resolvedPlaceholders
-                ) Then
-            Return False
-        End If
-
-
-        If placeholderWarnings.Count > 0 Then
-            ShowCustomMessageBox(System.String.Join(System.Environment.NewLine & System.Environment.NewLine, placeholderWarnings))
-        End If
-
+        ' Declare target path variables early
         Dim mainIniPath As System.String = activeIniPath
         Dim altIniPath As System.String = Nothing
         Dim svcIniPath As System.String = Nothing
         Dim targetIniPath As System.String = Nothing
         Dim targetSectionName As System.String = Nothing
 
+        ' Determine targetIniPath and targetSectionName BEFORE placeholder resolution
         If kind = ImportKind.AlternateModel Then
             Dim pathUpdated As System.Boolean = False
 
@@ -1252,6 +1238,31 @@ Public NotInheritable Class IniImportManager
 
         Else
             targetIniPath = mainIniPath
+        End If
+
+        ' NOW look up existing placeholder values - targetIniPath is available
+        Dim lookupSectionName As System.String = Nothing
+        If kind = ImportKind.AlternateModel OrElse kind = ImportKind.SpecialService Then
+            lookupSectionName = targetSectionName
+        End If
+
+        Dim existingPlaceholderValues As System.Collections.Generic.Dictionary(Of System.String, System.String) =
+            ExtractExistingPlaceholderValues(GetLinesForPlaceholderLookup(targetIniPath, lookupSectionName))
+
+        Dim resolvedPlaceholders As New System.Collections.Generic.List(Of ResolvedPlaceholder)()
+
+        If Not TryResolvePlaceholders(
+                ownerForm,
+                substitutedText,
+                placeholderWarnings,
+                resolvedPlaceholders,
+                existingPlaceholderValues
+            ) Then
+            Return False
+        End If
+
+        If placeholderWarnings.Count > 0 Then
+            ShowCustomMessageBox(System.String.Join(System.Environment.NewLine & System.Environment.NewLine, placeholderWarnings))
         End If
 
         Dim importedLines As System.Collections.Generic.List(Of System.String) = SplitToLinesPreserveNonEmpty(substitutedText)
@@ -1551,6 +1562,7 @@ Public NotInheritable Class IniImportManager
         Return mainIniChanged
 
     End Function
+
 
     ' =========================================================================================
     '  FEATURE ENABLEMENT RULES
@@ -2108,25 +2120,23 @@ Public NotInheritable Class IniImportManager
     ''' True if placeholder processing completed and import should continue; otherwise False
     ''' if the user aborted the placeholder input dialog.
     ''' </returns>
-
     Private Shared Function TryResolvePlaceholders(
     ownerForm As System.Windows.Forms.Form,
     ByRef text As System.String,
     warnings As System.Collections.Generic.List(Of System.String),
-    ByRef resolved As System.Collections.Generic.List(Of ResolvedPlaceholder)
+    ByRef resolved As System.Collections.Generic.List(Of ResolvedPlaceholder),
+    Optional existingValues As System.Collections.Generic.Dictionary(Of System.String, System.String) = Nothing
 ) As System.Boolean
-
 
         If resolved Is Nothing Then
             resolved = New System.Collections.Generic.List(Of ResolvedPlaceholder)()
         End If
 
-
         If warnings Is Nothing Then warnings = New System.Collections.Generic.List(Of System.String)()
         If System.String.IsNullOrWhiteSpace(text) Then Return True
 
         Dim rx As New System.Text.RegularExpressions.Regex("\[\[(.+?)\]\]",
-                                                          System.Text.RegularExpressions.RegexOptions.Singleline)
+                                                      System.Text.RegularExpressions.RegexOptions.Singleline)
 
         Dim matches As System.Text.RegularExpressions.MatchCollection = rx.Matches(text)
         If matches Is Nothing OrElse matches.Count = 0 Then Return True
@@ -2143,7 +2153,12 @@ Public NotInheritable Class IniImportManager
 
         Dim paramList As New System.Collections.Generic.List(Of InputParameter)()
         For Each k As System.String In unique.Keys
-            paramList.Add(New InputParameter(k, ""))
+            ' Pre-fill with existing value if available
+            Dim defaultValue As System.String = ""
+            If existingValues IsNot Nothing AndAlso existingValues.ContainsKey(k) Then
+                defaultValue = existingValues(k)
+            End If
+            paramList.Add(New InputParameter(k, defaultValue))
         Next
 
         Dim params() As InputParameter = paramList.ToArray()
@@ -2160,8 +2175,8 @@ Public NotInheritable Class IniImportManager
 
         Try
             If ShowCustomVariableInputForm("The settings require your to enter individual values. Please enter them (leave empty to keep a placeholder and edit later): ",
-                                           TITLE_IMPORT,
-                                           params) = False Then
+                                       TITLE_IMPORT,
+                                       params) = False Then
                 Return False
             End If
 
@@ -2181,21 +2196,97 @@ Public NotInheritable Class IniImportManager
 
             If Not System.String.IsNullOrWhiteSpace(value) Then
                 Dim keyRx As New System.Text.RegularExpressions.Regex("\[\[" & System.Text.RegularExpressions.Regex.Escape(name) & "\]\]",
-                                                                     System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                                                                 System.Text.RegularExpressions.RegexOptions.IgnoreCase)
                 text = keyRx.Replace(text, value)
                 resolved.Add(New ResolvedPlaceholder With {
-                        .Name = name,
-                        .Value = value
-                    })
+                    .Name = name,
+                    .Value = value
+                })
 
             Else
                 warnings.Add("Warning: Placeholder '[[ " & name & " ]]' was left empty and remains in the configuration." & System.Environment.NewLine &
-                             "You can later fill it using the 'Edit .ini Files' feature or directly access the file.")
+                         "You can later fill it using the 'Edit .ini Files' feature or directly access the file.")
             End If
         Next
 
         Return True
     End Function
+
+    ''' <summary>
+    ''' Extracts previously stored placeholder values from comment lines in the format "; [[name]] = value".
+    ''' </summary>
+    ''' <param name="lines">Lines to search (either full file or section lines).</param>
+    ''' <returns>Dictionary mapping placeholder names to their stored values.</returns>
+    Private Shared Function ExtractExistingPlaceholderValues(
+    lines As System.Collections.Generic.List(Of System.String)
+) As System.Collections.Generic.Dictionary(Of System.String, System.String)
+
+        Dim result As New System.Collections.Generic.Dictionary(Of System.String, System.String)(
+        System.StringComparer.OrdinalIgnoreCase)
+
+        If lines Is Nothing Then Return result
+
+        Dim rx As New System.Text.RegularExpressions.Regex(
+        "^\s*;\s*\[\[(.+?)\]\]\s*=\s*(.*)$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+
+        For Each line As System.String In lines
+            If line Is Nothing Then Continue For
+
+            Dim m As System.Text.RegularExpressions.Match = rx.Match(line)
+            If m.Success AndAlso m.Groups.Count >= 3 Then
+                Dim name As System.String = m.Groups(1).Value.Trim()
+                Dim value As System.String = m.Groups(2).Value.Trim()
+
+                If Not System.String.IsNullOrWhiteSpace(name) Then
+                    result(name) = value
+                End If
+            End If
+        Next
+
+        Return result
+    End Function
+
+    ''' <summary>
+    ''' Gets lines for a specific section from the target INI file, or all lines for global imports.
+    ''' </summary>
+    ''' <param name="targetIniPath">Path to the target INI file.</param>
+    ''' <param name="sectionName">Section name for sectioned imports; Nothing for global imports.</param>
+    ''' <returns>Relevant lines to search for existing placeholders.</returns>
+    Private Shared Function GetLinesForPlaceholderLookup(
+    targetIniPath As System.String,
+    sectionName As System.String
+) As System.Collections.Generic.List(Of System.String)
+
+        If System.String.IsNullOrWhiteSpace(targetIniPath) OrElse
+       Not System.IO.File.Exists(targetIniPath) Then
+            Return New System.Collections.Generic.List(Of System.String)()
+        End If
+
+        Dim allLines As System.Collections.Generic.List(Of System.String) = ReadAllLinesPreserve(targetIniPath)
+
+        If System.String.IsNullOrWhiteSpace(sectionName) Then
+            ' Global import: return all lines
+            Return allLines
+        End If
+
+        ' Sectioned import: return only lines within the target section
+        Dim startIndex As System.Int32 = -1
+        Dim endIndex As System.Int32 = -1
+        FindSectionRange(allLines, sectionName, startIndex, endIndex)
+
+        If startIndex < 0 Then
+            Return New System.Collections.Generic.List(Of System.String)()
+        End If
+
+        Dim sectionLines As New System.Collections.Generic.List(Of System.String)()
+        For i As System.Int32 = startIndex To endIndex
+            sectionLines.Add(allLines(i))
+        Next
+
+        Return sectionLines
+    End Function
+
 
     ' =========================================================================================
     '  ENSURE AlternateModelPath / SpecialServicePath exist in redink.ini
@@ -2558,13 +2649,15 @@ Public NotInheritable Class IniImportManager
 
     ''' <summary>
     ''' Injects explanatory comment lines for resolved placeholders into a dry-run plan's
-    ''' generated output content.
+    ''' generated output content, replacing any existing placeholder comments with the same names.
     ''' </summary>
     ''' <remarks>
-    ''' For sectioned INI files (alternate models or special services), the comments are inserted
-    ''' at the beginning of each affected section, preceded and followed by exactly one empty line.
-    ''' For global (non-sectioned) INI files, the comments are appended at the end of the file,
-    ''' also surrounded by exactly one empty line before and after the comment block.
+    ''' For sectioned INI files (alternate models or special services), existing placeholder comments
+    ''' within the section are removed first, then new comments are inserted at the beginning of each
+    ''' affected section, preceded and followed by exactly one empty line.
+    ''' For global (non-sectioned) INI files, existing placeholder comments anywhere in the file are
+    ''' removed first, then new comments are appended at the end of the file, also surrounded by
+    ''' exactly one empty line before and after the comment block.
     '''
     ''' The injected comments use the format:
     '''   ; [[placeholder]] = uservalue
@@ -2580,16 +2673,31 @@ Public NotInheritable Class IniImportManager
     ''' If empty or Nothing, no changes are made.
     ''' </param>
     Private Shared Sub InjectPlaceholderCommentsIntoPlan(
-    plan As DryRunPlan,
-    resolved As System.Collections.Generic.List(Of ResolvedPlaceholder)
-)
+        plan As DryRunPlan,
+        resolved As System.Collections.Generic.List(Of ResolvedPlaceholder)
+    )
         If plan Is Nothing OrElse
-       resolved Is Nothing OrElse
-       resolved.Count = 0 OrElse
-       plan.NewFileLines Is Nothing Then
+           resolved Is Nothing OrElse
+           resolved.Count = 0 OrElse
+           plan.NewFileLines Is Nothing Then
             Return
         End If
 
+        ' Build a set of placeholder names being resolved (for matching existing comments)
+        Dim resolvedNames As New System.Collections.Generic.HashSet(Of System.String)(
+            System.StringComparer.OrdinalIgnoreCase)
+        For Each rp As ResolvedPlaceholder In resolved
+            If Not System.String.IsNullOrWhiteSpace(rp.Name) Then
+                resolvedNames.Add(rp.Name)
+            End If
+        Next
+
+        ' Regex to match existing placeholder comment lines: ; [[name]] = value
+        Dim placeholderCommentRx As New System.Text.RegularExpressions.Regex(
+            "^\s*;\s*\[\[(.+?)\]\]\s*=",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+
+        ' Build the new comment lines
         Dim commentLines As New System.Collections.Generic.List(Of System.String)()
         For Each rp As ResolvedPlaceholder In resolved
             commentLines.Add("; [[" & rp.Name & "]] = " & rp.Value)
@@ -2599,7 +2707,7 @@ Public NotInheritable Class IniImportManager
         ' SECTIONED INI (AlternateModel / SpecialService)
         ' ==========================================================
         If plan.Kind = ImportKind.AlternateModel OrElse
-       plan.Kind = ImportKind.SpecialService Then
+           plan.Kind = ImportKind.SpecialService Then
 
             For Each sectionName As System.String In plan.SectionNames
 
@@ -2609,11 +2717,31 @@ Public NotInheritable Class IniImportManager
                 FindSectionRange(plan.NewFileLines, sectionName, startIndex, endIndex)
                 If startIndex < 0 Then Continue For
 
+                ' Remove existing placeholder comments for the resolved placeholders within this section
+                Dim i As System.Int32 = startIndex + 1
+                While i <= endIndex AndAlso i < plan.NewFileLines.Count
+                    Dim line As System.String = plan.NewFileLines(i)
+                    Dim m As System.Text.RegularExpressions.Match = placeholderCommentRx.Match(If(line, ""))
+                    If m.Success Then
+                        Dim existingName As System.String = m.Groups(1).Value.Trim()
+                        If resolvedNames.Contains(existingName) Then
+                            plan.NewFileLines.RemoveAt(i)
+                            endIndex -= 1
+                            Continue While
+                        End If
+                    End If
+                    i += 1
+                End While
+
+                ' Recalculate section range after removals
+                FindSectionRange(plan.NewFileLines, sectionName, startIndex, endIndex)
+                If startIndex < 0 Then Continue For
+
                 Dim insertIndex As System.Int32 = startIndex + 1
 
                 ' Remove all empty lines directly after the section header
                 While insertIndex < plan.NewFileLines.Count AndAlso
-                  plan.NewFileLines(insertIndex).Trim().Length = 0
+                      plan.NewFileLines(insertIndex).Trim().Length = 0
                     plan.NewFileLines.RemoveAt(insertIndex)
                 End While
 
@@ -2629,7 +2757,7 @@ Public NotInheritable Class IniImportManager
 
                 ' Remove all empty lines after comments
                 While insertIndex < plan.NewFileLines.Count AndAlso
-                  plan.NewFileLines(insertIndex).Trim().Length = 0
+                      plan.NewFileLines(insertIndex).Trim().Length = 0
                     plan.NewFileLines.RemoveAt(insertIndex)
                 End While
 
@@ -2642,9 +2770,24 @@ Public NotInheritable Class IniImportManager
             ' GLOBAL INI
             ' ==========================================================
 
+            ' Remove existing placeholder comments for the resolved placeholders anywhere in the file
+            Dim i As System.Int32 = 0
+            While i < plan.NewFileLines.Count
+                Dim line As System.String = plan.NewFileLines(i)
+                Dim m As System.Text.RegularExpressions.Match = placeholderCommentRx.Match(If(line, ""))
+                If m.Success Then
+                    Dim existingName As System.String = m.Groups(1).Value.Trim()
+                    If resolvedNames.Contains(existingName) Then
+                        plan.NewFileLines.RemoveAt(i)
+                        Continue While
+                    End If
+                End If
+                i += 1
+            End While
+
             ' Remove trailing empty lines
             While plan.NewFileLines.Count > 0 AndAlso
-              plan.NewFileLines(plan.NewFileLines.Count - 1).Trim().Length = 0
+                  plan.NewFileLines(plan.NewFileLines.Count - 1).Trim().Length = 0
                 plan.NewFileLines.RemoveAt(plan.NewFileLines.Count - 1)
             End While
 

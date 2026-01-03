@@ -3496,7 +3496,7 @@ Namespace SharedLibrary
             AddHandler btnBrowseSign.Click, Sub()
                                                 Using ofd As New OpenFileDialog()
                                                     ofd.Title = "Select File to Sign"
-                                                    ofd.Filter = "INI Files|*.ini|Text Files|*.txt|All Files|*.*"
+                                                    ofd.Filter = "Text Files|*.txt|INI Files|*.ini|All Files|*.*"
                                                     If ofd.ShowDialog() = DialogResult.OK Then
                                                         txtSignFile.Text = ofd.FileName
                                                     End If
@@ -3620,7 +3620,7 @@ Namespace SharedLibrary
             AddHandler btnBrowseVerify.Click, Sub()
                                                   Using ofd As New OpenFileDialog()
                                                       ofd.Title = "Select File to Verify"
-                                                      ofd.Filter = "INI Files|*.ini|Text Files|*.txt|All Files|*.*"
+                                                      ofd.Filter = "Text Files|*.txt|INI Files|*.ini|All Files|*.*"
                                                       If ofd.ShowDialog() = DialogResult.OK Then
                                                           txtVerifyFile.Text = ofd.FileName
                                                       End If
@@ -3908,7 +3908,7 @@ Namespace SharedLibrary
             AddHandler btnAddFiles.Click, Sub()
                                               Using ofd As New OpenFileDialog()
                                                   ofd.Title = "Select Files to Sign"
-                                                  ofd.Filter = "INI Files|*.ini|Text Files|*.txt|All Files|*.*"
+                                                  ofd.Filter = "Text Files|*.txt|INI Files|*.ini|All Files|*.*"
                                                   ofd.Multiselect = True
                                                   If ofd.ShowDialog() = DialogResult.OK Then
                                                       For Each f In ofd.FileNames

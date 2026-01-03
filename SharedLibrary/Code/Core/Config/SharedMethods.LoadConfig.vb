@@ -37,6 +37,7 @@ Option Explicit On
 
 Imports System.Windows.Forms
 Imports SharedLibrary.SharedLibrary.SharedContext
+Imports UglyToad.PdfPig.Graphics.Operations.PathPainting
 
 Namespace SharedLibrary
     Partial Public Class SharedMethods
@@ -133,7 +134,7 @@ Namespace SharedLibrary
                 context.INI_APICall_Object = If(configDict.ContainsKey("APICall_Object"), configDict("APICall_Object"), "")
                 context.INI_Timeout = If(configDict.ContainsKey("Timeout"), CLng(configDict("Timeout")), DEFAULT_TIMEOUT_LONG)
                 context.INI_MaxOutputToken = If(configDict.ContainsKey("MaxOutputToken"), CInt(configDict("MaxOutputToken")), DEFAULT_MAX_OUTPUT_TOKEN)
-                context.INI_Temperature = If(configDict.ContainsKey("Temperature"), configDict("Temperature"), "")
+                context.INI_Temperature = If(configDict.ContainsKey("Temperature"), configDict("Temperature"), DEFAULT_TEMPERATURE)
                 context.INI_Model = If(configDict.ContainsKey("Model"), configDict("Model"), "")
 
                 context.SP_Translate = If(configDict.ContainsKey("SP_Translate"), configDict("SP_Translate"), Default_SP_Translate)
@@ -183,6 +184,7 @@ Namespace SharedLibrary
                 context.SP_Add_KeepFormulasIntact = If(configDict.ContainsKey("SP_Add_KeepFormulasIntact"), configDict("SP_Add_KeepFormulasIntact"), Default_SP_Add_KeepFormulasIntact)
                 context.SP_Add_KeepHTMLIntact = If(configDict.ContainsKey("SP_Add_KeepHTMLIntact"), configDict("SP_Add_KeepHTMLIntact"), Default_SP_Add_KeepHTMLIntact)
                 context.SP_Add_KeepInlineIntact = If(configDict.ContainsKey("SP_Add_KeepInlineIntact"), configDict("SP_Add_KeepInlineIntact"), Default_SP_Add_KeepInlineIntact)
+                context.SP_Add_Tooling = If(configDict.ContainsKey("SP_Add_Tooling"), configDict("SP_Add_Tooling"), Default_SP_Add_Tooling)
                 context.SP_Add_Bubbles = If(configDict.ContainsKey("SP_Add_Bubbles"), configDict("SP_Add_Bubbles"), Default_SP_Add_Bubbles)
                 context.SP_Add_BubblesExtract = If(configDict.ContainsKey("SP_Add_BubblesExtract"), configDict("SP_Add_BubblesExtract"), Default_SP_Add_BubblesExtract)
                 context.SP_Add_BubblesReply = If(configDict.ContainsKey("SP_Add_BubblesReply"), configDict("SP_Add_BubblesReply"), Default_SP_Add_BubblesReply)
@@ -248,6 +250,12 @@ Namespace SharedLibrary
                 context.INI_APIEncrypted = ParseBoolean(configDict, "APIKeyEncrypted")
                 context.INI_ShortcutsWordExcel = If(configDict.ContainsKey("ShortcutsWordExcel"), configDict("ShortcutsWordExcel"), "")
                 context.INI_ContextMenu = ParseBoolean(configDict, "ContextMenu", DEFAULT_BOOL_CONTEXTMENU)
+
+                ' Tooling settings
+
+                context.INI_ToolingLogWindow = ParseBoolean(configDict, "ToolingLogWindow", DEFAULT_BOOL_TOOLINGLOGWINDOW)
+                context.INI_ToolingDryRun = ParseBoolean(configDict, "ToolingDryRun")
+                context.INI_ToolingMaximumIterations = If(configDict.ContainsKey("ToolingMaximumIterations"), CInt(configDict("ToolingMaximumIterations")), DEFAULT_TOOLING_MAXIMUMITERATIONS)
 
                 ' Other parameters.
 
@@ -342,7 +350,7 @@ Namespace SharedLibrary
                     context.INI_APICall_Object_2 = If(configDict.ContainsKey("APICall_Object_2"), configDict("APICall_Object_2"), "")
                     context.INI_Timeout_2 = If(configDict.ContainsKey("Timeout_2"), CLng(configDict("Timeout_2")), DEFAULT_TIMEOUT_2_LONG)
                     context.INI_MaxOutputToken_2 = If(configDict.ContainsKey("MaxOutputToken_2"), CInt(configDict("MaxOutputToken_2")), DEFAULT_MAX_OUTPUT_TOKEN_2)
-                    context.INI_Temperature_2 = If(configDict.ContainsKey("Temperature_2"), configDict("Temperature_2"), "")
+                    context.INI_Temperature_2 = If(configDict.ContainsKey("Temperature_2"), configDict("Temperature_2"), DEFAULT_TEMPERATURE)
                     context.INI_Model_2 = If(configDict.ContainsKey("Model_2"), configDict("Model_2"), "")
                     context.INI_APIEncrypted_2 = ParseBoolean(configDict, "APIKeyEncrypted_2")
                     context.INI_APIKeyPrefix_2 = If(configDict.ContainsKey("APIKeyPrefix_2"), configDict("APIKeyPrefix_2"), "")
@@ -483,7 +491,7 @@ Namespace SharedLibrary
 
                 ' Check for missing values.
                 If String.IsNullOrEmpty(context.INI_APIKey) Then missingSettings.Add("APIKey", "APIKey (Model 1)")
-                If String.IsNullOrEmpty(context.INI_Temperature) Then missingSettings.Add("Temperature", "Temperature (Model 1)")
+                ' If String.IsNullOrEmpty(context.INI_Temperature) Then missingSettings.Add("Temperature", "Temperature (Model 1)")
                 If context.INI_Timeout = 0 Then missingSettings.Add("Timeout", "Timeout (Model 1)")
                 If String.IsNullOrEmpty(context.INI_Model) Then missingSettings.Add("Model", "Model (Model 1)")
                 If String.IsNullOrEmpty(context.INI_Endpoint) Then missingSettings.Add("Endpoint", "Endpoint (Model 1)")
@@ -492,7 +500,7 @@ Namespace SharedLibrary
 
                 If context.INI_SecondAPI Then
                     If String.IsNullOrEmpty(context.INI_APIKey_2) Then missingSettings.Add("APIKey_2", "APIKey (Model 2)")
-                    If String.IsNullOrEmpty(context.INI_Temperature_2) Then missingSettings.Add("Temperature_2", "Temperature (Model 2)")
+                    'If String.IsNullOrEmpty(context.INI_Temperature_2) Then missingSettings.Add("Temperature_2", "Temperature (Model 2)")
                     If context.INI_Timeout_2 = 0 Then missingSettings.Add("Timeout_2", "Timeout (Model 2)")
                     If String.IsNullOrEmpty(context.INI_Model_2) Then missingSettings.Add("Model_2", "Model (Model 2)")
                     If String.IsNullOrEmpty(context.INI_Endpoint_2) Then missingSettings.Add("Endpoint_2", "Endpoint (Model 2)")

@@ -1422,7 +1422,7 @@ Partial Public Class ThisAddIn
         Dim text2 As String = Left(secondRange.Text, Len(secondRange.Text) - 1)
 
         If INI_MarkupMethodHelper <> 1 Then
-            CompareAndInsert(text1, text2, secondRange, INI_MarkupMethodHelper = 3, "These are the differences of the second (set of) paragraph(s) of the text selected:")
+            CompareAndInsert(text1, text2, secondRange, INI_MarkupMethodHelper = 3, "These are the differences of the second (set of) paragraph(s) of the text selected:", True)
         Else
             CompareAndInsertComparedoc(text1, text2, secondRange)
         End If
