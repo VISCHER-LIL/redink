@@ -3,25 +3,27 @@
 '
 ' =============================================================================
 ' File: MultiModelSelectorForm.vb
-' Purpose: Implements a modal Windows Forms dialog that lets the user select
-'          multiple alternative model configurations from a provided list, with
-'          optional filtering and a persisted check state across filter changes.
+' Purpose: Implements a modal Windows Forms dialog that lets the user select multiple
+'          alternative model configurations from a provided list, with filtering and
+'          a persisted check state across filter changes.
 '
 ' Architecture:
 '  - UI Layout: Uses a single-column `TableLayoutPanel` (`outer`):
-'      Row 1: Title label
+'      Row 1: Title label (`lblTitle`)
 '      Row 2: Filter textbox (`txtFilter`) with a Win32 cue-banner placeholder
-'      Row 3: Checked list of models (`CheckedListBox`) supporting multi-selection
+'      Row 3: Checked list of models (`chkList`) supporting multi-selection
 '      Row 4: Optional reset checkbox (`chkReset`) (currently hidden via `.Visible = False`)
 '      Row 5: OK/Cancel buttons in a right-aligned `FlowLayoutPanel` (`pnlButtons`)
-'  - Model Source: Receives a list of `ModelConfig` (`models`) from the caller and maps each
+'  - Model Source: Receives a list of `ModelConfig` (`altModels`) from the caller and maps each
 '    display label to its `ModelConfig` via `displayToModel`.
 '  - Display Labels: Uses `ModelDescription` when available; otherwise uses `Model`. Ensures a
 '    unique display label via `MakeUniqueDisplay` to prevent collisions in `displayToModel`.
-'  - Filtering: `txtFilter` filters the visible items in the checked list without losing
-'    selections by persisting selected labels in `selectedLabels`.
-'  - Selection Output: `SelectedModels` returns all selected (`checked`) `ModelConfig` items
-'    based on the persisted label set (not only the currently visible items).
+'  - Filtering: `txtFilter` filters the visible items in the checked list without losing selections
+'    by persisting selected labels in `selectedLabels`.
+'  - Selection Output: `SelectedModels` returns all selected (`checked`) `ModelConfig` items based on
+'    the persisted label set (not only the currently visible items).
+'  - Preselection: Supports single-key preselection (`preselectKey`) and multi-key preselection
+'    (`preselectKeys`) that is resolved during `PopulateList` and `ApplyPreselection`.
 ' =============================================================================
 
 Option Strict On
@@ -36,7 +38,7 @@ Namespace SharedLibrary
     ''' Modal dialog that supports selecting multiple alternate models, with filtering and
     ''' persisted selection state across filter changes.
     ''' </summary>
-    Partial Class MultiModelSelectorForm
+    Public Class MultiModelSelectorForm
         Inherits System.Windows.Forms.Form
 
         ''' <summary>Title label displayed above the filter input.</summary>
@@ -93,6 +95,9 @@ Namespace SharedLibrary
         ''' </summary>
         Private Const EM_SETCUEBANNER As Integer = &H1501
 
+        ''' <summary>Optional set of labels/keys to preselect when the dialog opens (multi-select).</summary>
+        Private ReadOnly preselectKeys As New System.Collections.Generic.HashSet(Of String)(System.StringComparer.OrdinalIgnoreCase)
+
         ''' <summary>
         ''' Sends a Win32 message to a window handle (used for setting the cue banner on <see cref="txtFilter"/>).
         ''' </summary>
@@ -132,10 +137,12 @@ Namespace SharedLibrary
         ''' <param name="preselect">Optional preselection key (label, <see cref="ModelConfig.ModelDescription"/>, or <see cref="ModelConfig.Model"/>).</param>
         ''' <param name="title">Optional window title.</param>
         ''' <param name="resetChecked">Initial value for the reset checkbox.</param>
+        ''' <param name="instruction">Optional instruction text displayed above the filter input.</param>
         Public Sub New(models As System.Collections.Generic.List(Of ModelConfig),
                    preselect As System.String,
                    Optional title As System.String = Nothing,
-                   Optional resetChecked As System.Boolean = True)
+                   Optional resetChecked As System.Boolean = True,
+                   Optional instruction As System.String = "")
             Me.altModels = If(models, New System.Collections.Generic.List(Of ModelConfig))
             Me.preselectKey = preselect
             InitializeComponent(title, resetChecked)
@@ -144,9 +151,94 @@ Namespace SharedLibrary
         End Sub
 
         ''' <summary>
+        ''' Initializes a new instance of the multi-model selector dialog with multi-selection precheck support.
+        ''' </summary>
+        ''' <param name="models">Alternative model configurations to display.</param>
+        ''' <param name="preselect">Optional preselection key (label, ModelDescription, or Model).</param>
+        ''' <param name="title">Optional window title.</param>
+        ''' <param name="resetChecked">Initial value for the reset checkbox.</param>
+        ''' <param name="preselectMany">Optional set of labels/keys to preselect (multi-select).</param>
+        ''' <param name="instruction">Optional instruction text displayed above the filter input.</param>
+        Public Sub New(models As System.Collections.Generic.List(Of ModelConfig),
+                   preselect As System.String,
+                   Optional title As System.String = Nothing,
+                   Optional resetChecked As System.Boolean = True,
+                   Optional preselectMany As System.Collections.Generic.IEnumerable(Of System.String) = Nothing,
+                   Optional instruction As String = "")
+
+            Me.altModels = If(models, New System.Collections.Generic.List(Of ModelConfig))
+            Me.preselectKey = preselect
+
+            If preselectMany IsNot Nothing Then
+                For Each k In preselectMany
+                    If Not String.IsNullOrWhiteSpace(k) Then preselectKeys.Add(k.Trim())
+                Next
+            End If
+
+            InitializeComponent(title, resetChecked, instruction)
+
+            ' Seed selectedLabels from preselectMany by resolving against unique display labels.
+            If preselectKeys.Count > 0 Then
+                For Each m In Me.altModels
+                    Dim display As String = If(Not String.IsNullOrWhiteSpace(m.ModelDescription), m.ModelDescription, m.Model)
+                    If preselectKeys.Contains(display) OrElse preselectKeys.Contains(m.Model) OrElse preselectKeys.Contains(m.ModelDescription) Then
+                        ' We don't know the final unique display label yet; we’ll map it during PopulateList
+                        ' by doing the check there (see PopulateList changes below).
+                    End If
+                Next
+            End If
+
+            PopulateList()
+            ApplyPreselection()
+        End Sub
+
+        ''' <summary>
+        ''' Populates the checked list with all available model display labels and restores any persisted selection.
+        ''' Also builds the internal label-to-model map used by <see cref="SelectedModels"/>.
+        ''' </summary>
+        ''' <remarks>
+        ''' This method rebuilds <see cref="displayToModel"/>, <see cref="seenDisplays"/>, and <see cref="allDisplayItems"/>.
+        ''' If <see cref="preselectKeys"/> contains entries, matching labels/models are pre-checked by seeding
+        ''' <see cref="selectedLabels"/> before the UI list is rendered.
+        ''' </remarks>
+        Private Sub PopulateList()
+            displayToModel.Clear()
+            seenDisplays.Clear()
+            allDisplayItems.Clear()
+
+            For Each m In altModels
+                Dim display As System.String = If(Not String.IsNullOrWhiteSpace(m.ModelDescription), m.ModelDescription, m.Model)
+                Dim unique As System.String = MakeUniqueDisplay(display)
+                displayToModel(unique) = m
+                allDisplayItems.Add(unique)
+
+                ' NEW: seed multi-preselect into selectedLabels (checked state)
+                If preselectKeys.Count > 0 Then
+                    If preselectKeys.Contains(unique) OrElse
+                       preselectKeys.Contains(display) OrElse
+                       preselectKeys.Contains(m.Model) OrElse
+                       preselectKeys.Contains(m.ModelDescription) OrElse
+                       preselectKeys.Contains(m.ToolName) Then
+                        selectedLabels.Add(unique)
+                    End If
+                End If
+            Next
+
+            isUpdating = True
+            Try
+                Me.chkList.Items.Clear()
+                For Each label In allDisplayItems
+                    Me.chkList.Items.Add(label, selectedLabels.Contains(label))
+                Next
+            Finally
+                isUpdating = False
+            End Try
+        End Sub
+
+        ''' <summary>
         ''' Creates and configures all UI controls and event handlers for the dialog.
         ''' </summary>
-        Private Sub InitializeComponent(Optional title As System.String = Nothing, Optional resetChecked As System.Boolean = True)
+        Private Sub InitializeComponent(Optional title As System.String = Nothing, Optional resetChecked As System.Boolean = True, Optional instruction As System.String = "Select one or more alternate models:")
             Me.Text = If(String.IsNullOrWhiteSpace(title), SharedMethods.AN & " - Select Alternate Models", title)
             Me.Icon = Icon.FromHandle((New System.Drawing.Bitmap(My.Resources.Red_Ink_Logo)).GetHicon())
             Me.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent
@@ -170,7 +262,7 @@ Namespace SharedLibrary
             Me.outer.RowStyles.Add(New System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize))
 
             Me.lblTitle = New System.Windows.Forms.Label() With {
-                .Text = "Select one or more alternate models:",
+                .Text = instruction,
                 .Dock = System.Windows.Forms.DockStyle.Top,
                 .Height = 28,
                 .TextAlign = System.Drawing.ContentAlignment.MiddleLeft
@@ -183,7 +275,7 @@ Namespace SharedLibrary
                 Sub()
                     Try
                         Dim showEvenIfFocused As IntPtr = CType(1, IntPtr)
-                        SendMessage(Me.txtFilter.Handle, EM_SETCUEBANNER, showEvenIfFocused, "Filter models…")
+                        SendMessage(Me.txtFilter.Handle, EM_SETCUEBANNER, showEvenIfFocused, "Filter…")
                     Catch
                     End Try
                 End Sub
@@ -256,32 +348,6 @@ Namespace SharedLibrary
             Return unique
         End Function
 
-        ''' <summary>
-        ''' Populates the master list of display labels and builds the initial checked list contents.
-        ''' </summary>
-        Private Sub PopulateList()
-            displayToModel.Clear()
-            seenDisplays.Clear()
-            allDisplayItems.Clear()
-
-            For Each m In altModels
-                Dim display As System.String = If(Not String.IsNullOrWhiteSpace(m.ModelDescription), m.ModelDescription, m.Model)
-                Dim unique As System.String = MakeUniqueDisplay(display)
-                displayToModel(unique) = m
-                allDisplayItems.Add(unique)
-            Next
-
-            ' Build initial visible list (no filter), preserving any pre-existing selections
-            isUpdating = True
-            Try
-                Me.chkList.Items.Clear()
-                For Each label In allDisplayItems
-                    Me.chkList.Items.Add(label, selectedLabels.Contains(label))
-                Next
-            Finally
-                isUpdating = False
-            End Try
-        End Sub
 
         ''' <summary>
         ''' Rebuilds the visible checked list based on the current filter text.

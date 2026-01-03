@@ -1144,6 +1144,16 @@ Partial Public Class ThisAddIn
     End Property
 
 
+    Public Shared Property SP_Add_Tooling As String
+        Get
+            Return _context.SP_Add_Tooling
+        End Get
+        Set(value As String)
+            _context.SP_Add_Tooling = value
+        End Set
+    End Property
+
+
     Public Shared Property SP_Add_Revisions As String
         Get
             Return _context.SP_Add_Revisions
@@ -1973,6 +1983,98 @@ Partial Public Class ThisAddIn
         End Get
         Set(value As String)
             _context.INI_UpdateIniIgnoreOverride = value
+        End Set
+    End Property
+
+    ' Tooling / tool-call settings 
+
+    Public Shared Property INI_ToolingLogWindow As Boolean
+        Get
+            Return _context.INI_ToolingLogWindow
+        End Get
+        Set(value As Boolean)
+            _context.INI_ToolingLogWindow = value
+        End Set
+    End Property
+
+    Public Shared Property INI_ToolingDryRun As Boolean
+        Get
+            Return _context.INI_ToolingDryRun
+        End Get
+        Set(value As Boolean)
+            _context.INI_ToolingDryRun = value
+        End Set
+    End Property
+
+    Public Shared Property INI_ToolingMaximumIterations As Integer
+        Get
+            Return _context.INI_ToolingMaximumIterations
+        End Get
+        Set(value As Integer)
+            _context.INI_ToolingMaximumIterations = value
+        End Set
+    End Property
+
+    Public Shared Property INI_APICall_ToolInstructions_2 As String
+        Get
+            Return _context.INI_APICall_ToolInstructions_2
+        End Get
+        Set(value As String)
+            _context.INI_APICall_ToolInstructions_2 = value
+        End Set
+    End Property
+
+    Public Shared Property INI_APICall_ToolInstructions_Template_2 As String
+        Get
+            Return _context.INI_APICall_ToolInstructions_Template_2
+        End Get
+        Set(value As String)
+            _context.INI_APICall_ToolInstructions_Template_2 = value
+        End Set
+    End Property
+
+    Public Shared Property INI_APICall_ToolResponses_2 As String
+        Get
+            Return _context.INI_APICall_ToolResponses_2
+        End Get
+        Set(value As String)
+            _context.INI_APICall_ToolResponses_2 = value
+        End Set
+    End Property
+
+    Public Shared Property INI_APICall_ToolResponses_Template_2 As String
+        Get
+            Return _context.INI_APICall_ToolResponses_Template_2
+        End Get
+        Set(value As String)
+            _context.INI_APICall_ToolResponses_Template_2 = value
+        End Set
+    End Property
+
+    Public Shared Property INI_APICall_ToolCallPart_Template_2 As String
+        Get
+            Return _context.INI_APICall_ToolCallPart_Template_2
+        End Get
+        Set(value As String)
+            _context.INI_APICall_ToolCallPart_Template_2 = value
+        End Set
+    End Property
+
+    Public Shared Property INI_ToolCallDetectionPattern_2 As String
+        Get
+            Return _context.INI_ToolCallDetectionPattern_2
+        End Get
+        Set(value As String)
+            _context.INI_ToolCallDetectionPattern_2 = value
+        End Set
+    End Property
+
+    Public Shared Property INI_ToolCallExtractionMap_2 As String
+        Get
+            Return _context.INI_ToolCallExtractionMap_2
+        End Get
+        Set(value As String)
+            _context.INI_ToolCallExtractionMap_2 = value
         End Set
     End Property
 

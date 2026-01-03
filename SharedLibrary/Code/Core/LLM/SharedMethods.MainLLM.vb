@@ -38,6 +38,7 @@ Option Explicit On
 
 Imports System.Globalization
 Imports System.IO
+Imports System.Security.Cryptography.X509Certificates
 Imports System.Text
 Imports System.Text.RegularExpressions
 Imports System.Threading
@@ -82,8 +83,9 @@ Namespace SharedLibrary
         ''' <param name="AddUserPrompt">Optional additional user instruction used for placeholder replacement and logging.</param>
         ''' <param name="FileObject">Optional file/clipboard object reference used for object upload features.</param>
         ''' <param name="cancellationToken">Cancellation token propagated to network calls and linked to splash cancellation.</param>
+        ''' <param name="ToolExecution">If <c>True</c> then LLM expects to be in the tooling execution mode when calling an LLM (necessary for building APICall).</c>.</param>
         ''' <returns>Extracted text from the JSON response; returns an empty string on cancellation or on handled errors.</returns>
-        Public Shared Async Function LLM(context As ISharedContext, ByVal promptSystem As String, ByVal promptUser As String, Optional ByVal Model As String = "", Optional ByVal Temperature As String = "", Optional ByVal Timeout As Long = 0, Optional ByVal UseSecondAPI As Boolean = False, Optional ByVal Hidesplash As Boolean = False, Optional ByVal AddUserPrompt As String = "", Optional FileObject As String = "", Optional cancellationToken As Threading.CancellationToken = Nothing) As Task(Of String)
+        Public Shared Async Function LLM(context As ISharedContext, ByVal promptSystem As String, ByVal promptUser As String, Optional ByVal Model As String = "", Optional ByVal Temperature As String = "", Optional ByVal Timeout As Long = 0, Optional ByVal UseSecondAPI As Boolean = False, Optional ByVal Hidesplash As Boolean = False, Optional ByVal AddUserPrompt As String = "", Optional FileObject As String = "", Optional cancellationToken As Threading.CancellationToken = Nothing, Optional ToolExecution As Boolean = False) As Task(Of String)
 
             If cancellationToken.IsCancellationRequested Then
                 Return ""
@@ -224,7 +226,13 @@ Namespace SharedLibrary
                     ModelValue = If(String.IsNullOrEmpty(Model) OrElse Model = "Default", ModelPlaceholder, Model)
                     TimeoutValue = If(Timeout = 0, context.INI_Timeout, Timeout)
                     TokenCountString = context.INI_TokenCount
+
+                    ' Tooling not supported for primary model by definition
+                    ToolExecution = False
+
                 End If
+
+                If TimeoutValue = 0 Then TimeoutValue = 30000
 
                 Dim timeoutSeconds = CInt(TimeoutValue \ 1000)
 
@@ -237,18 +245,78 @@ Namespace SharedLibrary
                 If Not String.IsNullOrEmpty(ResponseKey) Then
                     Dim trigger As String = If(TryCast(NoThinkTrigger, String), String.Empty)
                     If Not String.IsNullOrEmpty(trigger) Then
-                        Dim respTrim As String = ResponseKey.TrimEnd()
-                        If respTrim.EndsWith(trigger, StringComparison.OrdinalIgnoreCase) Then
+
+                        Dim idx As Integer = ResponseKey.LastIndexOf(trigger, StringComparison.OrdinalIgnoreCase)
+                        If idx >= 0 Then
                             NoThink = True
-                            ResponseKey = respTrim.Substring(0, respTrim.Length - trigger.Length).TrimEnd()
+                            ' Remove ALL occurrences (case-insensitive) and trim.
+                            ResponseKey = Regex.Replace(ResponseKey,
+                                                        Regex.Escape(trigger),
+                                                        String.Empty,
+                                                        RegexOptions.IgnoreCase).Trim()
                         End If
+
                     End If
+                End If
+
+                ' --- ToolCallMatching trigger inside ResponseKey ---
+                ' Expected form: "(toolcall:<pattern>)" but we remove it even if malformed (e.g. missing ")", missing "<>").
+                ' Define the markers: ToolCallMatchingStart = "(toolcall:", ToolCallMatchingEnd = ")", ToolCallMatchingMiddle = ":"
+
+                Dim DetectToolCall As String = String.Empty
+
+                If Not String.IsNullOrEmpty(ResponseKey) Then
+
+                    Dim startMarker As String = ToolCallMatchingStart
+                    Dim startIdx As Integer = ResponseKey.IndexOf(startMarker, StringComparison.OrdinalIgnoreCase)
+
+                    If startIdx >= 0 Then
+                        ' Find the closing ")" after the marker; if missing, treat as malformed and consume to end.
+                        Dim endIdx As Integer = ResponseKey.IndexOf(ToolCallMatchingEnd, startIdx, StringComparison.OrdinalIgnoreCase)
+                        Dim triggerLen As Integer = If(endIdx >= 0,
+                               (endIdx - startIdx + ToolCallMatchingEnd.Length),
+                               (ResponseKey.Length - startIdx))
+
+                        Dim triggerText As String = ResponseKey.Substring(startIdx, triggerLen)
+
+                        ' 1) Extract pattern (prefer <...> if present)
+                        Dim lt As Integer = triggerText.IndexOf("<"c)
+                        Dim gt As Integer = triggerText.LastIndexOf(">"c)
+
+                        If lt >= 0 AndAlso gt > lt Then
+                            DetectToolCall = triggerText.Substring(lt + 1, gt - lt - 1).Trim()
+                        Else
+                            ' 2) Fallback: pattern starts after ":" and ends before ")" (or end of triggerText)
+                            Dim colonIdx As Integer = triggerText.IndexOf(ToolCallMatchingMiddle, StringComparison.OrdinalIgnoreCase)
+                            If colonIdx >= 0 Then
+                                Dim raw As String = triggerText.Substring(colonIdx + ToolCallMatchingMiddle.Length)
+                                Dim paren As Integer = raw.LastIndexOf(ToolCallMatchingEnd, StringComparison.OrdinalIgnoreCase)
+                                If paren >= 0 Then raw = raw.Substring(0, paren)
+                                DetectToolCall = raw.Trim()
+                            End If
+                        End If
+
+                        ' Validate .NET regex; if invalid, wipe it (but still remove trigger from ResponseKey)
+                        If Not String.IsNullOrWhiteSpace(DetectToolCall) Then
+                            Try
+                                Dim rx As New Regex(DetectToolCall)
+                            Catch ex As ArgumentException
+                                DetectToolCall = String.Empty
+                            End Try
+                        End If
+
+                        ' Remove the trigger block from ResponseKey (even if malformed)
+                        ResponseKey = (ResponseKey.Substring(0, startIdx) &
+                                       ResponseKey.Substring(startIdx + triggerLen)).Trim()
+                    End If
+
                 End If
 
                 ' Determine RKMode (default = 2) based on trigger markers optionally embedded in ResponseKey.
                 ' (rkmode_all)      -> 1
                 ' (rkmode_longest)  -> 2
                 ' (rkmode_first)    -> 3
+
                 ' If multiple markers somehow appear, the first one found in the list below (priority order) wins.
                 Dim RKMode As Integer = 2 ' default
                 If Not String.IsNullOrEmpty(ResponseKey) Then
@@ -330,6 +398,19 @@ Namespace SharedLibrary
                 requestBody = requestBody.Replace("{userinstruction}", CleanString(AddUserPrompt))
                 requestBody = requestBody.Replace("{temperature}", TemperatureValue)
 
+                ' Handle Tooling instructions if applicable
+
+                If ToolExecution Then
+                    requestBody = requestBody.Replace(LLM_APICall_Placeholder_ToolDefinitions, context.INI_APICall_ToolInstructions_2)
+                    requestBody = requestBody.Replace(LLM_APICall_Placeholder_ToolResponses, context.INI_APICall_ToolResponses_2)
+                Else
+                    ' Remove tool placeholders 
+                    requestBody = requestBody.Replace(LLM_APICall_Placeholder_ToolDefinitions, "")
+                    requestBody = requestBody.Replace(LLM_APICall_Placeholder_ToolResponses, "")
+                End If
+
+                ' Handle object upload if configured
+
                 Dim ObjectCall As String = If(UseSecondAPI, context.INI_APICall_Object_2, context.INI_APICall_Object)
                 Dim requiresMultipart As Boolean = ObjectCall.ToLowerInvariant().Trim().StartsWith("multipart:")
 
@@ -341,10 +422,8 @@ Namespace SharedLibrary
 
                 If Not String.IsNullOrWhiteSpace(ObjectCall) AndAlso Not String.IsNullOrWhiteSpace(FileObject) Then
 
-                    requestBody = requestBody.Replace("{objectcall}", ObjectCall)
-
                     Try
-                        Dim encodedData As String
+                        Dim encodedData As String = ""
 
                         If FileObject.Equals("clipboard", StringComparison.OrdinalIgnoreCase) Then
                             Dim mime As String = Nothing, data As String = Nothing
@@ -352,14 +431,12 @@ Namespace SharedLibrary
                                 If Not Hidesplash Then ShowCustomMessageBox("No supported data found in the clipboard.") Else Return "No supported data found in the clipboard."
                                 Return ""
                             End If
-                            mime = FixMimeType(mime)
+                            mimeType = FixMimeType(mime)
                             If Not requiresMultipart Then
-                                requestBody = requestBody.Replace("{mimetype}", mime) _
-                                                        .Replace("{encodeddata}", data)
+                                encodedData = data
                             Else
                                 fileBytes = System.Convert.FromBase64String(data)
                                 fileName = "clipboard.png"
-                                mimeType = mime
                             End If
                         Else
                             ' Standard case: file processed via MimeHelper.
@@ -372,6 +449,69 @@ Namespace SharedLibrary
                                 fileName = System.IO.Path.GetFileName(FileObject)
                             End If
                         End If
+
+                        ' --- Handle multiple ObjectCall variants with MIME-type filters ---
+                        ' Format: [mime1,mime2]variant1¦[mime3]variant2¦variant3 (unfiltered fallback)
+                        Dim variantSep As String = "¦"
+                        Dim objectCallVariants() As String = ObjectCall.Split(New String() {variantSep}, StringSplitOptions.None)
+
+                        Dim selectedObjectCall As String = Nothing
+                        Dim unfilteredObjectCall As String = Nothing
+
+                        For Each objCallEntry As String In objectCallVariants
+                            Dim trimmedEntry As String = objCallEntry.Trim()
+                            If String.IsNullOrEmpty(trimmedEntry) Then Continue For
+
+                            ' Check if entry starts with a MIME filter [...]
+                            If trimmedEntry.StartsWith("[") Then
+                                Dim closeBracketIdx As Integer = trimmedEntry.IndexOf("]"c)
+                                If closeBracketIdx > 0 Then
+                                    ' Extract MIME types from filter
+                                    Dim filterPart As String = trimmedEntry.Substring(1, closeBracketIdx - 1)
+                                    Dim allowedMimes() As String = filterPart.Split(","c)
+
+                                    ' Check if current mimeType matches any allowed MIME type
+                                    For Each allowedMime As String In allowedMimes
+                                        Dim normalizedAllowed As String = FixMimeType(allowedMime.Trim()).ToLowerInvariant()
+                                        If mimeType.ToLowerInvariant() = normalizedAllowed Then
+                                            ' Match found - use the entry content after the filter
+                                            selectedObjectCall = trimmedEntry.Substring(closeBracketIdx + 1).TrimStart()
+                                            Exit For
+                                        End If
+                                    Next
+
+                                    If selectedObjectCall IsNot Nothing Then Exit For
+                                Else
+                                    ' Malformed filter (no closing bracket) - treat as unfiltered
+                                    If unfilteredObjectCall Is Nothing Then unfilteredObjectCall = trimmedEntry
+                                End If
+                            Else
+                                ' No filter - this is an unfiltered fallback entry
+                                If unfilteredObjectCall Is Nothing Then unfilteredObjectCall = trimmedEntry
+                            End If
+                        Next
+
+                        ' Use selected entry, or fall back to unfiltered entry
+                        If selectedObjectCall Is Nothing Then
+                            selectedObjectCall = unfilteredObjectCall
+                        End If
+
+                        ' If no matching entry found, show error
+                        If selectedObjectCall Is Nothing Then
+                            Dim errorMsg As String = $"Error: The file/object provided is of an unsupported MIME type ({mimeType}). None of the configured variants accept this type."
+                            If Hidesplash Then
+                                Return errorMsg
+                            Else
+                                ShowCustomMessageBox(errorMsg)
+                                Return ""
+                            End If
+                        End If
+
+                        ' Use the selected entry as the effective ObjectCall
+                        ObjectCall = selectedObjectCall
+                        requiresMultipart = ObjectCall.ToLowerInvariant().Trim().StartsWith("multipart:")
+
+                        requestBody = requestBody.Replace(LLM_APICall_Placeholder_Objectcall, ObjectCall)
 
                         If Not requiresMultipart Then
                             requestBody = requestBody.Replace("{mimetype}", mimeType)
@@ -733,14 +873,23 @@ Namespace SharedLibrary
                                     Select Case root2.Type
                                         Case Newtonsoft.Json.Linq.JTokenType.Object
                                             Dim obj2 As Newtonsoft.Json.Linq.JObject = CType(root2, Newtonsoft.Json.Linq.JObject)
-                                            Returnvalue = HandleObject(obj2, getResponseKey, getResponseText, RKMode)
+                                            Returnvalue = HandleObject(obj2, getResponseKey, getResponseText, RKMode, DetectToolCall)
 
                                         Case Newtonsoft.Json.Linq.JTokenType.Array
-                                            For Each item2 As Newtonsoft.Json.Linq.JToken In CType(root2, Newtonsoft.Json.Linq.JArray)
-                                                If item2.Type = Newtonsoft.Json.Linq.JTokenType.Object Then
-                                                    Returnvalue &= HandleObject(CType(item2, Newtonsoft.Json.Linq.JObject), getResponseKey, getResponseText, RKMode)
-                                                End If
-                                            Next
+                                            ' If template has a loop, process entire array at once
+                                            Dim hasLoop = Regex.IsMatch(ResponseKey, "\{\%\s*for\s+", RegexOptions.Singleline)
+                                            If hasLoop Then
+                                                ' Pass entire response to template formatter which will handle the array
+                                                Returnvalue = JsonTemplateFormatter.FormatJsonWithTemplate(responseText, ResponseKey)
+                                            Else
+                                                ' Legacy behavior: process each item separately
+                                                For Each item As Newtonsoft.Json.Linq.JToken In CType(root, Newtonsoft.Json.Linq.JArray)
+                                                    If item.Type = Newtonsoft.Json.Linq.JTokenType.Object Then
+                                                        Returnvalue &= HandleObject(CType(item, Newtonsoft.Json.Linq.JObject),
+                                                        ResponseKey, responseText, RKMode, DetectToolCall)
+                                                    End If
+                                                Next
+                                            End If
 
                                         Case Else
                                             If Not Hidesplash Then ShowCustomMessageBox($"Unexpected JSON root type: {root2.Type} ({getResponseText})")
@@ -751,15 +900,23 @@ Namespace SharedLibrary
                                     Select Case root.Type
                                         Case Newtonsoft.Json.Linq.JTokenType.Object
                                             Dim jsonObject As Newtonsoft.Json.Linq.JObject = CType(root, Newtonsoft.Json.Linq.JObject)
-                                            Returnvalue = HandleObject(jsonObject, ResponseKey, responseText, RKMode)
+                                            Returnvalue = HandleObject(jsonObject, ResponseKey, responseText, RKMode, DetectToolCall)
 
                                         Case Newtonsoft.Json.Linq.JTokenType.Array
-                                            For Each item As Newtonsoft.Json.Linq.JToken In CType(root, Newtonsoft.Json.Linq.JArray)
-                                                If item.Type = Newtonsoft.Json.Linq.JTokenType.Object Then
-                                                    Returnvalue &= HandleObject(CType(item, Newtonsoft.Json.Linq.JObject),
-                                                ResponseKey, responseText, RKMode)
-                                                End If
-                                            Next
+                                            ' If template has a loop, process entire array at once
+                                            Dim hasLoop = Regex.IsMatch(ResponseKey, "\{\%\s*for\s+", RegexOptions.Singleline)
+                                            If hasLoop Then
+                                                ' Pass entire response to template formatter which will handle the array
+                                                Returnvalue = JsonTemplateFormatter.FormatJsonWithTemplate(responseText, ResponseKey)
+                                            Else
+                                                ' Legacy behavior: process each item separately
+                                                For Each item As Newtonsoft.Json.Linq.JToken In CType(root, Newtonsoft.Json.Linq.JArray)
+                                                    If item.Type = Newtonsoft.Json.Linq.JTokenType.Object Then
+                                                        Returnvalue &= HandleObject(CType(item, Newtonsoft.Json.Linq.JObject),
+                                                            ResponseKey, responseText, RKMode, DetectToolCall)
+                                                    End If
+                                                Next
+                                            End If
 
                                         Case Else
                                             If Not Hidesplash Then ShowCustomMessageBox($"Unexpected JSON root type: {root.Type} ({responseText})")
@@ -829,6 +986,15 @@ Namespace SharedLibrary
                 Return Returnvalue
 
             Catch ex As System.Exception
+
+#If DEBUG Then
+                Debug.WriteLine("Error: " & ex.Message)
+                Debug.WriteLine("Stacktrace: " & ex.StackTrace)
+
+                System.Diagnostics.Debugger.Break()
+#End If
+
+
                 If Not Hidesplash Then ShowCustomMessageBox($"An unexpected error occurred when accessing the LLM endpoint: {ex.Message}") Else Return $"An unexpected error occurred when accessing the LLM endpoint: {ex.Message}"
                 Return ""
             Finally
@@ -1091,7 +1257,7 @@ Namespace SharedLibrary
         ''' <param name="ResponseText">Original response text used for error messages and "JSON" passthrough.</param>
         ''' <param name="RKMode">Response extraction mode passed through to <c>JsonTemplateFormatter</c>.</param>
         ''' <returns>Extracted response text; empty string on handled error.</returns>
-        Private Shared Function HandleObject(jsonObject As Newtonsoft.Json.Linq.JObject, ResponseKey As String, ResponseText As String, RKMode As Integer) As String
+        Private Shared Function HandleObject(jsonObject As Newtonsoft.Json.Linq.JObject, ResponseKey As String, ResponseText As String, RKMode As Integer, DetectToolCall As String) As String
 
             ' Extract the "error" segment
             Dim text As String = FindJsonProperty(jsonObject, "error")
@@ -1110,7 +1276,10 @@ Namespace SharedLibrary
                     text = text.Replace("\", "\\")
                 End If
 
-                If ResponseKey = "JSON" Then
+                If ResponseKey = "JSON" OrElse
+                  (Not String.IsNullOrWhiteSpace(DetectToolCall) AndAlso
+                   Regex.IsMatch(ResponseText, DetectToolCall, RegexOptions.Singleline Or RegexOptions.CultureInvariant)) Then
+
                     text = ResponseText
                 Else
                     text = text & JsonTemplateFormatter.FormatJsonWithTemplate(jsonObject, ResponseKey, RKMode)

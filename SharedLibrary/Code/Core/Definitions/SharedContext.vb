@@ -183,6 +183,7 @@ Namespace SharedLibrary
             Property SP_RangeOfCells As String
             Property SP_ParseFile As String
             Property SP_Ignore As String
+            Property SP_Add_Tooling As String
             Property SP_Add_KeepFormulasIntact As String
             Property SP_Add_KeepHTMLIntact As String
             Property SP_Add_KeepInlineIntact As String
@@ -275,6 +276,21 @@ Namespace SharedLibrary
             Property INI_UpdateIniSilentMode As Integer
             ' Log silent update actions to a file for audit purposes
             Property INI_UpdateIniSilentLog As Boolean
+
+
+            ' Tooling / tool-call settings 
+            Property INI_ToolingLogWindow As Boolean
+            Property INI_ToolingDryRun As Boolean
+            Property INI_ToolingMaximumIterations As Integer
+
+            Property INI_APICall_ToolInstructions_2 As String
+            Property INI_APICall_ToolInstructions_Template_2 As String
+            Property INI_APICall_ToolResponses_2 As String
+            Property INI_APICall_ToolResponses_Template_2 As String
+            Property INI_APICall_ToolCallPart_Template_2 As String
+            Property INI_ToolCallDetectionPattern_2 As String
+            Property INI_ToolCallExtractionMap_2 As String
+
 
         End Interface
 
@@ -430,6 +446,7 @@ Namespace SharedLibrary
         Public Property SP_ParseFile As String Implements ISharedContext.SP_ParseFile
         Public Property SP_Ignore As String Implements ISharedContext.SP_Ignore
         Public Property SP_WriteNeatly As String Implements ISharedContext.SP_WriteNeatly
+        Public Property SP_Add_Tooling As String Implements ISharedContext.SP_Add_Tooling
         Public Property SP_Add_KeepFormulasIntact As String Implements ISharedContext.SP_Add_KeepFormulasIntact
         Public Property SP_Add_KeepHTMLIntact As String Implements ISharedContext.SP_Add_KeepHTMLIntact
         Public Property SP_Add_KeepInlineIntact As String Implements ISharedContext.SP_Add_KeepInlineIntact
@@ -514,10 +531,22 @@ Namespace SharedLibrary
         Public Property INI_UpdateIniIgnoreOverride As String Implements ISharedContext.INI_UpdateIniIgnoreOverride
         Public Property INI_UpdateIniSilentMode As Integer Implements ISharedContext.INI_UpdateIniSilentMode
         Public Property INI_UpdateIniSilentLog As Boolean Implements ISharedContext.INI_UpdateIniSilentLog
-
         Public Property Ignore As String Implements ISharedContext.Ignore
-
         Public Property Location As String Implements ISharedContext.Location
+
+
+        ' Tooling / tool-call settings 
+        Public Property INI_ToolingLogWindow As Boolean Implements ISharedContext.INI_ToolingLogWindow
+        Public Property INI_ToolingDryRun As Boolean Implements ISharedContext.INI_ToolingDryRun
+        Public Property INI_ToolingMaximumIterations As Integer Implements ISharedContext.INI_ToolingMaximumIterations
+        Public Property INI_APICall_ToolInstructions_2 As String Implements ISharedContext.INI_APICall_ToolInstructions_2
+        Public Property INI_APICall_ToolInstructions_Template_2 As String Implements ISharedContext.INI_APICall_ToolInstructions_Template_2
+        Public Property INI_APICall_ToolResponses_2 As String Implements ISharedContext.INI_APICall_ToolResponses_2
+        Public Property INI_APICall_ToolResponses_Template_2 As String Implements ISharedContext.INI_APICall_ToolResponses_Template_2
+        Public Property INI_APICall_ToolCallPart_Template_2 As String Implements ISharedContext.INI_APICall_ToolCallPart_Template_2
+        Public Property INI_ToolCallDetectionPattern_2 As String Implements ISharedContext.INI_ToolCallDetectionPattern_2
+        Public Property INI_ToolCallExtractionMap_2 As String Implements ISharedContext.INI_ToolCallExtractionMap_2
+
 
     End Class
 End Namespace

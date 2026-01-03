@@ -992,7 +992,9 @@ Partial Public Class ThisAddIn
                 {"ChatCap", "Chat conversation memory (chars)"},
                 {"MyStylePath", "Path to the MyStyle prompt file"},
                 {"DefaultPrefix", "Default prefix to use in 'Freestyle'"},
-                {"Location", "Location information to use, e.g., in 'Freestyle'"}
+                {"Location", "Location information to use, e.g., in 'Freestyle'"},
+                {"ToolingLogWindow", "Tooling: Show log window"},
+                {"ToolingDryRun", $"Tooling: Show {ToolFriendlyName.ToLower} overview before running"}
             }
         Dim SettingsTips As New Dictionary(Of String, String) From {
                 {"Temperature", "The higher, the more creative the LLM will be (0.0-2.0)"},
@@ -1029,7 +1031,9 @@ Partial Public Class ThisAddIn
                 {"ChatCap", "Use this to limit how many characters of your past chat discussion the chatbot will memorize (for saving costs and time)"},
                 {"MyStylePath", "This is the path where the prompts are stored that convey your writing style (if defined, see 'Analyze')."},
                 {"DefaultPrefix", "You can define here the default prefix to use within 'Freestyle' if no other prefix is used (will be added automatically)."},
-                {"Location", "Provide location information (e.g., 'We are in Zurich, Switzerland') to be used in 'Freestyle', chatbot and some other prompts that contain {Location} to get more location specific results."}
+                {"Location", "Provide location information (e.g., 'We are in Zurich, Switzerland') to be used in 'Freestyle', chatbot and some other prompts that contain {Location} to get more location specific results."},
+                {"ToolingLogWindow", $"When an LLM is allowed to call {ToolFriendlyName.ToLower} within Red Ink (e.g., Special Services), a log window will automatically open and show the progress."},
+                {"ToolingDryRun", $"When an LLM is allowed to call {ToolFriendlyName.ToLower} within Red Ink (e.g., Special Services), the {ToolFriendlyName.ToLower} made available to the LLM will be shown first, allowing the user to decide whether to proceed."}
             }
 
         ShowSettingsWindow(Settings, SettingsTips)

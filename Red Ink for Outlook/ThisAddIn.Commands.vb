@@ -1239,7 +1239,7 @@ Partial Public Class ThisAddIn
                         If Not trailingCR And LLMResult.EndsWith(ControlChars.Lf) Then LLMResult = LLMResult.TrimEnd(ControlChars.Lf)
                         If Not trailingCR And LLMResult.EndsWith(ControlChars.Cr) Then LLMResult = LLMResult.TrimEnd(ControlChars.Cr)
                         If DoMarkup And MarkupMethod <> 3 Then
-                            SLib.InsertTextWithMarkdown(selection, LLMResult & vbCrLf & "<p>MARKUP:<br></p>", trailingCR)
+                            SLib.InsertTextWithMarkdown(selection, LLMResult & "<p>MARKUP:<br></p>", trailingCR)
                         Else
                             SLib.InsertTextWithMarkdown(selection, LLMResult, trailingCR)
                         End If
@@ -1258,7 +1258,7 @@ Partial Public Class ThisAddIn
                         selection.Font = originalFont
 
                         If DoMarkup And MarkupMethod <> 3 Then
-                            SLib.InsertTextWithMarkdown(selection, LLMResult & vbCrLf & "<p>MARKUP:<br></p>" & vbCrLf, trailingCR)
+                            SLib.InsertTextWithMarkdown(selection, LLMResult & "<p>MARKUP:<br></p>" & vbCrLf, trailingCR)
                         Else
                             SLib.InsertTextWithMarkdown(selection, LLMResult, trailingCR)
                         End If

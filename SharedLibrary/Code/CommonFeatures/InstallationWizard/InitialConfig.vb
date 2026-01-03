@@ -408,18 +408,18 @@ Namespace SharedLibrary
                     providerConfigs(name) = clone
                 End Sub
 
-            ' OPENAI provider (9 fields + payment note)
+            ' OPENAI provider (10 fields + payment note)
             SubAdd("OpenAI",
                 New List(Of AppConfigurationVariable) From {
-                    New AppConfigurationVariable With {.DisplayName = "API Key:", .VarName = "INI_APIKey", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = ""},
-                    New AppConfigurationVariable With {.DisplayName = "Temperature:", .VarName = "INI_Temperature", .VarType = "String", .ValidationRule = "2.0", .DefaultValue = "0.2"},
+                    New AppConfigurationVariable With {.DisplayName = "API Key:", .VarName = "INI_APIKey", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "[[Your OpenAI API Key]]"},
                     New AppConfigurationVariable With {.DisplayName = "Timeout (ms):", .VarName = "INI_Timeout", .VarType = "Integer", .ValidationRule = ">0", .DefaultValue = "200000"},
-                    New AppConfigurationVariable With {.DisplayName = "Model:", .VarName = "INI_Model", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "gpt-5.1"},
-                    New AppConfigurationVariable With {.DisplayName = "Endpoint:", .VarName = "INI_Endpoint", .VarType = "String", .ValidationRule = "Hyperlink", .DefaultValue = "https://api.openai.com/v1/chat/completions"},
+                    New AppConfigurationVariable With {.DisplayName = "Model:", .VarName = "INI_Model", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "gpt-5.2"},
+                    New AppConfigurationVariable With {.DisplayName = "Endpoint:", .VarName = "INI_Endpoint", .VarType = "String", .ValidationRule = "Hyperlink", .DefaultValue = "https://api.openai.com/v1/responses"},
                     New AppConfigurationVariable With {.DisplayName = "HeaderA:", .VarName = "INI_HeaderA", .VarType = "String", .ValidationRule = "", .DefaultValue = "Authorization"},
                     New AppConfigurationVariable With {.DisplayName = "HeaderB:", .VarName = "INI_HeaderB", .VarType = "String", .ValidationRule = "", .DefaultValue = "Bearer {apikey}"},
-                    New AppConfigurationVariable With {.DisplayName = "APICall:", .VarName = "INI_APICall", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "{""model"":   ""{model}"",  ""messages"": [{""role"": ""system"",""content"": ""{promptsystem}""},{""role"": ""user"",""content"": ""{promptuser}""}],""temperature"": {temperature}}"},
-                    New AppConfigurationVariable With {.DisplayName = "Response tag:", .VarName = "INI_Response", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "content"}
+                    New AppConfigurationVariable With {.DisplayName = "APICall:", .VarName = "INI_APICall", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "{""model"": ""{model}"", ""input"": [{""role"": ""developer"", ""content"": [{""type"": ""input_text"",""text"": ""{promptsystem}""}]},{""role"": ""user"",""content"": [{""type"": ""input_text"",""text"": ""{promptuser}""}{objectcall}]}],""reasoning"": {""effort"": ""low""}}"},
+                    New AppConfigurationVariable With {.DisplayName = "APICall_Object:", .VarName = "INI_APICall_Object", .VarType = "String", .ValidationRule = "", .DefaultValue = "[application/pdf],{""type"": ""input_file"",""filename"": ""userfile.pdf"", ""file_data"": ""data:{mimetype};base64,{encodeddata}""}¦[image/png,image/jpeg,image/webp, image/gif],{""type"": ""input_image"",""image_url"": ""data:{mimetype};base64,{encodeddata}""}"},
+                    New AppConfigurationVariable With {.DisplayName = "Response tag:", .VarName = "INI_Response", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "text (rkmode_first)"}
                 })
             providerNotes("OpenAI") = "Note: When generating the API key with OpenAI, make sure you have added a valid payment method (e.g., credit card), even if you use ChatGPT for free or with an already paid subscription. You still need the payment method and a budget to pay for the actual consumption (costs are in our experience low)."
 
@@ -427,22 +427,22 @@ Namespace SharedLibrary
             SubAdd("Microsoft Azure OpenAI Services",
                 New List(Of AppConfigurationVariable) From {
                     New AppConfigurationVariable With {.DisplayName = "API Key:", .VarName = "INI_APIKey", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = ""},
-                    New AppConfigurationVariable With {.DisplayName = "Temperature:", .VarName = "INI_Temperature", .VarType = "String", .ValidationRule = "0.0-2.0", .DefaultValue = "0.2"},
+                    New AppConfigurationVariable With {.DisplayName = "Temperature:", .VarName = "INI_Temperature", .VarType = "String", .ValidationRule = "0.0-2.0", .DefaultValue = "1.0"},
                     New AppConfigurationVariable With {.DisplayName = "Timeout (ms):", .VarName = "INI_Timeout", .VarType = "Integer", .ValidationRule = ">0", .DefaultValue = "200000"},
-                    New AppConfigurationVariable With {.DisplayName = "Model:", .VarName = "INI_Model", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "gpt-4.1"},
-                    New AppConfigurationVariable With {.DisplayName = "Endpoint:", .VarName = "INI_Endpoint", .VarType = "String", .ValidationRule = "Hyperlink", .DefaultValue = "https://[your endpoint]/openai/deployments/[your deployment-id]/chat/completions?api-version=2024-06-01"},
+                    New AppConfigurationVariable With {.DisplayName = "Model:", .VarName = "INI_Model", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "gpt-5.2"},
+                    New AppConfigurationVariable With {.DisplayName = "Endpoint:", .VarName = "INI_Endpoint", .VarType = "String", .ValidationRule = "Hyperlink", .DefaultValue = "https://[[Your Azure Endpoint]]/openai/deployments/[your deployment-id]/chat/completions?api-version=2024-06-01"},
                     New AppConfigurationVariable With {.DisplayName = "HeaderA:", .VarName = "INI_HeaderA", .VarType = "String", .ValidationRule = "", .DefaultValue = "api-key"},
                     New AppConfigurationVariable With {.DisplayName = "HeaderB:", .VarName = "INI_HeaderB", .VarType = "String", .ValidationRule = "", .DefaultValue = "{apikey}"},
                     New AppConfigurationVariable With {.DisplayName = "APICall:", .VarName = "INI_APICall", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "{""messages"": [{""role"": ""system"",""content"": ""{promptsystem}""},{""role"": ""user"", ""content"": ""{promptuser}""}],""temperature"": {temperature}}"},
-                    New AppConfigurationVariable With {.DisplayName = "Response tag:", .VarName = "INI_Response", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "content"}
+                    New AppConfigurationVariable With {.DisplayName = "Response tag:", .VarName = "INI_Response", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "content (rkmode_first)"}
                 })
-            providerNotes("Microsoft Azure OpenAI Services") = ""
+            providerNotes("Microsoft Azure OpenAI Services") = "These may not be the latest possible settings available in your environment. Check your documentation to update this."
 
             ' GOOGLE GEMINI provider (9 fields, no note)
             SubAdd("Google Gemini",
                 New List(Of AppConfigurationVariable) From {
-                    New AppConfigurationVariable With {.DisplayName = "API Key:", .VarName = "INI_APIKey", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = ""},
-                    New AppConfigurationVariable With {.DisplayName = "Temperature:", .VarName = "INI_Temperature", .VarType = "String", .ValidationRule = "2.0", .DefaultValue = "0.2"},
+                    New AppConfigurationVariable With {.DisplayName = "API Key:", .VarName = "INI_APIKey", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "[[Your Google API Key]]"},
+                    New AppConfigurationVariable With {.DisplayName = "Temperature:", .VarName = "INI_Temperature", .VarType = "String", .ValidationRule = "0.0-2.0", .DefaultValue = "0.2"},
                     New AppConfigurationVariable With {.DisplayName = "Timeout (ms):", .VarName = "INI_Timeout", .VarType = "Integer", .ValidationRule = ">0", .DefaultValue = "200000"},
                     New AppConfigurationVariable With {.DisplayName = "Model:", .VarName = "INI_Model", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "gemini-2.5-pro"},
                     New AppConfigurationVariable With {.DisplayName = "Endpoint:", .VarName = "INI_Endpoint", .VarType = "String", .ValidationRule = "Hyperlink", .DefaultValue = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apikey}"},
@@ -453,25 +453,25 @@ Namespace SharedLibrary
                 })
             providerNotes("Google Gemini") = ""
 
-            ' GOOGLE VERTEX provider (13 fields: 9 common + 4 OAuth2, includes service account note)
+            ' GOOGLE VERTEX provider (14 fields: 10 common + APICall_Object + 4 OAuth2, includes service account note)
             SubAdd("Google Vertex",
                 New List(Of AppConfigurationVariable) From {
-                    New AppConfigurationVariable With {.DisplayName = "Private Key (barebones, not PEM):", .VarName = "INI_APIKey", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = ""},
+                    New AppConfigurationVariable With {.DisplayName = "Private Key (barebones, not PEM):", .VarName = "INI_APIKey", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "[[Your Google private_key]]"},
                     New AppConfigurationVariable With {.DisplayName = "Temperature:", .VarName = "INI_Temperature", .VarType = "String", .ValidationRule = "2.0", .DefaultValue = "0.2"},
                     New AppConfigurationVariable With {.DisplayName = "Timeout (ms):", .VarName = "INI_Timeout", .VarType = "Integer", .ValidationRule = ">0", .DefaultValue = "200000"},
                     New AppConfigurationVariable With {.DisplayName = "Model:", .VarName = "INI_Model", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "gemini-2.5-pro"},
-                    New AppConfigurationVariable With {.DisplayName = "Endpoint:", .VarName = "INI_Endpoint", .VarType = "String", .ValidationRule = "Hyperlink", .DefaultValue = "https://europe-west1-aiplatform.googleapis.com/v1/projects/[your project ID]/locations/europe-west1/publishers/google/models/{model}:generateContent"},
+                    New AppConfigurationVariable With {.DisplayName = "Endpoint:", .VarName = "INI_Endpoint", .VarType = "String", .ValidationRule = "Hyperlink", .DefaultValue = "https://europe-west4-aiplatform.googleapis.com/v1/projects/[[Your Google project_id]]/locations/europe-west4/publishers/google/models/{model}:generateContent"},
                     New AppConfigurationVariable With {.DisplayName = "HeaderA:", .VarName = "INI_HeaderA", .VarType = "String", .ValidationRule = "", .DefaultValue = "Authorization"},
                     New AppConfigurationVariable With {.DisplayName = "HeaderB:", .VarName = "INI_HeaderB", .VarType = "String", .ValidationRule = "", .DefaultValue = "Bearer {apikey}"},
-                    New AppConfigurationVariable With {.DisplayName = "APICall:", .VarName = "INI_APICall", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "{""contents"": [{""role"": ""user"", ""parts"":[{""text"": ""{promptsystem} {promptuser}""}]}], ""generationConfig"": {""temperature"": {temperature}}}"},
+                    New AppConfigurationVariable With {.DisplayName = "APICall:", .VarName = "INI_APICall", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "{""contents"": [{""role"": ""user"", ""parts"":[{""text"": ""{promptsystem} {promptuser}""}{objectcall}]}], ""generationConfig"": {""temperature"": {temperature},  ""thinking_config"": {""thinking_budget"": 128}}}"},
+                    New AppConfigurationVariable With {.DisplayName = "APICall_Object:", .VarName = "INI_APICall_Object", .VarType = "String", .ValidationRule = "", .DefaultValue = ", {""inlineData"": {""mimeType"": ""{mimetype}"",""data"": ""{encodeddata}""}}"},
                     New AppConfigurationVariable With {.DisplayName = "Response tag:", .VarName = "INI_Response", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "text"},
-                    New AppConfigurationVariable With {.DisplayName = "OAuth2 'client_mail':", .VarName = "INI_OAuth2ClientMail", .VarType = "String", .ValidationRule = "E-Mail", .DefaultValue = "[service account mail]]@[your project ID].iam.gserviceaccount.com"},
+                    New AppConfigurationVariable With {.DisplayName = "OAuth2 'client_mail':", .VarName = "INI_OAuth2ClientMail", .VarType = "String", .ValidationRule = "E-Mail", .DefaultValue = "[[Your Google client_email]]"},
                     New AppConfigurationVariable With {.DisplayName = "OAuth2 'scopes':", .VarName = "INI_OAuth2Scopes", .VarType = "String", .ValidationRule = "NotEmpty", .DefaultValue = "https://www.googleapis.com/auth/cloud-platform"},
                     New AppConfigurationVariable With {.DisplayName = "OAuth2 Endpoint:", .VarName = "INI_OAuth2Endpoint", .VarType = "String", .ValidationRule = "Hyperlink", .DefaultValue = "https://oauth2.googleapis.com/token"},
                     New AppConfigurationVariable With {.DisplayName = "OAuth2 Access Token Expiry (seconds):", .VarName = "INI_OAuth2ATExpiry", .VarType = "Integer", .ValidationRule = ">0", .DefaultValue = "3600"}
                 })
             providerNotes("Google Vertex") = "Note: Requires OAuth2 service account to be configured via the GCP console. Private Key must be the raw key (not PEM)."
-
             ' MTF provider (9 fields, no note)
             SubAdd("MTF",
                 New List(Of AppConfigurationVariable) From {
@@ -863,7 +863,7 @@ Namespace SharedLibrary
 
                 If AreDifferent(providerConfigs, providerNotes, rCfg, rNotes) Then
                     Dim choice = SharedMethods.ShowCustomYesNoBox(
-                    "Updated Default provider configurations are available online. Do you want To load And use those instead Of the built-In defaults now?",
+                    "Updated Default provider configurations are available online. Do you want To load and use those instead Of the built-In defaults now?",
                     "Use online defaults",
                     "Keep built-In")
 
@@ -1084,6 +1084,7 @@ Namespace SharedLibrary
                         Case "INI_HeaderA" : _context.INI_HeaderA = cv.CurrentValue
                         Case "INI_HeaderB" : _context.INI_HeaderB = cv.CurrentValue
                         Case "INI_APICall" : _context.INI_APICall = cv.CurrentValue
+                        Case "INI_APICall_Object" : _context.INI_APICall_Object = cv.CurrentValue
                         Case "INI_Response" : _context.INI_Response = cv.CurrentValue
                         Case "INI_OAuth2ClientMail" : _context.INI_OAuth2ClientMail = cv.CurrentValue
                         Case "INI_OAuth2Scopes" : _context.INI_OAuth2Scopes = cv.CurrentValue
@@ -1326,6 +1327,7 @@ Namespace SharedLibrary
                         {"HeaderB", _context.INI_HeaderB},
                         {"Response", _context.INI_Response},
                         {"APICall", _context.INI_APICall},
+                        {"APICall_Object", _context.INI_APICall_Object},
                         {"Timeout", _context.INI_Timeout.ToString()},
                         {"Temperature", normalizedTemp},
                         {"Model", _context.INI_Model},

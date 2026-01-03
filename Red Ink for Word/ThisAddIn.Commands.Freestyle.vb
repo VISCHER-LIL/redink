@@ -18,6 +18,7 @@
 '    {chunk}, {doc}, {mystyle}, {object}, {multimodel}).
 '  - Model Selection: Supports primary/secondary models with optional alternate model
 '    configuration and multi-model execution.
+'  - Tooling Support: Allows model tooling selection when supported by the model.
 '  - Format Preservation: Configurable formatting retention (character/paragraph level)
 '    with special handling for fields and styles.
 '  - External Content Integration: Supports embedding external files ({doc} trigger),
@@ -234,6 +235,7 @@ Partial Public Class ThisAddIn
             Dim BubblesExtractInstruct As String = $"; add '{BubblesExtractTrigger}' for including bubble comments"
             Dim ObjectInstruct As String = $"; add '{ObjectTrigger}'/'{ObjectTrigger2}' for adding a file object"
             Dim MultiModelInstruct As String = $"; add '{MultiModelTrigger}' for multiple models"
+            Dim ToolSelectionInstruct As String = $"; add '{ToolSelectionTrigger}' to permit {ToolFriendlyName.ToLower} selection"
             Dim LastPromptInstruct As String = If(String.IsNullOrWhiteSpace(My.Settings.LastPrompt), "", "; Ctrl-P for your last prompt")
             Dim FileObject As String = ""
             Dim SlideDeck As String = ""
@@ -246,6 +248,14 @@ Partial Public Class ThisAddIn
 
             ' Check if no text is selected (insertion point only)
             If selection.Type = WdSelectionType.wdSelectionIP Then NoText = True
+
+            ' Check if the selected model supports tooling (can call tools)
+            Dim modelSupportsTool As Boolean = False
+            If UseSecondAPI Then
+                ' Check via SharedMethods - based on APICall_ToolInstructions
+                modelSupportsTool = Not String.IsNullOrWhiteSpace(INI_APICall_ToolInstructions_2) OrElse
+                                    SharedMethods.ModelSupportsTooling(LastFreestyleModelConfig)
+            End If
 
             ' Build additional instruction text based on configuration and selection state
             Dim AddOnInstruct As String = AllInstruct
@@ -273,6 +283,10 @@ Partial Public Class ThisAddIn
                 If Not String.IsNullOrWhiteSpace(INI_AlternateModelPath) Then
                     AddOnInstruct += MultiModelInstruct.Replace("; add", ", ")
                 End If
+                If Not String.IsNullOrWhiteSpace(INI_AlternateModelPath) And modelSupportsTool Then
+                    AddOnInstruct += ToolSelectionInstruct.Replace("; add", ", ")
+                End If
+
             Else
                 If Not String.IsNullOrWhiteSpace(INI_APICall_Object) Then
                     AddOnInstruct += ObjectInstruct.Replace("; add", ",")
@@ -368,6 +382,112 @@ Partial Public Class ThisAddIn
             End If
 
             ' === Special utility commands (can execute without text selection) ===
+
+            ' --- Help picker: show all short commands and let user choose one ---
+            If String.Equals(OtherPrompt.Trim(), "help", StringComparison.OrdinalIgnoreCase) Or String.Equals(OtherPrompt.Trim(), "?", StringComparison.OrdinalIgnoreCase) Then
+
+                Dim items As New List(Of SLib.SelectionItem)()
+                Dim idToCommand As New Dictionary(Of Integer, String)()
+
+                Dim id As Integer = 1
+                Dim AddItem =
+                    Sub(cmd As String, desc As String)
+                        items.Add(New SLib.SelectionItem($"{cmd}: {desc}", id))
+                        idToCommand(id) = cmd
+                        id += 1
+                    End Sub
+
+                ' GENERAL
+                AddItem("domain", "Show the current domain and any configured domain restrictions.")
+                AddItem("model", "Show the primary model, timeout, and (if set) max output token length.")
+                AddItem("terms", "Insert configured usage restrictions/permissions into the document.")
+                AddItem("version", "Show the installed Red Ink version.")
+                AddItem("switch", "Temporarily swap primary and secondary models.")
+                AddItem("clientname", "Copy and show this PC's client identifier (used for UpdateClients).")
+
+                ' CONFIG / MENU
+                AddItem("settings", "Open the settings dialog.")
+                AddItem("reload", "Reload the configuration from disk and rebuild menus.")
+                AddItem("reset", "Reset local configuration to defaults and rebuild menus.")
+                AddItem("cleanmenu", "Remove old context menus and rebuild them.")
+
+                ' INI UPDATE / SIGNING
+                AddItem("iniupdate", "Check for and apply configuration updates.")
+                AddItem("iniupdateignored", "Open the ignore list for configuration updates.")
+                AddItem("iniupdateignore", "Open the ignore list for configuration updates.")
+                AddItem("iniload", "Import/apply configuration via the configuration import workflow.")
+                AddItem("inirollback", "Roll back the last imported configuration change (creates a backup).")
+                AddItem("iniupdatekeys", "Open signature management (sign/validate configs, manage keys).")
+                AddItem("signtool", "Open signature management (sign/validate configs, manage keys).")
+                AddItem("iniupdatebatch", "Open batch signing.")
+                AddItem("signbatch", "Open batch signing.")
+
+                ' PROMPTS / LOGS
+                AddItem("clearlastprompt", "Clear the stored last Freestyle prompt and repeat state.")
+                AddItem("promptlog", "Show/edit the cached Freestyle prompt log.")
+
+                ' MYSTYLE
+                AddItem("definemystyle", "Create/update your MyStyle prompts.")
+                AddItem("editmystyle", "Open the MyStyle prompt file in an editor.")
+
+                ' SECURITY / REGISTRY (selection required)
+                AddItem("encode", "Encode the selected text (e.g., API key) and copy it to the clipboard.")
+                AddItem("decode", "Decode the selected encoded text and copy it to the clipboard.")
+                AddItem("inipath", "Save the selected text as the INI path in the registry.")
+                AddItem("codebasis", "Save the selected text as the CodeBasis value in the registry.")
+
+                ' JSON / TEMPLATES (selection required)
+                AddItem("generateresponsetemplate", "Generate a JSON response template from selected JSON + description.")
+                AddItem("generateresponsekey", "Generate a JSON response key from selected JSON + description.")
+
+                ' CLIPBOARD / INSERTION
+                AddItem("insertclipboard", "Insert clipboard content at the cursor position.")
+                AddItem("insertclip", "Insert clipboard content at the cursor position.")
+
+                ' TOOLS / SOURCES
+                AddItem("setsources", "Select sources/tools available for tooling-capable models (session scope).")
+
+                ' PRIVACY / TRANSFORMS
+                AddItem("anonymize", "Anonymize/redact the current selection (no LLM call).")
+                AddItem("convertmarkdown", "Convert Markdown in the selected text to Word formatting.")
+
+                ' AUDIO / SPEECH
+                AddItem("speech", "Start speech transcription (Transcriptor).")
+                AddItem("read", "Create audio (TTS) from the selected text.")
+                AddItem("readlocal", "Read the selected text using local TTS (no cloud call).")
+                AddItem("voices", "Select a single cloud TTS voice.")
+                AddItem("voices2", "Select multiple cloud TTS voices.")
+                AddItem("voiceslocal", "Select the local TTS voice.")
+                AddItem("createpodcast", "Create a podcast from the selected text.")
+                AddItem("readpodcast", "Play/read a podcast based on the current selection.")
+
+                ' DOCUMENT / CLAUSES
+                AddItem("doccheck", "Run the document check.")
+                AddItem("learndocstyle", "Extract paragraph styles (learn document style).")
+                AddItem("applydocstyle", "Apply a style template.")
+                AddItem("findclause", "Search for a clause in the clause library/database.")
+                AddItem("addclause", "Add a clause to the clause library/database.")
+
+                ' WEB AGENT
+                AddItem("webagentcreator", "Create/modify web agent scripts.")
+                AddItem("webagent", "Run the web agent (requires configured script paths).")
+
+                ' ANALYSIS
+                AddItem("findhiddenprompts", "Scan the document for hidden prompts.")
+
+                Dim chosen As Integer = SLib.SelectValue(items,
+                            1,
+                            "Select a Freestyle short command (Esc to cancel):",
+                            $"{AN} Freestyle - Help"
+                        )
+
+                If chosen <= 0 OrElse Not idToCommand.ContainsKey(chosen) Then
+                    Return
+                End If
+
+                OtherPrompt = idToCommand(chosen)
+                ' Continue normal execution: the short-command checks below will now match.
+            End If
 
             ' Display domain configuration information
             If String.Equals(OtherPrompt.Trim(), "domain", StringComparison.OrdinalIgnoreCase) Then
@@ -758,6 +878,13 @@ Partial Public Class ThisAddIn
                 Return
             End If
 
+            ' Select tools
+            If String.Equals(OtherPrompt.Trim(), "set" & ToolFriendlyName.ToLower, StringComparison.OrdinalIgnoreCase) Then
+                Dim selectedToolsForSessionTemp As List(Of ModelConfig) = Nothing
+                selectedToolsForSessionTemp = SelectToolsForSession(True)
+                Return
+            End If
+
             ' === Prompt library integration ===
 
             ' Show prompt library selector if prompt is empty and library is enabled
@@ -985,6 +1112,32 @@ Partial Public Class ThisAddIn
                 OtherPrompt = OtherPrompt.Replace(NetTrigger, "").Trim()
                 DoNet = True
             End If
+
+            ' === TOOLING TRIGGER HANDLING ===
+
+            ' Check if user wants to (re)select tools
+            Dim DoToolSelection As Boolean = False
+            If OtherPrompt.IndexOf(ToolSelectionTrigger, StringComparison.OrdinalIgnoreCase) >= 0 And Not String.IsNullOrWhiteSpace(INI_AlternateModelPath) Then
+                If modelSupportsTool Then
+                    OtherPrompt = OtherPrompt.Replace(ToolSelectionTrigger, "").Trim()
+                    DoToolSelection = True
+                End If
+            End If
+
+            ' If model supports tooling, handle tool selection
+            Dim selectedToolsForSession As List(Of ModelConfig) = Nothing
+            If modelSupportsTool Then
+                selectedToolsForSession = SelectToolsForSession(DoToolSelection, ToolFriendlyName)
+                If selectedToolsForSession Is Nothing Then
+                    ' User cancelled tool selection
+                    If originalConfigLoaded Then
+                        RestoreDefaults(_context, originalConfig)
+                        originalConfigLoaded = False
+                    End If
+                    Return
+                End If
+            End If
+
 
             ' === Multi-model selection ===
 
@@ -1501,8 +1654,8 @@ Partial Public Class ThisAddIn
 
             ' === Execute LLM processing with configured parameters ===
 
-            ' Invoke ProcessSelectedText with all configured options
-            Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SysPrompt), True, DoKeepFormat, DoKeepParaFormat, DoInplace, DoMarkup, MarkupMethod, DoClipboard, DoBubbles, False, UseSecondAPI, KeepFormatCap, DoTPMarkup, TPMarkupName, False, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, InsertDocs <> "", DoMyStyle, DoBubblesExtract, DoPushback)
+            ' Invoke ProcessSelectedText with all configured options            
+            Dim result As String = Await ProcessSelectedText(InterpolateAtRuntime(SysPrompt), True, DoKeepFormat, DoKeepParaFormat, DoInplace, DoMarkup, MarkupMethod, DoClipboard, DoBubbles, False, UseSecondAPI, KeepFormatCap, DoTPMarkup, TPMarkupName, False, FileObject, DoPane, ChunkSize, NoFormatAndFieldSaving, DoNewDoc, SlideDeck, InsertDocs <> "", DoMyStyle, DoBubblesExtract, DoPushback, selectedToolsForSession)
 
             ' Restore original model configuration if alternate model was used
             If UseSecondAPI And originalConfigLoaded Then
