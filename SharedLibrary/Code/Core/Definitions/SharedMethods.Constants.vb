@@ -298,6 +298,7 @@ Namespace SharedLibrary
         Public Const DEFAULT_LANGUAGE_2 As String = "German"
 
         ' Numeric caps / limits
+        Public Const DEFAULT_TEMPERATURE As String = "0.2"
         Public Const DEFAULT_TIMEOUT_LONG As Long = 0
         Public Const DEFAULT_TIMEOUT_LIB As Long = 60000
         Public Const DEFAULT_OAUTH2_AT_EXPIRY As Long = 3600

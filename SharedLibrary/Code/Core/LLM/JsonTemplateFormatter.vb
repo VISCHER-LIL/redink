@@ -49,17 +49,53 @@ Namespace SharedLibrary
 
         ''' <summary>
         ''' Formats a JSON string using the provided template.
+        ''' Supports both root-level objects and arrays.
         ''' </summary>
         ''' <param name="json">JSON string to parse and format.</param>
         ''' <param name="template">Template defining extraction and formatting rules.</param>
         ''' <returns>Formatted output, or an error string if JSON parsing fails.</returns>
         Public Function FormatJsonWithTemplate(json As String, ByVal template As String) As String
-            Dim jObj As JObject
+            Dim jToken As JToken
             Try
-                jObj = JObject.Parse(json)
+                jToken = JToken.Parse(json)
             Catch ex As Newtonsoft.Json.JsonReaderException
                 Return $"[Error parsing JSON: {ex.Message}]"
             End Try
+
+            ' If root is an array, wrap it in an object with an "items" property
+            If jToken.Type = JTokenType.Array Then
+                Dim wrapper As New JObject()
+                wrapper("items") = jToken
+                NormalizeSources(wrapper)
+
+                ' Auto-adjust template: replace {% for $ %} or {% for items %} with the correct path
+                ' Also handle case where user just uses $ to mean "iterate the root array"
+                template = Regex.Replace(template, "\{\%\s*for\s+\$\s*\%\}", "{% for items %}", RegexOptions.IgnoreCase)
+
+                ' If there's no loop but template expects array iteration, we need to handle it
+                ' Check if the template has a loop that would work with the wrapped structure
+                If Not Regex.IsMatch(template, "\{\%\s*for\s+items\s*\%\}", RegexOptions.IgnoreCase) Then
+                    ' No items loop - check if there's any loop at all
+                    Dim loopMatch = Regex.Match(template, "\{\%\s*for\s+([^\s\%]+)\s*\%\}", RegexOptions.IgnoreCase)
+                    If loopMatch.Success Then
+                        Dim loopPath = loopMatch.Groups(1).Value
+                        ' If the loop path doesn't exist in wrapper but items array has objects with that property
+                        ' then we assume user wants to iterate items
+                        If wrapper.SelectToken("$." & loopPath) Is Nothing Then
+                            ' Replace the loop to iterate items instead, and keep inner template
+                            ' This handles case like {% for results %} when array is at root
+                            template = Regex.Replace(template,
+                                "\{\%\s*for\s+" & Regex.Escape(loopPath) & "\s*\%\}",
+                                "{% for items %}",
+                                RegexOptions.IgnoreCase)
+                        End If
+                    End If
+                End If
+
+                Return FormatJsonWithTemplate(wrapper, template)
+            End If
+
+            Dim jObj As JObject = CType(jToken, JObject)
             NormalizeSources(jObj)
             Return FormatJsonWithTemplate(jObj, template)
         End Function

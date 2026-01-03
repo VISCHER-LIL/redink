@@ -134,7 +134,7 @@ Namespace SharedLibrary
                 context.INI_APICall_Object = If(configDict.ContainsKey("APICall_Object"), configDict("APICall_Object"), "")
                 context.INI_Timeout = If(configDict.ContainsKey("Timeout"), CLng(configDict("Timeout")), DEFAULT_TIMEOUT_LONG)
                 context.INI_MaxOutputToken = If(configDict.ContainsKey("MaxOutputToken"), CInt(configDict("MaxOutputToken")), DEFAULT_MAX_OUTPUT_TOKEN)
-                context.INI_Temperature = If(configDict.ContainsKey("Temperature"), configDict("Temperature"), "")
+                context.INI_Temperature = If(configDict.ContainsKey("Temperature"), configDict("Temperature"), DEFAULT_TEMPERATURE)
                 context.INI_Model = If(configDict.ContainsKey("Model"), configDict("Model"), "")
 
                 context.SP_Translate = If(configDict.ContainsKey("SP_Translate"), configDict("SP_Translate"), Default_SP_Translate)
@@ -350,7 +350,7 @@ Namespace SharedLibrary
                     context.INI_APICall_Object_2 = If(configDict.ContainsKey("APICall_Object_2"), configDict("APICall_Object_2"), "")
                     context.INI_Timeout_2 = If(configDict.ContainsKey("Timeout_2"), CLng(configDict("Timeout_2")), DEFAULT_TIMEOUT_2_LONG)
                     context.INI_MaxOutputToken_2 = If(configDict.ContainsKey("MaxOutputToken_2"), CInt(configDict("MaxOutputToken_2")), DEFAULT_MAX_OUTPUT_TOKEN_2)
-                    context.INI_Temperature_2 = If(configDict.ContainsKey("Temperature_2"), configDict("Temperature_2"), "")
+                    context.INI_Temperature_2 = If(configDict.ContainsKey("Temperature_2"), configDict("Temperature_2"), DEFAULT_TEMPERATURE)
                     context.INI_Model_2 = If(configDict.ContainsKey("Model_2"), configDict("Model_2"), "")
                     context.INI_APIEncrypted_2 = ParseBoolean(configDict, "APIKeyEncrypted_2")
                     context.INI_APIKeyPrefix_2 = If(configDict.ContainsKey("APIKeyPrefix_2"), configDict("APIKeyPrefix_2"), "")
@@ -491,7 +491,7 @@ Namespace SharedLibrary
 
                 ' Check for missing values.
                 If String.IsNullOrEmpty(context.INI_APIKey) Then missingSettings.Add("APIKey", "APIKey (Model 1)")
-                If String.IsNullOrEmpty(context.INI_Temperature) Then missingSettings.Add("Temperature", "Temperature (Model 1)")
+                ' If String.IsNullOrEmpty(context.INI_Temperature) Then missingSettings.Add("Temperature", "Temperature (Model 1)")
                 If context.INI_Timeout = 0 Then missingSettings.Add("Timeout", "Timeout (Model 1)")
                 If String.IsNullOrEmpty(context.INI_Model) Then missingSettings.Add("Model", "Model (Model 1)")
                 If String.IsNullOrEmpty(context.INI_Endpoint) Then missingSettings.Add("Endpoint", "Endpoint (Model 1)")
@@ -500,7 +500,7 @@ Namespace SharedLibrary
 
                 If context.INI_SecondAPI Then
                     If String.IsNullOrEmpty(context.INI_APIKey_2) Then missingSettings.Add("APIKey_2", "APIKey (Model 2)")
-                    If String.IsNullOrEmpty(context.INI_Temperature_2) Then missingSettings.Add("Temperature_2", "Temperature (Model 2)")
+                    'If String.IsNullOrEmpty(context.INI_Temperature_2) Then missingSettings.Add("Temperature_2", "Temperature (Model 2)")
                     If context.INI_Timeout_2 = 0 Then missingSettings.Add("Timeout_2", "Timeout (Model 2)")
                     If String.IsNullOrEmpty(context.INI_Model_2) Then missingSettings.Add("Model_2", "Model (Model 2)")
                     If String.IsNullOrEmpty(context.INI_Endpoint_2) Then missingSettings.Add("Endpoint_2", "Endpoint (Model 2)")

@@ -981,17 +981,14 @@ Partial Public Class ThisAddIn
             Return ""
         End If
 
-        Dim callPartTemplate As String = toolingModel.APICall_ToolCallPart_Template
-        If String.IsNullOrWhiteSpace(callPartTemplate) Then
-            ToolingFileLogger.LogWarn("BuildToolResponsesForModel: toolingModel.APICall_ToolCallPart_Template is empty.")
-            Return ""
-        End If
-
         Dim responsePartTemplate As String = toolingModel.APICall_ToolResponses_Template
         If String.IsNullOrWhiteSpace(responsePartTemplate) Then
             ToolingFileLogger.LogWarn("BuildToolResponsesForModel: toolingModel.APICall_ToolResponses_Template is empty.")
             Return ""
         End If
+
+        Dim callPartTemplate As String = If(toolingModel.APICall_ToolCallPart_Template, "")
+        Dim useCallParts As Boolean = Not String.IsNullOrWhiteSpace(callPartTemplate)
 
         Dim callParts As New StringBuilder()
         Dim responseParts As New StringBuilder()
@@ -999,43 +996,91 @@ Partial Public Class ThisAddIn
         Dim firstResp As Boolean = True
 
         For Each resp In responses
-            Dim providerCallObjJson As String = resp.OriginalCallJson
-            If String.IsNullOrWhiteSpace(providerCallObjJson) Then providerCallObjJson = "{}"
+            If useCallParts Then
+                ' Extract the original arguments from the parsed tool call JSON
+                Dim argsJson As String = "{}"
+                Try
+                    Dim jCall = JObject.Parse(resp.OriginalCallJson)
+                    Dim argsToken = jCall("arguments")
+                    If argsToken IsNot Nothing Then
+                        If argsToken.Type = JTokenType.String Then
+                            argsJson = argsToken.ToString()
+                        Else
+                            argsJson = argsToken.ToString(Formatting.None)
+                        End If
+                    End If
+                Catch
+                    argsJson = "{}"
+                End Try
 
-            Dim callPart As String = callPartTemplate _
-                .Replace("{call}", providerCallObjJson) _
-                .Replace("{call_id}", If(resp.CallId, "")) _
-                .Replace("{name}", If(resp.ToolName, "")) _
-                .Replace("{arguments}", "{}")
+                ' Determine if arguments should be escaped (template has quoted placeholder)
+                Dim escapedArgsJson As String
+                If callPartTemplate.Contains("""{arguments}""") Then
+                    escapedArgsJson = EscapeJsonString(argsJson)
+                Else
+                    escapedArgsJson = argsJson
+                End If
 
-            If Not firstCall Then callParts.Append(",")
-            callParts.Append(callPart)
-            firstCall = False
+                ' Build the call part, also support {call} placeholder for raw call JSON
+                Dim callPart As String = callPartTemplate _
+                    .Replace("{call_id}", If(resp.CallId, "")) _
+                    .Replace("{name}", If(resp.ToolName, "")) _
+                    .Replace("{arguments}", escapedArgsJson) _
+                    .Replace("{call}", resp.OriginalCallJson)
 
-            Dim responseContent As String
-            If resp.Success Then
-                responseContent = If(resp.Response, "")
-            Else
-                responseContent = $"{{""error"":""{EscapeJsonString(resp.ErrorMessage)}""}}"
+                If Not firstCall Then callParts.Append(",")
+                callParts.Append(callPart)
+                firstCall = False
             End If
 
-            If Not IsValidJson(responseContent) Then
-                responseContent = $"{{""result"":""{EscapeJsonString(responseContent)}""}}"
+            ' Build response content
+            Dim responseContent As String = If(resp.Success, If(resp.Response, ""), $"Error: {resp.ErrorMessage}")
+
+            ' Check if response should be escaped (template has quoted placeholder) or raw
+            Dim finalResponseContent As String
+            If responsePartTemplate.Contains("""{response}""") Then
+                ' Template expects escaped string
+                finalResponseContent = EscapeJsonString(responseContent)
+            ElseIf responsePartTemplate.Contains("{response}") AndAlso
+                   Not responsePartTemplate.Contains("""{response}") Then
+                ' Template expects raw content - wrap in object if it's not valid JSON
+                If IsValidJson(responseContent) Then
+                    finalResponseContent = responseContent
+                Else
+                    ' Wrap plain text in a result object with escaped content
+                    finalResponseContent = "{""result"": """ & EscapeJsonString(responseContent) & """}"
+                End If
+            Else
+                finalResponseContent = EscapeJsonString(responseContent)
             End If
 
             Dim respPart As String = responsePartTemplate _
                 .Replace("{call_id}", If(resp.CallId, "")) _
                 .Replace("{name}", If(resp.ToolName, "")) _
-                .Replace("{response}", responseContent)
+                .Replace("{response}", finalResponseContent)
 
             If Not firstResp Then responseParts.Append(",")
             responseParts.Append(respPart)
             firstResp = False
         Next
 
-        Dim result As String = toolingModel.APICall_ToolResponses _
-            .Replace("{functioncalls}", callParts.ToString()) _
-            .Replace("{responses}", responseParts.ToString())
+        Dim functionCallsOutput As String = callParts.ToString()
+        Dim responsesOutput As String = responseParts.ToString()
+
+        ' Replace placeholders - NO comma manipulation by code
+        ' Templates are responsible for their own structure
+        Dim result As String = toolingModel.APICall_ToolResponses
+
+        ' Simple replacement - if content exists, replace; if empty, remove placeholder
+        result = result.Replace("{functioncalls}", functionCallsOutput)
+        result = result.Replace("{responses}", responsesOutput)
+
+        ' Clean up any empty structural remnants (empty arrays, double commas, etc.)
+        ' This handles cases where one placeholder was empty
+        result = Regex.Replace(result, "\[\s*\]", "[]")           ' Normalize empty arrays
+        result = Regex.Replace(result, ",\s*,", ",")              ' Remove double commas
+        result = Regex.Replace(result, "\[\s*,", "[")             ' Remove leading comma in array
+        result = Regex.Replace(result, ",\s*\]", "]")             ' Remove trailing comma in array
 
         Return result
     End Function
@@ -1067,11 +1112,28 @@ Partial Public Class ThisAddIn
     ''' <returns>Escaped string content (without surrounding quotes).</returns>
     Private Function EscapeJsonString(str As String) As String
         If String.IsNullOrEmpty(str) Then Return ""
-        Return str.Replace("\", "\\") _
-                  .Replace("""", "\""") _
-                  .Replace(vbCr, "\r") _
-                  .Replace(vbLf, "\n") _
-                  .Replace(vbTab, "\t")
+
+        Dim sb As New StringBuilder()
+        For Each c As Char In str
+            Select Case c
+                Case """"c : sb.Append("\""")
+                Case "\"c : sb.Append("\\")
+                Case "/"c : sb.Append("\/")
+                Case ChrW(8) : sb.Append("\b")   ' Backspace
+                Case ChrW(12) : sb.Append("\f")  ' Form feed
+                Case vbLf(0) : sb.Append("\n")
+                Case vbCr(0) : sb.Append("\r")
+                Case vbTab(0) : sb.Append("\t")
+                Case Else
+                    If AscW(c) < 32 Then
+                        ' Other control characters
+                        sb.Append("\u" & AscW(c).ToString("X4"))
+                    Else
+                        sb.Append(c)
+                    End If
+            End Select
+        Next
+        Return sb.ToString()
     End Function
 
     ''' <summary>

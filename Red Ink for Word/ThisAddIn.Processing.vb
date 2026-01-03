@@ -1379,7 +1379,7 @@ Partial Public Class ThisAddIn
                             LLMResult = SLib.RemoveHTML(LLMResult)
                             If MarkupMethod = 2 Or MarkupMethod = 3 Then
                                 Dim SaveRng As Range = rng.Duplicate
-                                CompareAndInsert(SelectedText, LLMResult, rng, MarkupMethod = 3, "This is the markup of the text inserted:")
+                                CompareAndInsert(SelectedText, LLMResult, rng, MarkupMethod = 3, "This is the markup of the text inserted:", trailingCR)
                                 If Not ParaFormatInline AndAlso Not NoFormatting AndAlso Not NoFormatAndFieldSaving Then
                                     ApplyParagraphFormat(rng)
                                 End If
@@ -1422,7 +1422,7 @@ Partial Public Class ThisAddIn
                                         If INI_MarkdownConvert Then LLMResult = RemoveMarkdownFormatting(LLMResult)
                                     End If
                                     Dim SaveRng As Range = rng.Duplicate
-                                    CompareAndInsert(SelectedText, LLMResult, rng, MarkupMethod = 3, "This is the markup of the text inserted:")
+                                    CompareAndInsert(SelectedText, LLMResult, rng, MarkupMethod = 3, "This is the markup of the text inserted:", trailingCR)
                                     If Not ParaFormatInline AndAlso Not NoFormatting AndAlso Not NoFormatAndFieldSaving Then
                                         ApplyParagraphFormat(rng)
                                     End If
@@ -1491,7 +1491,7 @@ Partial Public Class ThisAddIn
                                         rng = selection.Range
                                     End If
                                     Dim SaveRng As Range = rng.Duplicate
-                                    CompareAndInsert(SelectedText, LLMResult, rng.Duplicate, MarkupMethod = 3, "This is the markup of the text inserted:")
+                                    CompareAndInsert(SelectedText, LLMResult, rng.Duplicate, MarkupMethod = 3, "This is the markup of the text inserted:", trailingCR)
                                     If Not ParaFormatInline AndAlso Not NoFormatting AndAlso Not NoFormatAndFieldSaving Then
                                         ApplyParagraphFormat(rng)
                                     End If
@@ -2716,7 +2716,7 @@ Partial Public Class ThisAddIn
     ''' <param name="TextforWindow">Window caption.</param>
     ''' <param name="paraformatinline">Inline paragraph formatting flag.</param>
     ''' <param name="noformatting">Skip formatting.</param>
-    Private Sub CompareAndInsert(text1 As String, text2 As String, targetRange As Range, Optional ShowInWindow As Boolean = False, Optional TextforWindow As String = "A text with these changes will be inserted ('Esc' to abort):", Optional paraformatinline As Boolean = False, Optional noformatting As Boolean = True)
+    Private Sub CompareAndInsert(text1 As String, text2 As String, targetRange As Range, Optional ShowInWindow As Boolean = False, Optional TextforWindow As String = "A text with these changes will be inserted ('Esc' to abort):", Optional paraformatinline As Boolean = False, Optional noformatting As Boolean = True, Optional trailingCR As Boolean = False)
         Try
 
             Dim diffBuilder As New InlineDiffBuilder(New Differ())
@@ -2724,6 +2724,8 @@ Partial Public Class ThisAddIn
 
             Debug.WriteLine("A Text1 = " & text1)
             Debug.WriteLine("A Text2 = " & text2)
+
+            If Not trailingCR Then text2 = text2.TrimEnd(vbCr, vbLf).TrimEnd(vbCr, vbLf)
 
             ' Pre-process the texts to replace line breaks with a unique marker
             text1 = text1.Replace(vbCrLf, " {vbCrLf} ").Replace(vbCr, " {vbCr} ").Replace(vbLf, " {vbLf} ")
@@ -2741,15 +2743,15 @@ Partial Public Class ThisAddIn
             '--- 1) pull out all {{…}} fields into a list and replace them with placeholders:
             Dim mergefields As New List(Of String)
             text1 = System.Text.RegularExpressions.Regex.Replace(text1, "\{\{.*?\}\}",
-    Function(m)
-        mergefields.Add(m.Value)
-        Return $"[[MF{mergefields.Count - 1}]]"
-    End Function)
+                Function(m)
+                    mergefields.Add(m.Value)
+                    Return $"[[MF{mergefields.Count - 1}]]"
+                End Function)
             text2 = System.Text.RegularExpressions.Regex.Replace(text2, "\{\{.*?\}\}",
-    Function(m)
-        mergefields.Add(m.Value)
-        Return $"[[MF{mergefields.Count - 1}]]"
-    End Function)
+                Function(m)
+                    mergefields.Add(m.Value)
+                    Return $"[[MF{mergefields.Count - 1}]]"
+                End Function)
 
             ' Split the texts into words and convert them into a line-by-line format
             ' 3) In Worte splitten (ohne leere Einträge) und zeilenweise darstellen
@@ -2833,6 +2835,8 @@ Partial Public Class ThisAddIn
             ' Insert formatted text into the specified range
             If Not ShowInWindow Then
                 Debug.WriteLine("Text with tags: " & vbCrLf & "'" & sText & "'" & vbCrLf & vbCrLf)
+                ' Trim trailing line breaks that may have been added during diff processing
+                sText = sText.TrimEnd(vbCr, vbLf).TrimEnd(vbCr, vbLf)
                 InsertMarkupText(sText, targetRange)
             Else
                 sText = Regex.Replace(sText, "\{\{.*?\}\}", String.Empty)
@@ -2871,6 +2875,7 @@ Partial Public Class ThisAddIn
         Try
             wordApp.ScreenUpdating = False
             doc.TrackRevisions = False
+
 
             ' A) Preserve the trailing ¶ so the next paragraph never joins in
             docStart = doc.Content.Start
